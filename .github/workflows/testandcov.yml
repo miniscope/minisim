@@ -23,14 +23,16 @@ jobs:
           python-version: "3.11"
         - os: "macos-latest"
           python-version: "3.12"
-        - os: "macos-latest"
-          python-version: "3.13"
         - os: "windows-latest"
           python-version: "3.11"
         - os: "windows-latest"
           python-version: "3.12"
         - os: "windows-latest"
           python-version: "3.13"
+        # numcodecs (via zarr) ships no macOS 3.14 wheel and its sdist build
+        # fails on the runner; macOS newest tracks 3.13 until that resolves.
+        - os: "macos-latest"
+          python-version: "3.14"
     defaults:
       run:
         shell: bash
