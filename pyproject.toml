@@ -1,0 +1,133 @@
+[project]
+name = "minisim"
+dynamic = ["version"]
+description = "Physically-driven synthetic 1-photon miniscope data: a forward-model generator and teaching tool, the inverse of the minian analysis pipeline."
+authors = [
+    {name = "Daniel Aharoni", email = "daharoni@mednet.ucla.edu"},
+]
+dependencies = [
+    "numpy>=1.20.2",
+    "numpydantic>=1.8",
+    "pydantic>=2",
+    "scipy>=1.4.1",
+    "xarray>=0.17.0",
+    # recording.py uses the zarr v2 group API (`create_dataset`), removed in
+    # zarr 3. Pinned to v2 to match minian; porting the cache I/O to the zarr 3
+    # store/array API is a tracked follow-up.
+    "zarr>=2.18,<3",
+]
+
+requires-python = ">=3.10"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = [
+    "calcium-imaging",
+    "miniscope",
+    "neuroscience",
+    "simulation",
+    "synthetic-data",
+    "benchmarking",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+[project.urls]
+Homepage = "https://github.com/miniscope/minisim"
+Repository = "https://github.com/miniscope/minisim"
+Issues = "https://github.com/miniscope/minisim/issues"
+Changelog = "https://github.com/miniscope/minisim/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# The teaching notebooks render with matplotlib + ipywidgets under jupyter.
+# Kept out of the core so a plain `pip install minisim` (engine only) stays lean.
+notebook = [
+    "ipywidgets",
+    "jupyter",
+    "matplotlib",
+    "mediapy",
+]
+test = [
+    "minisim[notebook]",
+    "pytest>=8.4.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.14",
+]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.version]
+# Derive the package version from `v*` git tags via pdm-backend's SCM source.
+# Builds between tags get a PEP 440 dev version like `0.1.0.dev41+g<sha>`;
+# tagged builds get the clean tag version. No version field to keep in sync.
+source = "scm"
+tag_filter = "v*"
+tag_regex = 'v(?P<version>([1-9][0-9]*!)?(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|b|c|rc)(0|[1-9][0-9]*))?(\.post(0|[1-9][0-9]*))?(\.dev(0|[1-9][0-9]*))?$)$'
+
+[tool.pdm.build]
+# Keep build artifacts out of the wheel/sdist when the package dir is walked.
+excludes = [
+    "**/__pycache__",
+    "**/*.pyc",
+]
+
+[tool.pdm.scripts]
+lock.composite = [
+    'pdm lock --with :all --python=">=3.10,<3.12"',
+    'pdm lock --with :all --python=">=3.12,<3.14" --append',
+    'pdm lock --with :all --python=">=3.14" --append'
+]
+test = "pytest"
+
+# Dependency cooldown: exclude packages published in the last 7 days when
+# resolving the lockfile, dodging most supply-chain attacks (usually caught
+# within ~a week). Reading exclude-newer from this table requires PDM >= 2.26.9;
+# older PDMs SILENTLY IGNORE it. CI pins the floor.
+[tool.pdm.resolution]
+exclude-newer = "7d"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+# `version_provider = "scm"` makes commitizen read the current version from the
+# latest git tag, so `cz bump` does not write to source files: it just creates
+# the next tag and updates the changelog.
+version_provider = "scm"
+tag_format = "v$version"
+changelog_incremental = true
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["UP"]
+fixable = ["ALL"]
+
+[tool.pytest.ini_options]
+addopts = [
+    '-v',
+    '--color=yes',
+    '--cov=minisim',
+    '-m', 'not slow',
+]
+markers = [
+    "slow: heavy tests run off the per-PR path (e.g. minutes-long recordings). Run with `pytest -m slow`.",
+]
+testpaths = [
+  "minisim/test"
+]
