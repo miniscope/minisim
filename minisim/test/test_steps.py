@@ -51,6 +51,7 @@ from minisim.steps import (
     spike_activity_params,
     neuron_footprint,
     ou_process,
+    population_envelope,
     resolve_focal_plane,
     sample_neurons,
     shift_and_crop,
@@ -770,6 +771,80 @@ def test_neuropil_is_reproducible():
         Neuropil().build(acq, np.random.default_rng(3))(scene)
         outs.append(scene.movie.values.copy())
     np.testing.assert_array_equal(outs[0], outs[1])
+
+
+def test_population_envelope_is_mean_one_lagged_and_smoothed():
+    # Two cells whose summed activity is a single sharp spike on a flat baseline.
+    n = 200
+    a = np.full(n, 0.1)
+    a[100] = 5.0  # a one-frame burst
+    b = np.full(n, 0.1)
+    env = population_envelope([a, b], tau_frames=10.0)
+    assert env.shape == (n,)
+    assert env.min() >= 0.0
+    assert env.mean() == pytest.approx(1.0)  # normalized
+    # The one-pole low-pass spreads the spike forward in time: the post-spike
+    # frame is elevated (a lag the raw aggregate, flat after frame 100, lacks)
+    # and the response is smoother than the input step.
+    assert env[101] > env[99]
+    raw = (a + b) / (a + b).mean()
+    assert np.abs(np.diff(env)).sum() < np.abs(np.diff(raw)).sum()
+
+
+def test_population_envelope_returns_none_without_signal():
+    assert population_envelope([], tau_frames=10.0) is None  # no cells
+    assert population_envelope([np.zeros(50)], tau_frames=10.0) is None  # all silent
+
+
+def test_neuropil_temporal_couples_to_population_activity():
+    # A scene with cells carrying a shared activity bump in the middle third.
+    acq = _acq(n_px=24, duration_s=10.0)
+    n = acq.n_frames
+    bump = np.full(n, 0.2)
+    bump[n // 3 : 2 * n // 3] = 4.0
+    aggregate = bump * 3  # three identical cells
+
+    def _background_per_frame(coupling):
+        scene = Scene.zeros(acq)
+        scene.cells += [Cell(center_um=(0.0, 12.0, 12.0), trace=bump.copy()) for _ in range(3)]
+        NeuropilStep(
+            Neuropil(amplitude=1.0, n_components=3, population_coupling=coupling),
+            acq, np.random.default_rng(0),
+        )(scene)
+        return scene.movie.values.mean(axis=(1, 2)), scene.truth.neuropil_population
+
+    coupled, pop = _background_per_frame(1.0)
+    independent, _ = _background_per_frame(0.0)
+    # The stored driver is the (mean-1) aggregate low-passed at population_tau_s.
+    assert pop is not None and pop.shape == (n,)
+    assert pop == pytest.approx(population_envelope([aggregate], acq.s_to_frame(1.5)))
+    # Fully coupled: the diffuse background tracks population activity closely;
+    # fully independent: it does not (the OU drift is blind to the cells).
+    assert np.corrcoef(coupled, pop)[0, 1] > 0.95
+    assert abs(np.corrcoef(independent, pop)[0, 1]) < 0.6
+
+
+def test_neuropil_envelope_mix_stays_positive_with_cells():
+    # With cells present and partial coupling, the realized temporal envelopes
+    # are still strictly positive (the additive background never clips), exactly
+    # as in the no-cell path -- so amplitude alone sets the absolute level.
+    acq = _acq(n_px=20, duration_s=5.0)
+    scene = Scene.zeros(acq)
+    scene.cells += [
+        Cell(
+            center_um=(0.0, 10.0, 10.0),
+            trace=np.abs(ou_process(acq.n_frames, 5.0, np.random.default_rng(i))) + 0.1,
+        )
+        for i in range(4)
+    ]
+    NeuropilStep(
+        Neuropil(n_components=3, population_coupling=0.7),
+        acq, np.random.default_rng(1),
+    )(scene)
+    temporal = scene.truth.neuropil_temporal
+    assert temporal.shape == (3, acq.n_frames)
+    assert (temporal > 0).all()
+    assert scene.movie.values.min() >= 0.0
 
 
 # --- bleaching (5c) --------------------------------------------------------

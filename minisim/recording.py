@@ -56,7 +56,7 @@ _GT_REQUIRED = (
 )
 _GT_OPTIONAL = (
     "shifts", "vignette", "leakage", "bleaching",
-    "neuropil_temporal", "neuropil_spatial",
+    "neuropil_temporal", "neuropil_spatial", "neuropil_population",
 )
 
 
@@ -95,6 +95,7 @@ class GroundTruth(BaseModel):
     bleaching: NDArray[Shape["* frame"], float] | None = None
     neuropil_temporal: NDArray[Shape["* component, * frame"], float] | None = None
     neuropil_spatial: NDArray[Shape["* component, * height, * width"], float] | None = None
+    neuropil_population: NDArray[Shape["* frame"], float] | None = None
 
     @property
     def n_units(self) -> int:
@@ -133,6 +134,7 @@ class GroundTruth(BaseModel):
             bleaching=self.bleaching,
             neuropil_temporal=self.neuropil_temporal,
             neuropil_spatial=self.neuropil_spatial,
+            neuropil_population=self.neuropil_population,
         )
 
 
@@ -326,6 +328,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         bleaching=scene.truth.bleaching,
         neuropil_temporal=scene.truth.neuropil_temporal,
         neuropil_spatial=_crop_components(scene.truth.neuropil_spatial, fov_h, fov_w),
+        neuropil_population=scene.truth.neuropil_population,
     )
     # observed is always the sensor FOV: brain_motion already crops the movie,
     # but a partial build (until= before motion) can leave it canvas-sized, so

@@ -699,14 +699,28 @@ class Render(StepSpec):
 
 
 class Neuropil(StepSpec):
-    """Additive diffuse background: smooth spatial field × slow OU temporal."""
+    """Additive diffuse background from the dendritic/axonal felt around the cells.
+
+    A smooth spatial field (mesh-density variation on ``spatial_sigma_um``)
+    modulated by a temporal envelope that is **biologically driven**: the haze is
+    the aggregate calcium of the surrounding neural processes, so its time course
+    is the local population activity, lagged and smoothed by the felt's
+    integration (``population_tau_s``, short). Each component's envelope mixes
+    that population driver with an independent slow drift (the unmodeled
+    out-of-FOV/out-of-plane tissue, ``temporal_tau_s``, slow) at
+    ``population_coupling``. This is the modeled diffuse mesh only — out-of-focus
+    somata are a *separate* background that emerges for free from
+    ``place_neurons`` + ``optics``.
+    """
 
     domain: ClassVar[str] = "tissue"
     kind: Literal["neuropil"] = "neuropil"
     spatial_sigma_um: float = Field(gt=0, default=40.0, description="Spatial smoothness of the mesh, µm.")
-    temporal_tau_s: float = Field(gt=0, default=10.0, description="OU temporal correlation time, s (slow).")
+    temporal_tau_s: float = Field(gt=0, default=10.0, description="OU correlation time of the independent slow-drift leg, s (slow).")
+    population_tau_s: float = Field(gt=0, default=1.5, description="Low-pass time constant of the population-coupled leg, s: the felt's integration/lag, short relative to the drift.")
     amplitude: float = Field(gt=0, default=0.3, description="Background amplitude relative to cell signal.")
     n_components: int = Field(ge=1, default=3, description="Number of independent diffuse components.")
+    population_coupling: float = Field(ge=0, le=1, default=0.7, description="Fraction of the temporal envelope driven by local population activity vs independent slow drift (0=pure drift, 1=pure population).")
 
     def build(self, acq: Acquisition, rng) -> Step:
         from minisim.steps.tissue import NeuropilStep

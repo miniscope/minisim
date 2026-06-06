@@ -87,7 +87,8 @@ class GroundTruthBuilder:
     * ``vignette`` / ``leakage`` — the static (height, width) optical fields.
     * ``bleaching`` — the global per-frame decay curve.
     * ``neuropil_temporal`` / ``neuropil_spatial`` — the diffuse-background
-      components.
+      components; ``neuropil_population`` — the (frame,) population driver that
+      modulates them (``None`` when no cells were active to drive it).
 
     Step 4 defines the slots; the steps that fill them arrive in Step 5, and
     ``finalize()`` reads them into the frozen ``GroundTruth`` in Step 6.
@@ -99,6 +100,7 @@ class GroundTruthBuilder:
     bleaching: np.ndarray | None = None
     neuropil_temporal: np.ndarray | None = None
     neuropil_spatial: np.ndarray | None = None
+    neuropil_population: np.ndarray | None = None
 
 
 @dataclass

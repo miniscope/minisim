@@ -49,6 +49,7 @@ from minisim.steps.tissue import (
     bleaching_curve,
     neuropil_envelope,
     ou_process,
+    population_envelope,
     smooth_spatial_field,
 )
 
@@ -73,6 +74,7 @@ __all__ = [
     "neuron_footprint",
     "neuropil_envelope",
     "ou_process",
+    "population_envelope",
     "radius_grid",
     "resolve_focal_plane",
     "sample_neurons",

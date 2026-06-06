@@ -123,6 +123,38 @@ def ou_process(n: int, tau_frames: float, rng: np.random.Generator) -> np.ndarra
     return x
 
 
+def population_envelope(
+    traces: list[np.ndarray], tau_frames: float
+) -> np.ndarray | None:
+    """Mean-1 temporal driver from the surrounding population's calcium, or ``None``.
+
+    The neuropil is the dendritic/axonal felt of the cells around the focal plane,
+    so its brightness tracks *local population activity*: sum the per-cell traces
+    into an aggregate ``g(t) = Σ_i C_i(t)``, then **causally** low-pass it with a
+    one-pole exponential at ``tau_frames`` (``y[t] = a·y[t-1] + (1-a)·g[t]``,
+    ``a = exp(-1/τ)``). Causal, not symmetric, because the felt *integrates and
+    lags* activity — the haze swells after the population fires, never before.
+    Normalized to mean 1 so the absolute level stays carried by ``amplitude``.
+
+    Returns ``None`` when there is no signal to drive it (no cells, or all traces
+    silent), so the caller falls back to a purely independent background rather
+    than dividing by zero — the neuropil step must stay valid before
+    ``cell_activity`` has run.
+    """
+    if not traces:
+        return None
+    g = np.sum(np.stack(traces), axis=0).astype(float)
+    a = math.exp(-1.0 / tau_frames) if tau_frames > 0 else 0.0
+    smoothed = np.empty_like(g)
+    smoothed[0] = g[0]
+    for t in range(1, g.size):
+        smoothed[t] = a * smoothed[t - 1] + (1.0 - a) * g[t]
+    mean = float(smoothed.mean())
+    if mean <= _EPS:
+        return None
+    return smoothed / mean
+
+
 def neuropil_envelope(
     n_frames: int, tau_frames: float, rng: np.random.Generator
 ) -> np.ndarray:
@@ -143,19 +175,28 @@ def neuropil_envelope(
 class NeuropilStep(Step):
     """Additive diffuse background: ``amplitude · meanₖ(Sₖ(y,x) · Tₖ(t))``.
 
-    Sums ``n_components`` independent diffuse sources, each a smooth spatial
-    field :func:`smooth_spatial_field` (``[0, 1]``, structure on
-    ``spatial_sigma_um``) modulated by a slow positive temporal envelope
-    :func:`neuropil_envelope` (mean 1, correlation time ``temporal_tau_s``). The
-    components are averaged and scaled by ``amplitude`` (the background level
-    relative to the ``f0 = 1`` cell baseline), so the contribution is
-    non-negative by construction and added onto the movie. This is the modeled
-    diffuse mesh only — out-of-focus neurons are a *separate* background that
-    emerges for free from ``place_neurons`` + ``optics``.
+    Sums ``n_components`` diffuse sources, each a smooth spatial field
+    :func:`smooth_spatial_field` (``[0, 1]``, structure on ``spatial_sigma_um``)
+    modulated by a positive, mean-1 temporal envelope ``Tₖ``. The envelope is the
+    biologically driven part: a convex blend, at ``population_coupling`` ``c``,
 
-    Records the spatial fields ``(component, height, width)`` and temporal
-    envelopes ``(component, frame)`` to ground truth, so a background-removal
-    stage can be scored against the true diffuse structure.
+        ``Tₖ(t) = (1 − c)·OUₖ(t) + c·P(t)``
+
+    of an independent slow drift ``OUₖ`` :func:`neuropil_envelope` (the unmodeled
+    out-of-FOV/out-of-plane tissue) and the shared population driver ``P``
+    :func:`population_envelope` (the local cells' aggregate calcium, lagged and
+    smoothed — the dendritic felt brightening as the population fires). Both legs
+    are positive and mean-1, so ``Tₖ`` is too: the absolute level stays set by
+    ``amplitude`` (relative to the ``f0 = 1`` cell baseline) and the background is
+    non-negative by construction. With no cells yet (``P`` is ``None``) it falls
+    back to pure ``OUₖ``. This is the modeled diffuse mesh only — out-of-focus
+    somata are a *separate* background that emerges for free from
+    ``place_neurons`` + ``optics``.
+
+    Records the spatial fields ``(component, height, width)``, the realized
+    temporal envelopes ``(component, frame)``, and the population driver
+    ``(frame,)`` to ground truth, so a background-removal stage can be scored
+    against the true diffuse structure and its activity coupling.
     """
 
     name = "neuropil"
@@ -168,19 +209,28 @@ class NeuropilStep(Step):
         # do and moves with it under motion.
         n_frames, h, w = scene.movie.values.shape
         sigma_px = acq.um_to_px(spec.spatial_sigma_um)
-        tau_frames = acq.s_to_frame(spec.temporal_tau_s)
+        drift_tau_frames = acq.s_to_frame(spec.temporal_tau_s)
+        pop_tau_frames = acq.s_to_frame(spec.population_tau_s)
 
         spatial = np.stack(
             [smooth_spatial_field((h, w), sigma_px, rng) for _ in range(spec.n_components)]
         )
-        temporal = np.stack(
-            [neuropil_envelope(n_frames, tau_frames, rng) for _ in range(spec.n_components)]
-        )
+        # The shared population driver, lagged/smoothed aggregate of the cells'
+        # calcium; None (-> coupling 0) before cell_activity or when all silent.
+        traces = [cell.trace for cell in scene.cells if cell.trace is not None]
+        population = population_envelope(traces, pop_tau_frames)
+        c = spec.population_coupling if population is not None else 0.0
+        temporal = np.stack([
+            (1.0 - c) * neuropil_envelope(n_frames, drift_tau_frames, rng)
+            + (c * population if population is not None else 0.0)
+            for _ in range(spec.n_components)
+        ])
         # mean over components of the (frame, h, w) outer products, then scale.
         contrib = np.tensordot(temporal, spatial, axes=([0], [0])) / spec.n_components
         scene.movie.values[:] += spec.amplitude * contrib
         scene.truth.neuropil_spatial = spatial
         scene.truth.neuropil_temporal = temporal
+        scene.truth.neuropil_population = population
 
 
 # ---------------------------------------------------------------------------
