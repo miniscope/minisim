@@ -60,6 +60,37 @@ def test_movie_is_mutable():
     assert scene.movie.isel(frame=0, height=1, width=2) == 5.0
 
 
+# --- lazy movie allocation --------------------------------------------------
+
+
+def test_movie_is_lazy_until_accessed():
+    # A fresh scene has no movie buffer; canvas_shape is known without forcing one
+    # (so a cell-domain-only build never pays for the (n_frames, H, W) array).
+    scene = Scene.zeros(_tiny_acquisition())
+    assert scene.has_movie is False
+    assert scene.canvas_shape == (32, 24)  # sensor FOV, no allocation
+    assert scene.has_movie is False
+    _ = scene.movie.values  # first access materializes it
+    assert scene.has_movie is True
+
+
+def test_canvas_shape_includes_margin_without_allocating():
+    scene = Scene.zeros(_tiny_acquisition(), margin_px=4)
+    assert scene.canvas_shape == (32 + 8, 24 + 8)
+    assert scene.has_movie is False
+    assert scene.movie.shape == (scene.acq.n_frames, 40, 32)  # margin honored on build
+
+
+def test_canvas_shape_reads_a_hand_set_movie():
+    # An explicitly assigned (oversized) movie defines the canvas the steps see.
+    scene = Scene.zeros(_tiny_acquisition())
+    scene.movie = xr.DataArray(
+        np.zeros((scene.acq.n_frames, 50, 40)), dims=MOVIE_DIMS
+    )
+    assert scene.has_movie is True
+    assert scene.canvas_shape == (50, 40)
+
+
 # --- RNG handling ----------------------------------------------------------
 
 

@@ -1004,7 +1004,9 @@ def _oversized_scene(acq, canvas):
         np.zeros((acq.n_frames, canvas, canvas)),
         dims=("frame", "height", "width"),
     )
-    return Scene(acq=acq, rng=np.random.default_rng(0), movie=movie)
+    scene = Scene.zeros(acq, rng=np.random.default_rng(0))
+    scene.movie = movie  # hand-set an oversized canvas (canvas_shape reads it back)
+    return scene
 
 
 def test_steps_fill_the_scene_canvas_not_the_sensor_dims():

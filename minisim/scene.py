@@ -123,10 +123,69 @@ class Scene:
 
     acq: Acquisition
     rng: np.random.Generator
-    movie: xr.DataArray
     cells: list[Cell] = field(default_factory=list)
     truth: GroundTruthBuilder = field(default_factory=GroundTruthBuilder)
     snapshots: dict[str, xr.DataArray] = field(default_factory=dict)
+    # The working movie is allocated **lazily**: a partial build that runs only
+    # cell-domain steps (e.g. ``until="optics"``) never writes a pixel, so it must
+    # never pay for the ``(n_frames, H, W)`` buffer — at long durations that buffer
+    # dominates both memory and time. ``_fill``/``_margin_px`` remember how to build
+    # it on first access; ``_movie`` stays ``None`` until a movie-writing step (or
+    # any ``.movie`` read) materializes it.
+    _fill: float = 0.0
+    _margin_px: int = 0
+    _movie: xr.DataArray | None = field(default=None, repr=False)
+
+    @property
+    def movie(self) -> xr.DataArray:
+        """The working movie, materialized on first access (lazy; see fields above)."""
+        if self._movie is None:
+            self._movie = self._materialize_movie()
+        return self._movie
+
+    @movie.setter
+    def movie(self, value: xr.DataArray) -> None:
+        self._movie = value
+
+    @property
+    def has_movie(self) -> bool:
+        """Whether a movie buffer exists yet — ``True`` once a pixel step (or a
+        ``.movie`` read) has materialized it. ``finalize`` uses this to skip the
+        observed-movie cast for a cell-domain-only partial build."""
+        return self._movie is not None
+
+    @property
+    def canvas_shape(self) -> tuple[int, int]:
+        """The tissue-canvas ``(height, width)`` **without** materializing the movie.
+
+        Equals the movie's spatial shape once one exists (so a hand-set oversized
+        canvas is honored); otherwise the sensor FOV padded by the motion margin.
+        Lets cell-domain steps (``place_neurons``, ``optics``) size their grid
+        without forcing the buffer into existence.
+        """
+        if self._movie is not None:
+            h, w = self._movie.values.shape[1:]
+            return (int(h), int(w))
+        sensor = self.acq.image_sensor
+        return (
+            sensor.n_px_height + 2 * self._margin_px,
+            sensor.n_px_width + 2 * self._margin_px,
+        )
+
+    def _materialize_movie(self) -> xr.DataArray:
+        """Build the ``(n_frames, H, W)`` working buffer filled to ``_fill``."""
+        n_frames = self.acq.n_frames
+        height, width = self.canvas_shape
+        return xr.DataArray(
+            np.full((n_frames, height, width), self._fill, dtype=np.float64),
+            dims=list(MOVIE_DIMS),
+            coords={
+                "frame": np.arange(n_frames),
+                "height": np.arange(height),
+                "width": np.arange(width),
+            },
+            name="movie",
+        )
 
     @classmethod
     def zeros(
@@ -166,20 +225,9 @@ class Scene:
         # step shifts this canvas and crops the centered sensor FOV back out; the
         # margin must be ≥ the maximum shift. ``simulate()`` (Step 6) sizes it from
         # the motion spec; tests pass it explicitly. ``margin_px=0`` is the plain
-        # sensor-sized scene the non-motion steps use.
+        # sensor-sized scene the non-motion steps use. The movie itself is not
+        # allocated here — it is built lazily on first access (see the fields), so
+        # ``fill``/``margin_px`` are just remembered.
         if rng is None:
             rng = np.random.default_rng()
-        n_frames = acq.n_frames
-        height = acq.image_sensor.n_px_height + 2 * margin_px
-        width = acq.image_sensor.n_px_width + 2 * margin_px
-        movie = xr.DataArray(
-            np.full((n_frames, height, width), fill, dtype=np.float64),
-            dims=list(MOVIE_DIMS),
-            coords={
-                "frame": np.arange(n_frames),
-                "height": np.arange(height),
-                "width": np.arange(width),
-            },
-            name="movie",
-        )
-        return cls(acq=acq, rng=rng, movie=movie)
+        return cls(acq=acq, rng=rng, _fill=fill, _margin_px=margin_px)

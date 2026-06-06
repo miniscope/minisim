@@ -341,7 +341,7 @@ class PlaceNeuronsStep(Step):
         # the canvas equals the sensor FOV. Cell positions are in canvas/tissue
         # coordinates (origin = canvas top-left); the FOV crop offset is applied
         # at finalize (Step 6).
-        shape = scene.movie.values.shape[1:]  # (height, width) of the canvas
+        shape = scene.canvas_shape  # (height, width) of the canvas, no movie alloc
         fov_h_um = shape[0] * acq.pixel_size_um
         fov_w_um = shape[1] * acq.pixel_size_um
         radius_px = acq.um_to_px(spec.soma_radius_um)
@@ -736,7 +736,7 @@ class CellOpticsStep(Step):
         # canvas). Off-axis cells focus shallower by the field-curvature sagitta,
         # so each cell sees its own focal depth (no footprint warping: the
         # curvature over one soma is negligible vs the ~mm curvature radius).
-        h, w = scene.movie.values.shape[1:]
+        h, w = scene.canvas_shape  # canvas dims without forcing a movie buffer
         axis_y = h * acq.pixel_size_um / 2.0
         axis_x = w * acq.pixel_size_um / 2.0
         # "auto" focus minimizes total defocus over the population; pass the optics

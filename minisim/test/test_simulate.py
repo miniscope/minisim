@@ -113,6 +113,18 @@ def test_simulate_until_stops_after_named_stage():
     assert not np.allclose(rec.observed, np.round(rec.observed))
 
 
+def test_simulate_until_cell_domain_skips_the_movie():
+    # Stopping after a cell-domain step (optics) runs no pixel-writing step, so no
+    # movie buffer is allocated: observed comes back empty (0, H, W) while the
+    # per-cell ground truth is fully populated. This is the fast path the anatomy
+    # notebook's until="optics" cells rely on (no (n_frames, H, W) allocation).
+    rec = simulate(_minimal_spec(), until="optics")
+    acq = rec.spec.acquisition
+    assert rec.observed.shape == (0, 64, 64)
+    assert rec.ground_truth.n_units > 0
+    assert rec.ground_truth.C.shape[1] == acq.n_frames
+
+
 def test_simulate_save_intermediates_records_movie_stage_names():
     rec = simulate(_full_spec(save_intermediates=True))
     assert set(rec.snapshots) == {
