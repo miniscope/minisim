@@ -53,6 +53,7 @@ Changelog = "https://github.com/miniscope/minisim/blob/main/CHANGELOG.md"
 # The teaching notebooks render with matplotlib + ipywidgets under jupyter.
 # Kept out of the core so a plain `pip install minisim` (engine only) stays lean.
 notebook = [
+    "ipympl>=0.10.0",
     "ipywidgets",
     "jupyter",
     "matplotlib",
