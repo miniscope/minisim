@@ -10,14 +10,18 @@ effects that ride on top of the cells:
   movie; the first step to write ``scene.movie``.
 * :class:`NeuropilStep` (``neuropil``) — additive diffuse background, a smooth
   spatial field modulated by a slow temporal envelope.
-* :class:`BleachingStep` (``bleaching``) — global multiplicative fluorophore
-  decay over the recording.
 * :class:`VasculatureStep` (``vasculature``) — honest no-op placeholder; the
   absorbing-vessel model is deferred to v1.1.
 
 All run before the motion boundary, so a later ``brain_motion`` step translates
 the cells *and* these fields together (they are part of the brain frame), unlike
 the static vignette/leakage applied after motion.
+
+:class:`BleachingStep` (``bleaching``) also lives here but is a **cell-domain**
+step: photobleaching is per-cell and activity-driven, so it runs *before* render
+and writes each cell's intact-fluorophore envelope rather than touching the movie
+(see its docstring). It is kept in this module beside the render/neuropil code it
+coordinates with (render emits ``C·B``; neuropil fades with the population ``B``).
 """
 
 from __future__ import annotations
@@ -44,14 +48,17 @@ _NEUROPIL_FLUCT_LOG_STD = 0.4
 class RenderStep(Step):
     """Composite ``Σ_i footprint_i · trace_i`` additively into the movie.
 
-    Each cell contributes its footprint scaled, frame by frame, by its calcium
-    trace. The *observed* (optically degraded) footprint is used when present;
-    until the ``optics`` step (5b) populates it, the *planted* (sharp) footprint
-    is used — so the minimal chain renders sharp cells, and gains optical
-    realism for free once optics lands, with no change here. Cells missing a
-    footprint or a trace are skipped (e.g. before ``cell_activity`` has run), and
-    an empty scene leaves the movie untouched. The composite is **additive** so
-    later tissue effects (neuropil, etc.) accumulate onto the same movie.
+    Each cell contributes its footprint scaled, frame by frame, by the light it
+    actually *emits* — its calcium trace ``C`` times its bleaching envelope ``B``
+    when ``bleaching`` has run (the trace is the clean calcium; ``B`` is the
+    intact-fluorophore fraction that fades it), else just ``C``. The *observed*
+    (optically degraded) footprint is used when present; until the ``optics`` step
+    (5b) populates it, the *planted* (sharp) footprint is used — so the minimal
+    chain renders sharp cells, and gains optical realism for free once optics
+    lands, with no change here. Cells missing a footprint or a trace are skipped
+    (e.g. before ``cell_activity`` has run), and an empty scene leaves the movie
+    untouched. The composite is **additive** so later tissue effects (neuropil,
+    etc.) accumulate onto the same movie.
     """
 
     name = "cells_only"
@@ -68,7 +75,8 @@ class RenderStep(Step):
             if footprint is None or cell.trace is None:
                 continue
             footprints.append(footprint)
-            traces.append(cell.trace)
+            # The emitted trace: clean calcium, dimmed by bleaching when present.
+            traces.append(cell.trace if cell.bleach is None else cell.trace * cell.bleach)
         if not footprints:
             return
         A = np.stack(footprints)  # (unit, height, width)
@@ -193,6 +201,12 @@ class NeuropilStep(Step):
     somata are a *separate* background that emerges for free from
     ``place_neurons`` + ``optics``.
 
+    The diffuse fluorophore **bleaches with the cells**: when ``bleaching`` has
+    run, the whole background is faded by the population-average intact fraction
+    ``meanᵢ Bᵢ(t)`` — the felt is those same neurons' arbors, so it dims as they
+    do (no separate neuropil pool). The fade is folded into the stored temporal
+    envelopes, so they remain the true modulation applied.
+
     Records the spatial fields ``(component, height, width)``, the realized
     temporal envelopes ``(component, frame)``, and the population driver
     ``(frame,)`` to ground truth, so a background-removal stage can be scored
@@ -225,6 +239,11 @@ class NeuropilStep(Step):
             + (c * population if population is not None else 0.0)
             for _ in range(spec.n_components)
         ])
+        # Fade the background with the cells: scale every component by the
+        # population-average intact-fluorophore fraction, if bleaching has run.
+        bleaches = [cell.bleach for cell in scene.cells if cell.bleach is not None]
+        if bleaches:
+            temporal = temporal * np.mean(np.stack(bleaches), axis=0)[None, :]
         # mean over components of the (frame, h, w) outer products, then scale.
         contrib = np.tensordot(temporal, spatial, axes=([0], [0])) / spec.n_components
         scene.movie.values[:] += spec.amplitude * contrib
@@ -238,43 +257,72 @@ class NeuropilStep(Step):
 # ---------------------------------------------------------------------------
 
 
-def bleaching_curve(model: str, final_fraction: float, n_frames: int) -> np.ndarray:
-    """Global per-frame brightness curve, starting at 1 and ending at ``final_fraction``.
+def bleaching_pool(
+    emission: np.ndarray,
+    q: float,
+    tau_turn_frames: float,
+    intensity: float,
+    b0: float = 1.0,
+) -> np.ndarray:
+    """Intact functional-fluorophore fraction ``B(t)`` under bleaching vs turnover.
 
-    ``mono_exp`` is a single exponential pinned to both endpoints:
-    ``b[f] = final_fraction^(f/(n_frames−1))`` — ``b[0] = 1``, ``b[-1] =
-    final_fraction``, monotonically decreasing. (``bi_exp`` is rejected at spec
-    construction in v1: ``final_fraction`` alone does not determine a two-
-    component curve.) A single-frame recording is the trivial ``[1.0]``.
+    Photobleaching is a per-photon hazard: each excitation–emission cycle carries a
+    small chance of permanently destroying the fluorophore, so intact protein is
+    lost in proportion to how much it emits. Protein **turnover** opposes this,
+    synthesizing fresh fluorophore back toward full expression. Per emitter,
+
+        ``dB/dt = (1 − B)/τ_turn  −  q · intensity · emission(t) · B``
+
+    starting at ``b0`` (1 = fresh). ``emission`` is the per-frame brightness drive
+    (a cell's calcium trace; for a population, its aggregate), ``intensity`` the
+    excitation level, ``q`` the bleach susceptibility (per frame, per unit
+    emission·intensity), ``τ_turn`` the turnover time in frames. Integrated exactly
+    per frame for piecewise-constant emission (unconditionally stable). With the
+    light off (``emission`` or ``intensity`` 0) it relaxes back toward 1 — a dark
+    recovery — so imaging sessions chain by passing the previous ending ``B`` as
+    ``b0``. More active or more brightly lit emitters bleach faster and settle at a
+    lower floor ``B* = k_turn / (k_turn + q·intensity·⟨emission⟩)``.
     """
-    if model != "mono_exp":
-        raise ValueError(f"bleaching model {model!r} is not implemented (mono_exp only).")
-    if n_frames <= 1:
-        return np.ones(max(n_frames, 1))
-    f = np.arange(n_frames)
-    return final_fraction ** (f / (n_frames - 1))
+    n = len(emission)
+    out = np.empty(n)
+    k_turn = 1.0 / tau_turn_frames if tau_turn_frames > 0 else 0.0
+    b = float(b0)
+    for t in range(n):
+        out[t] = b
+        decay = k_turn + q * intensity * float(emission[t])  # total per-frame rate
+        if decay > 0:  # exact step toward the instantaneous equilibrium k_turn/decay
+            b_eq = k_turn / decay
+            b = b_eq + (b - b_eq) * math.exp(-decay)
+    return out
 
 
 class BleachingStep(Step):
-    """Global multiplicative fluorophore decay over the recording.
+    """Per-cell, activity-driven fluorophore decay — bleaching fought by turnover.
 
-    Multiplies every pixel by a per-frame :func:`bleaching_curve` decaying from 1
-    to ``final_fraction`` — the gradual loss of fluorophore brightness under
-    sustained excitation. Being a tissue-domain step it runs *before* the static
-    sensor fields, so it scales the fluorescing tissue only and never the additive
-    sensor ``leakage`` (excitation light hitting the detector does not bleach).
-    Records the decay curve ``(frame,)`` to ground truth.
+    Gives each cell an intact-fluorophore envelope ``Bᵢ(t)`` from
+    :func:`bleaching_pool`, driven by its own calcium trace (its emission) scaled by
+    the excitation ``intensity``: busier, brighter-lit cells bleach faster and to a
+    lower floor, while turnover pulls every cell back toward 1. A **cell-domain**
+    step (it runs before ``render``, like ``cell_activity`` and ``optics``): it
+    writes ``cell.bleach`` rather than touching the movie, so the trace stays the
+    clean calcium ``C`` and ``render`` emits ``C·B``. The diffuse ``neuropil`` then
+    fades with the population-average ``B``. ``finalize`` stacks the per-cell
+    envelopes into ground truth ``(unit, frame)``, a scoreable confound.
     """
 
     name = "bleaching"
-    domain = "tissue"
+    domain = "cell"
 
     def __call__(self, scene: Scene) -> None:
-        curve = bleaching_curve(
-            self.spec.model, self.spec.final_fraction, self.acq.n_frames
-        )
-        scene.movie.values[:] *= curve[:, None, None]
-        scene.truth.bleaching = curve
+        spec, acq = self.spec, self.acq
+        q = spec.bleach_susceptibility / acq.fps  # per-second coefficient -> per-frame
+        tau_frames = acq.s_to_frame(spec.turnover_tau_s)
+        for cell in scene.cells:
+            if cell.trace is None:
+                continue
+            cell.bleach = bleaching_pool(
+                cell.trace, q, tau_frames, spec.excitation_intensity
+            )
 
 
 # ---------------------------------------------------------------------------

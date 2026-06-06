@@ -88,9 +88,9 @@ def test_ground_truth_builder_starts_all_none():
         gt.shifts
         is gt.vignette
         is gt.leakage
-        is gt.bleaching
         is gt.neuropil_temporal
         is gt.neuropil_spatial
+        is gt.neuropil_population
         is None
     )
 

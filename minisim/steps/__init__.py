@@ -11,7 +11,7 @@ Migration Step 5a lands the minimal runnable chain (``place_neurons`` →
 (``neuropil``/``bleaching``/``vignette``/``leakage``, plus the ``vasculature``
 no-op placeholder) are 5c, and ``brain_motion`` is 5d — the full forward
 pipeline. The :class:`Step` base and the physics helpers
-(:func:`calcium_kernel`, :func:`neuron_footprint`, :func:`bleaching_curve`,
+(:func:`calcium_kernel`, :func:`neuron_footprint`, :func:`bleaching_pool`,
 :func:`ou_process`, :func:`bounded_random_walk`, …) are exposed here for direct
 unit testing and teaching.
 """
@@ -46,7 +46,7 @@ from minisim.steps.tissue import (
     NeuropilStep,
     RenderStep,
     VasculatureStep,
-    bleaching_curve,
+    bleaching_pool,
     neuropil_envelope,
     ou_process,
     population_envelope,
@@ -66,7 +66,7 @@ __all__ = [
     "Step",
     "VasculatureStep",
     "VignetteStep",
-    "bleaching_curve",
+    "bleaching_pool",
     "bounded_random_walk",
     "calcium_kernel",
     "degrade_footprint",

@@ -43,7 +43,7 @@ from minisim.steps import (
     SensorStep,
     VasculatureStep,
     VignetteStep,
-    bleaching_curve,
+    bleaching_pool,
     bounded_random_walk,
     calcium_kernel,
     degrade_footprint,
@@ -866,30 +866,55 @@ def test_neuropil_envelope_mix_stays_positive_with_cells():
     assert scene.movie.values.min() >= 0.0
 
 
-# --- bleaching (5c) --------------------------------------------------------
+# --- bleaching (per-cell pool: bleaching vs turnover) ----------------------
 
 
-def test_bleaching_curve_endpoints_and_monotonic():
-    curve = bleaching_curve("mono_exp", final_fraction=0.5, n_frames=100)
-    assert curve.shape == (100,)
-    assert curve[0] == pytest.approx(1.0)
-    assert curve[-1] == pytest.approx(0.5)
-    assert (np.diff(curve) <= 0).all()  # monotonically decaying
+def test_bleaching_pool_decays_under_drive_and_recovers_in_dark():
+    # Constant emission with negligible turnover: the intact fraction decays
+    # monotonically from 1 (a per-photon hazard).
+    n = 200
+    lit = bleaching_pool(np.ones(n), q=0.02, tau_turn_frames=1e9, intensity=1.0)
+    assert lit[0] == pytest.approx(1.0)
+    assert (np.diff(lit) <= 1e-12).all()  # monotonically non-increasing
+    assert lit[-1] < 0.1
+    # Light off (no emission) with turnover: the pool recovers back toward 1.
+    dark = bleaching_pool(np.zeros(n), q=0.02, tau_turn_frames=50.0, intensity=1.0, b0=0.3)
+    assert dark[0] == pytest.approx(0.3)
+    assert (np.diff(dark) >= -1e-12).all()  # monotonically non-decreasing
+    assert dark[-1] > 0.95  # recovered
 
 
-def test_bleaching_scales_every_pixel_by_the_curve():
-    acq = _acq(n_px=8, duration_s=2.0)
-    scene = Scene.ones(acq)
-    BleachingStep(Bleaching(final_fraction=0.6), acq, np.random.default_rng(0))(scene)
-    curve = bleaching_curve("mono_exp", 0.6, acq.n_frames)
-    # On an all-ones movie the result is exactly the curve, broadcast over pixels.
-    np.testing.assert_allclose(scene.movie.values[:, 3, 5], curve)
-    np.testing.assert_allclose(scene.truth.bleaching, curve)
+def test_bleaching_pool_more_emission_or_brighter_bleaches_more():
+    n = 300
+    base = bleaching_pool(np.full(n, 1.0), q=0.01, tau_turn_frames=1e9, intensity=1.0)
+    busier = bleaching_pool(np.full(n, 3.0), q=0.01, tau_turn_frames=1e9, intensity=1.0)
+    brighter = bleaching_pool(np.full(n, 1.0), q=0.01, tau_turn_frames=1e9, intensity=3.0)
+    assert busier[-1] < base[-1]      # a more active cell fades more
+    assert brighter[-1] < base[-1]    # ...as does a more brightly-lit one
+    # With turnover the decay settles at a floor B* = k_turn/(k_turn + q*I*emission).
+    settled = bleaching_pool(np.full(2000, 1.0), q=0.01, tau_turn_frames=100.0, intensity=1.0)
+    k = 1.0 / 100.0
+    assert settled[-1] == pytest.approx(k / (k + 0.01 * 1.0 * 1.0), rel=0.02)
 
 
-def test_bleaching_bi_exp_rejected_at_construction():
-    with pytest.raises(ValidationError, match="bi_exp"):
-        Bleaching(model="bi_exp")
+def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
+    acq = _acq(duration_s=10.0)
+    scene = Scene.zeros(acq)
+    PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0)).build(
+        acq, np.random.default_rng(4)
+    )(scene)
+    CellActivity(active_rate_hz=5.0, tau_decay_s=0.4, brightness_cv=0.0).build(
+        acq, np.random.default_rng(4)
+    )(scene)
+    # Exaggerated susceptibility so the fade is unambiguous in a short clip.
+    BleachingStep(Bleaching(bleach_susceptibility=0.05), acq, np.random.default_rng(4))(scene)
+    for cell in scene.cells:
+        assert cell.bleach is not None
+        assert cell.bleach[0] == pytest.approx(1.0)
+        assert cell.bleach[-1] < cell.bleach[0]  # faded by the end
+    RenderStep(Render(), acq, np.random.default_rng(4))(scene)
+    brightness = scene.movie.values.sum(axis=(1, 2))
+    assert brightness[-int(acq.fps):].mean() < brightness[: int(acq.fps)].mean()
 
 
 # --- vignette (5c) ---------------------------------------------------------
@@ -1007,10 +1032,10 @@ def test_field_chain_runs_end_to_end_and_records_ground_truth():
             density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+        Bleaching(),  # cell-domain: before render, sets each cell's bleach envelope
         CellOptics(),
         Render(),
         Neuropil(amplitude=0.3),
-        Bleaching(final_fraction=0.7),
         Vignette(falloff=0.6),
         Leakage(profile="gaussian", level=0.1),
         Sensor(photons_per_unit=120.0),
@@ -1024,7 +1049,7 @@ def test_field_chain_runs_end_to_end_and_records_ground_truth():
     assert movie.var() > 0.0
     # Every field step left its ground-truth contribution.
     assert scene.truth.neuropil_spatial is not None
-    assert scene.truth.bleaching is not None
+    assert all(c.bleach is not None for c in scene.cells)  # bleaching ran per-cell
     assert scene.truth.vignette is not None
     assert scene.truth.leakage is not None
 
@@ -1137,10 +1162,10 @@ def test_full_pipeline_with_motion_runs_end_to_end():
             density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+        Bleaching(),
         CellOptics(),
         Render(),
         Neuropil(amplitude=0.3),
-        Bleaching(final_fraction=0.7),
         BrainMotion(walk_step_um=0.4, max_shift_um=max_shift_um),
         Vignette(falloff=0.6),
         Leakage(profile="gaussian", level=0.1),

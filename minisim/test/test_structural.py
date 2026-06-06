@@ -130,10 +130,12 @@ def test_bleaching_dims_later_frames():
         steps=[
             PlaceNeurons(density_per_mm3=400000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+            # Exaggerated susceptibility so the per-cell fade (and the neuropil that
+            # dims with it) is unambiguous over a short 2 s clip.
+            Bleaching(bleach_susceptibility=0.15),
             CellOptics(),
             Render(),
             Neuropil(n_components=2, amplitude=0.4),  # a background floor to dim
-            Bleaching(model="mono_exp", final_fraction=0.5),
             Sensor(photons_per_unit=140.0),
         ],
     )

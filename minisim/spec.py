@@ -742,30 +742,36 @@ class Vasculature(StepSpec):
 
 
 class Bleaching(StepSpec):
-    """Global temporal decay of fluorophores (not the additive sensor leakage)."""
+    """Per-cell, activity-driven photobleaching, opposed by protein turnover.
 
-    domain: ClassVar[str] = "tissue"
+    Photobleaching is a per-photon hazard, so each cell loses intact fluorophore in
+    proportion to how much it emits (its calcium activity × excitation intensity),
+    while turnover replenishes it toward full expression. The realized envelope is a
+    *cell-domain* effect computed before render (see
+    :class:`~minisim.steps.tissue.BleachingStep`), not a global movie multiply: busy
+    or brightly-lit cells fade faster and to a lower floor, and with the light off
+    the pool recovers, so the same model spans single recordings and repeated
+    sessions. Defaults are physically-reasonable placeholders pending calibration to
+    measured CA1 GCaMP6f bleaching curves.
+    """
+
+    domain: ClassVar[str] = "cell"
     kind: Literal["bleaching"] = "bleaching"
-    model: Literal["mono_exp", "bi_exp"] = Field(
-        default="mono_exp",
-        description="Decay curve family. Only 'mono_exp' is implemented in v1; 'bi_exp' "
-        "is rejected at construction (final_fraction alone underdetermines it).",
+    bleach_susceptibility: float = Field(
+        ge=0, default=1.5e-4,
+        description="Bleach rate per second per unit emission·intensity (the per-photon "
+        "hazard); 0 disables bleaching. Placeholder pending CA1 GCaMP6f calibration.",
     )
-    final_fraction: float = Field(
-        gt=0, le=1, default=0.65, description="Brightness at the last frame relative to the first."
+    turnover_tau_s: float = Field(
+        gt=0, default=43200.0,
+        description="Protein-turnover time constant, s (slow; full recovery over ~days). "
+        "Restores the intact pool toward 1, opposing bleaching.",
     )
-
-    @field_validator("model")
-    @classmethod
-    def _model_implemented(cls, v: str) -> str:
-        # Fail fast at construction rather than mid-run: a single final_fraction
-        # does not pin a two-component curve, so faking one would be dishonest.
-        if v == "bi_exp":
-            raise ValueError(
-                "model='bi_exp' is not implemented in v1 (mono_exp only); "
-                "a single final_fraction does not determine a bi-exponential curve."
-            )
-        return v
+    excitation_intensity: float = Field(
+        ge=0, default=1.0,
+        description="Excitation light level (1 = reference irradiance). Scales both the "
+        "emitted signal and the bleach rate — the brighter-but-faster-fading trade-off.",
+    )
 
     def build(self, acq: Acquisition, rng) -> Step:
         from minisim.steps.tissue import BleachingStep

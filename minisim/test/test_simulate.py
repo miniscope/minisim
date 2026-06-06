@@ -64,10 +64,10 @@ def _full_spec(**output_kw):
         steps=[
             PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+            Bleaching(),
             CellOptics(),
             Render(),
             Neuropil(n_components=2),
-            Bleaching(final_fraction=0.7),
             BrainMotion(walk_step_um=0.3, max_shift_um=2.0),  # ≤ 5% of the 64 µm FOV
             Vignette(falloff=0.6),
             Leakage(profile="gaussian", level=0.1),
@@ -116,11 +116,12 @@ def test_simulate_until_stops_after_named_stage():
 def test_simulate_save_intermediates_records_movie_stage_names():
     rec = simulate(_full_spec(save_intermediates=True))
     assert set(rec.snapshots) == {
-        "cells_only", "neuropil", "bleaching", "brain_motion", "vignette", "leakage", "sensor",
+        "cells_only", "neuropil", "brain_motion", "vignette", "leakage", "sensor",
     }
     # cell-domain steps are not snapshotted (they don't touch the movie)
     assert "place_neurons" not in rec.snapshots
     assert "optics" not in rec.snapshots
+    assert "bleaching" not in rec.snapshots  # cell-domain: writes per-cell envelopes
     # the sensor-stage snapshot is the observed movie
     np.testing.assert_array_equal(rec.stage("sensor").values, rec.observed)
 

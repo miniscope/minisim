@@ -51,6 +51,9 @@ class Cell:
       scales the whole trace, all from ``cell_activity``. The gain is biology
       (how much fluorescence this cell emits per spike); measurement noise, and
       hence any SNR, emerges later from ``optics`` and ``sensor``, not here.
+    * ``bleach`` — the intact-fluorophore envelope ``B(t)`` from the optional
+      ``bleaching`` step; ``render`` emits ``trace · bleach``, leaving ``trace``
+      the clean calcium. ``None`` until/unless bleaching runs.
     * ``footprint_observed`` / ``in_focus`` / ``optical_brightness`` — the
       optically degraded footprint, the geometric in-focus flag, and the
       depth-driven peak-brightness scalar, all from the ``optics`` step (5b).
@@ -69,6 +72,7 @@ class Cell:
     trace: np.ndarray | None = None
     spikes: np.ndarray | None = None
     amplitude: float | None = None
+    bleach: np.ndarray | None = None
     in_focus: bool | None = None
     optical_brightness: float | None = None
     detectable: bool | None = None
@@ -85,7 +89,6 @@ class GroundTruthBuilder:
 
     * ``shifts`` — rigid (dy, dx) per frame, from ``brain_motion``.
     * ``vignette`` / ``leakage`` — the static (height, width) optical fields.
-    * ``bleaching`` — the global per-frame decay curve.
     * ``neuropil_temporal`` / ``neuropil_spatial`` — the diffuse-background
       components; ``neuropil_population`` — the (frame,) population driver that
       modulates them (``None`` when no cells were active to drive it).
@@ -97,7 +100,6 @@ class GroundTruthBuilder:
     shifts: np.ndarray | None = None
     vignette: np.ndarray | None = None
     leakage: np.ndarray | None = None
-    bleaching: np.ndarray | None = None
     neuropil_temporal: np.ndarray | None = None
     neuropil_spatial: np.ndarray | None = None
     neuropil_population: np.ndarray | None = None

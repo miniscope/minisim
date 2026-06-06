@@ -126,10 +126,10 @@ def test_per_effect_fields_present_for_full_pipeline():
     steps = [
         PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+        Bleaching(),
         CellOptics(),
         Render(),
         Neuropil(n_components=2),
-        Bleaching(final_fraction=0.7),
         BrainMotion(walk_step_um=0.3, max_shift_um=max_shift_um),
         Vignette(falloff=0.6),
         Leakage(profile="gaussian", level=0.1),
@@ -141,7 +141,7 @@ def test_per_effect_fields_present_for_full_pipeline():
     assert gt.shifts.shape == (acq.n_frames, 2)
     assert gt.vignette.shape == (32, 32)  # FOV-sized
     assert gt.leakage.shape == (32, 32)
-    assert gt.bleaching.shape == (acq.n_frames,)
+    assert gt.bleaching.shape == (gt.n_units, acq.n_frames)  # per-cell envelopes
     assert gt.neuropil_temporal.shape == (2, acq.n_frames)
     assert gt.neuropil_spatial.shape == (2, 32, 32)  # cropped to FOV grid
 

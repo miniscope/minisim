@@ -70,10 +70,10 @@ def _full_spec(seed=11, **output_kw):
         steps=[
             PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+            Bleaching(),
             CellOptics(),
             Render(),
             Neuropil(n_components=2),
-            Bleaching(final_fraction=0.7),
             BrainMotion(walk_step_um=0.3, max_shift_um=2.0),
             Vignette(falloff=0.6),
             Leakage(profile="gaussian", level=0.1),

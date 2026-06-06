@@ -92,7 +92,7 @@ class GroundTruth(BaseModel):
     shifts: NDArray[Shape["* frame, 2"], float] | None = None
     vignette: NDArray[Shape["* height, * width"], float] | None = None
     leakage: NDArray[Shape["* height, * width"], float] | None = None
-    bleaching: NDArray[Shape["* frame"], float] | None = None
+    bleaching: NDArray[Shape["* unit, * frame"], float] | None = None
     neuropil_temporal: NDArray[Shape["* component, * frame"], float] | None = None
     neuropil_spatial: NDArray[Shape["* component, * height, * width"], float] | None = None
     neuropil_population: NDArray[Shape["* frame"], float] | None = None
@@ -115,8 +115,9 @@ class GroundTruth(BaseModel):
     def detectable_subset(self) -> GroundTruth:
         """Subset to detectable cells — the fair denominator for recall metrics.
 
-        Slices the per-unit arrays by the ``detectable`` mask; the per-effect
-        fields (shifts, vignette, …) are not per-unit and are carried unchanged.
+        Slices the per-unit arrays by the ``detectable`` mask (``bleaching`` is
+        per-unit too); the per-effect fields (shifts, vignette, neuropil, …) are
+        not per-unit and are carried unchanged.
         """
         m = self.detectable
         return GroundTruth(
@@ -128,10 +129,10 @@ class GroundTruth(BaseModel):
             amplitude_per_cell=self.amplitude_per_cell[m],
             in_focus=self.in_focus[m],
             detectable=self.detectable[m],
+            bleaching=self.bleaching[m] if self.bleaching is not None else None,
             shifts=self.shifts,
             vignette=self.vignette,
             leakage=self.leakage,
-            bleaching=self.bleaching,
             neuropil_temporal=self.neuropil_temporal,
             neuropil_spatial=self.neuropil_spatial,
             neuropil_population=self.neuropil_population,
@@ -279,7 +280,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
     vignette = scene.truth.vignette  # FOV-sized field, or None
 
-    planted, observed, traces, spikes = [], [], [], []
+    planted, observed, traces, spikes, bleaches = [], [], [], [], []
     centers, amplitudes, in_focus, detectable = [], [], [], []
     for cell in scene.cells:
         if cell.footprint_planted is None:
@@ -306,6 +307,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         observed.append(o_crop)
         traces.append(trace)
         spikes.append(spike)
+        bleaches.append(cell.bleach)
         centers.append((z, y_fov_um, x_fov_um))
         amplitudes.append(cell.amplitude if cell.amplitude is not None else float("nan"))
         in_focus.append(ifocus)
@@ -322,10 +324,16 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         amplitude_per_cell=np.array(amplitudes, dtype=float),
         in_focus=np.array(in_focus, dtype=bool),
         detectable=np.array(detectable, dtype=bool),
+        # Per-cell bleaching envelopes (unit, frame), present only if the bleaching
+        # step ran; any cell without one (e.g. added afterward) gets a no-fade row.
+        bleaching=(
+            _stack([b if b is not None else np.ones(n_frames) for b in bleaches], (0, n_frames))
+            if any(b is not None for b in bleaches)
+            else None
+        ),
         shifts=scene.truth.shifts,
         vignette=vignette,
         leakage=scene.truth.leakage,
-        bleaching=scene.truth.bleaching,
         neuropil_temporal=scene.truth.neuropil_temporal,
         neuropil_spatial=_crop_components(scene.truth.neuropil_spatial, fov_h, fov_w),
         neuropil_population=scene.truth.neuropil_population,
