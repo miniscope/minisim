@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
-from scipy.signal import fftconvolve
+from scipy.signal import oaconvolve
 
 from minisim.scene import Cell, Scene
 from minisim.steps.base import Step
@@ -561,9 +561,18 @@ class CellActivityStep(Step):
         pad = int(np.ceil(6.0 * spec.tau_decay_s * fps))
         n_total = n_frames + pad
         gains = _sample_brightness(spec.brightness_cv, len(scene.cells), self.rng)
-        for cell, gain in zip(scene.cells, gains):
-            fine = self._fine_spikes(spec, n_total, fps, bins, self.rng)
-            calcium = fftconvolve(fine, kernel)[: fine.size]
+        # The 2-state gate is the same Markov chain for every cell, so step them all
+        # together: one O(n_total) time-loop over a per-cell state vector, instead of
+        # a Python loop per cell. The fine spikes the gate modulates, and the calcium
+        # convolution, stay per-cell -- each is a long (n_total*bins) array, so
+        # batching them would trade back the memory we just stopped wasting on the
+        # movie for little speed.
+        states = self._gate_states(spec, len(scene.cells), n_total, self.rng)
+        for cell, gain, state in zip(scene.cells, gains, states):
+            fine = self._fine_spikes(state, bins, hr_fps, spec, self.rng)
+            # Short kernel vs a long fine train -> overlap-add convolution (O(n log k))
+            # beats a full-length FFT (fftconvolve, O(n log n)) and allocates less.
+            calcium = oaconvolve(fine, kernel)[: fine.size]
             # Bin-average to the imaging rate (camera exposure integration), then drop
             # the burn-in lead-in. The per-cell gain scales the whole trace (baseline +
             # transients), so a bright cell emits more light everywhere -- a higher
@@ -577,32 +586,43 @@ class CellActivityStep(Step):
             cell.amplitude = float(gain)
 
     @staticmethod
-    def _fine_spikes(
-        spec, n_frames: int, fps: float, bins: int, rng: np.random.Generator
+    def _gate_states(
+        spec, n_cells: int, n_frames: int, rng: np.random.Generator
     ) -> np.ndarray:
-        """Binary spike train on the high-res grid (length ``n_frames * bins``).
+        """Per-cell quiescent↔active gate for all cells at once: ``(n_cells, n_frames)``.
 
-        The 2-state gate is stepped once per frame (sequential, O(n_frames)); spikes
-        are then drawn per fine bin as a Bernoulli at ``rate / hr_fps``. One spike
-        per ~3 ms bin enforces the refractory period for free. The gate starts in its
-        **stationary** state (active with prob = the long-run active fraction), so a
-        recording does not always open with a quiet stretch.
+        The 2-state Markov chain is identical across cells, so one time-loop over a
+        ``(n_cells,)`` boolean ``active`` vector replaces the per-cell Python loop.
+        Each frame draws **one** uniform per cell and flips it with the same rule the
+        scalar chain used (an active cell stays active unless it fires the a→q
+        transition; a quiescent cell flips on q→a), so the draw count per cell is
+        unchanged. Gates start in the **stationary** active fraction, so a recording
+        does not always open with a quiet stretch.
         """
-        state = np.empty(n_frames, dtype=bool)
         p_q2a, p_a2q = spec.p_quiescent_to_active, spec.p_active_to_quiescent
         f_stationary = p_q2a / (p_q2a + p_a2q)
-        active = bool(rng.random() < f_stationary)
+        active = rng.random(n_cells) < f_stationary
+        states = np.empty((n_cells, n_frames), dtype=bool)
         for f in range(n_frames):
-            if not active:
-                if rng.random() < p_q2a:
-                    active = True
-            elif rng.random() < p_a2q:
-                active = False
-            state[f] = active
-        hr_fps = bins * fps
+            r = rng.random(n_cells)
+            active = np.where(active, r >= p_a2q, r < p_q2a)
+            states[:, f] = active
+        return states
+
+    @staticmethod
+    def _fine_spikes(
+        state: np.ndarray, bins: int, hr_fps: float, spec, rng: np.random.Generator
+    ) -> np.ndarray:
+        """Binary spike train on the high-res grid for one cell (length ``state.size * bins``).
+
+        Expands the cell's per-frame gate ``state`` to the fine grid and draws a
+        Bernoulli per ~3 ms bin at ``rate / hr_fps`` (``active`` vs ``quiescent``
+        rate). One spike per fine bin enforces the refractory period for free, and
+        the sub-frame spike timing survives into the calcium kernel.
+        """
         rate = np.where(np.repeat(state, bins), spec.active_rate_hz, spec.quiescent_rate_hz)
         p_spike = np.minimum(rate / hr_fps, 1.0)
-        return (rng.random(n_frames * bins) < p_spike).astype(float)
+        return (rng.random(state.size * bins) < p_spike).astype(float)
 
 
 # ---------------------------------------------------------------------------
