@@ -751,26 +751,28 @@ class Bleaching(StepSpec):
     :class:`~minisim.steps.tissue.BleachingStep`), not a global movie multiply: busy
     or brightly-lit cells fade faster and to a lower floor, and with the light off
     the pool recovers, so the same model spans single recordings and repeated
-    sessions. Defaults are physically-reasonable placeholders pending calibration to
-    measured CA1 GCaMP6f bleaching curves.
+    sessions. Defaults are calibrated to measured CA1 GCaMP6f bleaching curves
+    across a wide range of excitation powers (bleaching linear in excitation;
+    effective recovery ≈5.5 h, so darkness restores the pool within a couple of days).
     """
 
     domain: ClassVar[str] = "cell"
     kind: Literal["bleaching"] = "bleaching"
     bleach_susceptibility: float = Field(
-        ge=0, default=1.5e-4,
-        description="Bleach rate per second per unit emission·intensity (the per-photon "
-        "hazard); 0 disables bleaching. Placeholder pending CA1 GCaMP6f calibration.",
+        ge=0, default=6.3e-6,
+        description="Bleach rate per second at unit excitation and baseline emission (the "
+        "per-photon hazard); 0 disables bleaching. Calibrated to CA1 GCaMP6f.",
     )
     turnover_tau_s: float = Field(
-        gt=0, default=43200.0,
-        description="Protein-turnover time constant, s (slow; full recovery over ~days). "
-        "Restores the intact pool toward 1, opposing bleaching.",
+        gt=0, default=20000.0,
+        description="Effective fluorophore-recovery time constant, s (≈5.5 h, from the "
+        "measured replenish rate). Restores the intact pool toward 1, opposing bleaching.",
     )
     excitation_intensity: float = Field(
         ge=0, default=1.0,
-        description="Excitation light level (1 = reference irradiance). Scales both the "
-        "emitted signal and the bleach rate — the brighter-but-faster-fading trade-off.",
+        description="Excitation level, dimensionless (1 = a typical continuous miniscope "
+        "level). Deliberately unitless — absolute irradiance depends on the rig, depth, and "
+        "optics. Scales the bleach rate linearly: the brighter-but-faster-fading trade-off.",
     )
 
     def build(self, acq: Acquisition, rng) -> Step:

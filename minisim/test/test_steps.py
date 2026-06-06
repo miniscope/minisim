@@ -906,8 +906,11 @@ def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
     CellActivity(active_rate_hz=5.0, tau_decay_s=0.4, brightness_cv=0.0).build(
         acq, np.random.default_rng(4)
     )(scene)
-    # Exaggerated susceptibility so the fade is unambiguous in a short clip.
-    BleachingStep(Bleaching(bleach_susceptibility=0.05), acq, np.random.default_rng(4))(scene)
+    # Exaggerated susceptibility (at unit intensity) so the fade is unambiguous.
+    BleachingStep(
+        Bleaching(bleach_susceptibility=0.05, excitation_intensity=1.0),
+        acq, np.random.default_rng(4),
+    )(scene)
     for cell in scene.cells:
         assert cell.bleach is not None
         assert cell.bleach[0] == pytest.approx(1.0)
