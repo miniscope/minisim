@@ -370,6 +370,25 @@ def test_cell_activity_is_reproducible():
     np.testing.assert_array_equal(traces[0], traces[1])
 
 
+def test_cell_activity_opens_at_steady_state_no_cold_ramp():
+    # The burn-in lead-in means a trace starts with a realistic decaying history, so
+    # the population-mean opens at its stationary level instead of ramping up from
+    # baseline over a few tau_decay (a raw history-free convolution would start at f0).
+    acq = _acq(n_px=80, duration_s=15.0)
+    scene = Scene.zeros(acq)
+    PlaceNeurons(density_per_mm3=6e5, depth_range_um=(0.0, 0.0), soma_radius_um=4.0).build(
+        acq, np.random.default_rng(3)
+    )(scene)
+    CellActivity(active_rate_hz=5.0, tau_decay_s=0.5, brightness_cv=0.0).build(
+        acq, np.random.default_rng(3)
+    )(scene)
+    m = np.stack([c.trace for c in scene.cells]).mean(axis=0)  # population mean trace
+    early = m[: int(0.5 * acq.fps)].mean()       # first 0.5 s
+    steady = m[int(5.0 * acq.fps):].mean()       # well past any ramp
+    assert steady > 1.3                          # a real calcium baseline exists to ramp to
+    assert 0.85 * steady < early < 1.15 * steady  # ...yet the opening is already there
+
+
 # --- render ----------------------------------------------------------------
 
 

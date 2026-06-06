@@ -553,19 +553,27 @@ class CellActivityStep(Step):
         bins = max(int(round(spec.spike_sim_hz / fps)), 1)  # fine bins per frame
         hr_fps = bins * fps  # realized high-res rate (integer multiple of fps)
         kernel = calcium_kernel(spec.tau_rise_s, spec.tau_decay_s, hr_fps)
+        # Burn-in: generate a lead-in of ~6 decay constants and trim it away. A raw
+        # convolution opens cold (no spikes before frame 0), so the trace would ramp
+        # from baseline up to its stationary level over a few tau_decay; the lead-in
+        # gives frame 0 a realistic history of already-decaying tails instead. Six
+        # tau_decay leaves <0.3% of a spike's tail unrepresented.
+        pad = int(np.ceil(6.0 * spec.tau_decay_s * fps))
+        n_total = n_frames + pad
         gains = _sample_brightness(spec.brightness_cv, len(scene.cells), self.rng)
         for cell, gain in zip(scene.cells, gains):
-            fine = self._fine_spikes(spec, n_frames, fps, bins, self.rng)
+            fine = self._fine_spikes(spec, n_total, fps, bins, self.rng)
             calcium = fftconvolve(fine, kernel)[: fine.size]
-            # Bin-average to the imaging rate (camera exposure integration); the
-            # per-cell gain scales the whole trace (baseline + transients), so a
-            # bright cell emits more light everywhere -- a higher emergent SNR later.
-            clean = calcium.reshape(n_frames, bins).mean(axis=1)
+            # Bin-average to the imaging rate (camera exposure integration), then drop
+            # the burn-in lead-in. The per-cell gain scales the whole trace (baseline +
+            # transients), so a bright cell emits more light everywhere -- a higher
+            # emergent SNR later.
+            clean = calcium.reshape(n_total, bins).mean(axis=1)[pad:]
             trace = gain * (spec.f0 + clean)
             if spec.trace_noise > 0:
                 trace = trace + self.rng.normal(0.0, spec.trace_noise, size=n_frames)
             cell.trace = trace
-            cell.spikes = fine.reshape(n_frames, bins).sum(axis=1)  # per-frame counts
+            cell.spikes = fine.reshape(n_total, bins).sum(axis=1)[pad:]  # per-frame counts
             cell.amplitude = float(gain)
 
     @staticmethod
