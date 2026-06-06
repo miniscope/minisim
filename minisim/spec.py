@@ -274,33 +274,43 @@ class Tissue(_Base):
     the footprint (forward-scattered light, ``g ≈ 0.88``, is recollected as a
     growing halo → :meth:`scatter_sigma_um`, ``scatter_blur_per_um``).
 
-    Round-trip scattering. The signal makes two scattering-attenuated passes
-    through tissue: excitation light travels *in* (GCaMP ≈ 470 nm) and emission
-    travels *out* (≈ 525 nm), so a cell at depth ``z`` is attenuated on both legs
-    (see :meth:`attenuation`). Shorter wavelengths scatter more, so the blue
-    excitation leg has the shorter MFP.
+    Round-trip scattering, asymmetric. The signal makes two passes through
+    tissue, but they attenuate very differently:
+
+    * **Excitation in (≈470 nm)** is delivered by *widefield* illumination, so it
+      reaches a cell as a *diffuse* fluence, not a ballistic beam. Diffuse light
+      penetrates far (transport length ≈ 800 µm) and its fluence actually peaks a
+      few hundred µm deep before falling (Ma et al. 2020, Neurophotonics
+      7:031208), so over the depths a 1-photon scope images, excitation barely
+      dims cells — a *long* effective MFP (``scatter_mfp_excitation_um``).
+    * **Emission out (≈525 nm)** is the *image-forming* sharp signal, which
+      decays at roughly the scattering MFP (``scatter_mfp_emission_um``). This leg
+      dominates the depth-dimming.
+
+    Modelling excitation as ballistic (a short, symmetric leg) double-counts the
+    loss and makes deep cells unrealistically dim; the asymmetric split above is
+    both more honest and what keeps the round trip from over-attenuating.
 
     Literature anchors (mouse cortex / gray matter). The *ballistic* scattering
     mean free path at blue/green is ≈ 40–50 µm (μ_s ≈ 200 cm⁻¹, g ≈ 0.86–0.89):
     ≈ 47 µm at 473 nm (Al-Juboori et al. 2013, PLoS ONE 8:e67626) and ≈ 38 µm at
-    515 nm (Azimipour et al. 2014, Biomed. Opt. Express). That ballistic length
-    is what sets the *blur* rate. The light an objective actually *collects*
-    decays more slowly than ballistic, because the strong forward scattering is
-    largely recollected and widefield excitation penetrates diffusely (transport
-    length ≈ 800 µm; Ma et al. 2020, Neurophotonics 7:031208) — so the per-leg
-    *effective attenuation* MFPs below are deliberately milder (~90–110 µm) than
-    the bare ballistic numbers; their round trip gives an effective ≈ 50 µm.
+    515 nm (Azimipour et al. 2014, Biomed. Opt. Express). That ballistic length is
+    what sets the *blur* rate. The light an objective actually *collects* decays
+    more slowly, because the strong forward scattering (g ≈ 0.88) is largely
+    recollected — so the emission leg uses the *high end* of the scattering-MFP
+    literature (~100 µm), and the diffuse excitation leg is longer still; their
+    round trip gives an effective ≈ 85 µm (see :attr:`scatter_mfp_um`).
     """
 
     scatter_mfp_excitation_um: float = Field(
         gt=0,
-        default=90.0,
-        description="Effective attenuation MFP for the excitation leg (≈470 nm, in), µm.",
+        default=600.0,
+        description="Effective attenuation MFP for the excitation leg (≈470 nm, in) — long, diffuse fluence, µm.",
     )
     scatter_mfp_emission_um: float = Field(
         gt=0,
-        default=110.0,
-        description="Effective attenuation MFP for the emission leg (≈525 nm, out), µm.",
+        default=100.0,
+        description="Effective attenuation MFP for the emission leg (≈525 nm, out) — the image-forming scattering MFP, µm.",
     )
     scatter_blur_per_um: float = Field(
         ge=0,
@@ -317,9 +327,9 @@ class Tissue(_Base):
         The two exponential legs multiply, ``exp(−z/mfp_ex)·exp(−z/mfp_em) =
         exp(−z/mfp_eff)``, so the combined length is the harmonic-style
         reciprocal sum ``1/mfp_eff = 1/mfp_ex + 1/mfp_em``. With the defaults
-        (90 / 110 µm) this is ≈ 49.5 µm — i.e. ~2× steeper depth-dimming than a
-        single 100 µm pass, reflecting that the light is attenuated both going in
-        and coming out.
+        (excitation 600 µm, emission 100 µm) this is ≈ 85.7 µm — dominated by the
+        emission leg, since the diffuse excitation leg attenuates little over
+        imaging depths (see the class docstring for why the legs are asymmetric).
         """
         return 1.0 / (1.0 / self.scatter_mfp_excitation_um + 1.0 / self.scatter_mfp_emission_um)
 
