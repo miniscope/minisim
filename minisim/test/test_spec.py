@@ -270,10 +270,22 @@ def test_defocus_grows_with_na():
 
 
 def test_attenuation_monotonic_and_bounded():
-    t = Tissue(scatter_mfp_um=100.0)
+    t = Tissue(scatter_mfp_excitation_um=90.0, scatter_mfp_emission_um=110.0)
     assert t.attenuation(0.0) == pytest.approx(1.0)
     assert t.attenuation(200.0) < t.attenuation(50.0) < t.attenuation(0.0)
     assert 0.0 < t.attenuation(500.0) <= 1.0
+
+
+def test_round_trip_mfp_is_reciprocal_sum_and_steeper_than_either_leg():
+    # The excitation + emission legs multiply, so the effective MFP is the
+    # reciprocal sum (1/mfp_eff = 1/mfp_ex + 1/mfp_em) — shorter than either leg.
+    t = Tissue(scatter_mfp_excitation_um=90.0, scatter_mfp_emission_um=110.0)
+    assert t.scatter_mfp_um == pytest.approx(1.0 / (1.0 / 90.0 + 1.0 / 110.0))
+    assert t.scatter_mfp_um < min(t.scatter_mfp_excitation_um, t.scatter_mfp_emission_um)
+    # Round trip == the two single-leg exponentials applied in series.
+    z = 75.0
+    leg_product = math.exp(-z / 90.0) * math.exp(-z / 110.0)
+    assert t.attenuation(z) == pytest.approx(leg_product)
 
 
 def test_scatter_sigma_monotonic_and_zero_at_surface():

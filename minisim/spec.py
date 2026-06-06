@@ -9,7 +9,7 @@ notebook walks through, a test parametrizes over, and a cache keys on.
 Two layers, by design (see ``proposals/simulation-spec.md`` §2):
 
 * **Layer 1 — what you read off a datasheet.** ``Optics.na``,
-  ``Optics.magnification``, ``Tissue.scatter_mfp_um`` and friends. Every knob a
+  ``Optics.magnification``, ``Tissue.scatter_mfp_emission_um`` and friends. Every knob a
   user touches here is a real, measurable property of a real scope or sample.
 * **Layer 2 — what a step consumes.** Pixel size, PSF sigma, attenuation, noise
   variance — *derived* from Layer 1 by small, documented, individually-testable
@@ -267,32 +267,72 @@ class ImageSensor(_Base):
 class Tissue(_Base):
     """Light-scattering properties of the imaged tissue, as a function of depth.
 
-    Both fields parametrize Layer-2 helpers (``attenuation``, ``scatter_sigma``)
-    whose closed forms arrive in migration Step 3. Typical mouse cortex emission
-    mean-free-path is ~50–200 µm.
+    The fields parametrize Layer-2 helpers (``attenuation``, ``scatter_sigma``).
+    Scattering has two separable consequences on a cell's image, modelled by two
+    knobs: it *dims* the sharp signal (light scattered out of the collection cone
+    is lost → :meth:`attenuation`, the ``scatter_mfp_*`` fields) and it *blurs*
+    the footprint (forward-scattered light, ``g ≈ 0.88``, is recollected as a
+    growing halo → :meth:`scatter_sigma_um`, ``scatter_blur_per_um``).
+
+    Round-trip scattering. The signal makes two scattering-attenuated passes
+    through tissue: excitation light travels *in* (GCaMP ≈ 470 nm) and emission
+    travels *out* (≈ 525 nm), so a cell at depth ``z`` is attenuated on both legs
+    (see :meth:`attenuation`). Shorter wavelengths scatter more, so the blue
+    excitation leg has the shorter MFP.
+
+    Literature anchors (mouse cortex / gray matter). The *ballistic* scattering
+    mean free path at blue/green is ≈ 40–50 µm (μ_s ≈ 200 cm⁻¹, g ≈ 0.86–0.89):
+    ≈ 47 µm at 473 nm (Al-Juboori et al. 2013, PLoS ONE 8:e67626) and ≈ 38 µm at
+    515 nm (Azimipour et al. 2014, Biomed. Opt. Express). That ballistic length
+    is what sets the *blur* rate. The light an objective actually *collects*
+    decays more slowly than ballistic, because the strong forward scattering is
+    largely recollected and widefield excitation penetrates diffusely (transport
+    length ≈ 800 µm; Ma et al. 2020, Neurophotonics 7:031208) — so the per-leg
+    *effective attenuation* MFPs below are deliberately milder (~90–110 µm) than
+    the bare ballistic numbers; their round trip gives an effective ≈ 50 µm.
     """
 
-    scatter_mfp_um: float = Field(
+    scatter_mfp_excitation_um: float = Field(
         gt=0,
-        default=100.0,
-        description="Mean free path for emission photons (Beer–Lambert length scale), µm.",
+        default=90.0,
+        description="Effective attenuation MFP for the excitation leg (≈470 nm, in), µm.",
+    )
+    scatter_mfp_emission_um: float = Field(
+        gt=0,
+        default=110.0,
+        description="Effective attenuation MFP for the emission leg (≈525 nm, out), µm.",
     )
     scatter_blur_per_um: float = Field(
         ge=0,
-        default=0.02,
+        default=0.08,
         description="Linear broadening of the footprint per µm of depth (µm sigma per µm depth).",
     )
 
     # ---- Layer-2 helpers: scattering as a function of absolute depth ----
 
-    def attenuation(self, z_um: float) -> float:
-        """Fraction of emission light surviving scatter from depth ``z_um`` — in (0, 1].
+    @property
+    def scatter_mfp_um(self) -> float:
+        """Effective round-trip (excitation × emission) attenuation MFP, µm.
 
-        Beer–Lambert exponential decay ``exp(−z / mfp)`` over the mean free path
-        ``scatter_mfp_um``. Monotonically decreasing in depth and equal to 1 at
-        the surface (``z = 0``). Genuinely *removes* light — unlike defocus — so
-        a deep cell is irreversibly dimmer, which is exactly the irreducible
-        limit the module teaches. Typical mouse-cortex emission MFP ≈ 50–200 µm.
+        The two exponential legs multiply, ``exp(−z/mfp_ex)·exp(−z/mfp_em) =
+        exp(−z/mfp_eff)``, so the combined length is the harmonic-style
+        reciprocal sum ``1/mfp_eff = 1/mfp_ex + 1/mfp_em``. With the defaults
+        (90 / 110 µm) this is ≈ 49.5 µm — i.e. ~2× steeper depth-dimming than a
+        single 100 µm pass, reflecting that the light is attenuated both going in
+        and coming out.
+        """
+        return 1.0 / (1.0 / self.scatter_mfp_excitation_um + 1.0 / self.scatter_mfp_emission_um)
+
+    def attenuation(self, z_um: float) -> float:
+        """Fraction of light surviving the round-trip scatter from depth ``z_um`` — in (0, 1].
+
+        Beer–Lambert decay applied on *both* legs the signal travels: excitation
+        in (≈470 nm) then emission out (≈525 nm). The product collapses to a
+        single exponential over the effective MFP, ``exp(−z / scatter_mfp_um)``
+        (see :attr:`scatter_mfp_um`). Monotonically decreasing in depth and equal
+        to 1 at the surface (``z = 0``). Genuinely *removes* light — unlike
+        defocus — so a deep cell is irreversibly dimmer, the irreducible limit
+        the module teaches.
         """
         return math.exp(-z_um / self.scatter_mfp_um)
 
@@ -300,10 +340,13 @@ class Tissue(_Base):
         """Scatter-induced footprint broadening (Gaussian σ), µm, at depth ``z_um``.
 
         Linear phenomenological model ``σ = scatter_blur_per_um · z``: deeper
-        cells scatter more on the way out and so appear both larger and dimmer
-        (see :meth:`attenuation`). Monotonically increasing in depth and zero at
-        the surface. Unlike defocus this is not intensity-conserving — it
-        co-occurs with attenuation.
+        cells scatter more and so appear both larger and dimmer (see
+        :meth:`attenuation`). Monotonically increasing in depth and zero at the
+        surface. Unlike defocus this is not intensity-conserving — it co-occurs
+        with attenuation. The rate is set by the ballistic scattering MFP
+        (~40–50 µm at blue/green; Al-Juboori et al. 2013): with the default 0.08,
+        a cell at 100 µm picks up σ ≈ 8 µm (FWHM ≈ 19 µm, larger than a soma), so
+        deep cells read as the blurry halos seen in real 1-photon data.
         """
         return self.scatter_blur_per_um * z_um
 

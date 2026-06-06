@@ -101,14 +101,16 @@ def test_strong_vignette_concentrates_detection_centrally():
         acquisition=_acq(focal_depth_in_tissue_um=5.0, depth_of_field_um=40.0),
         seed=11,
         steps=[
-            PlaceNeurons(density_per_mm3=600000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+            # A dense, shallow population so the vignette gradient — not per-cell
+            # amplitude scatter — dominates which cells clear the floor.
+            PlaceNeurons(density_per_mm3=2.5e6, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),
-            Vignette(falloff=0.3, exponent=2.0),  # edge at 30% brightness
+            Vignette(falloff=0.1, exponent=2.0),  # edge at 10% brightness
             # Bright enough that a non-trivial in-focus population clears the noise
             # floor; the steep vignette then keeps the survivors near the center.
-            Sensor(photons_per_unit=1000.0),
+            Sensor(photons_per_unit=1200.0),
         ],
     )
     rec = simulate(spec)
