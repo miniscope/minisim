@@ -304,7 +304,7 @@ class Tissue(_Base):
     )
     scatter_blur_per_um: float = Field(
         ge=0,
-        default=0.08,
+        default=0.05,
         description="Linear broadening of the footprint per µm of depth (µm sigma per µm depth).",
     )
 
@@ -344,9 +344,9 @@ class Tissue(_Base):
         :meth:`attenuation`). Monotonically increasing in depth and zero at the
         surface. Unlike defocus this is not intensity-conserving — it co-occurs
         with attenuation. The rate is set by the ballistic scattering MFP
-        (~40–50 µm at blue/green; Al-Juboori et al. 2013): with the default 0.08,
-        a cell at 100 µm picks up σ ≈ 8 µm (FWHM ≈ 19 µm, larger than a soma), so
-        deep cells read as the blurry halos seen in real 1-photon data.
+        (~40–50 µm at blue/green; Al-Juboori et al. 2013): with the default 0.05,
+        a cell at 100 µm picks up σ ≈ 5 µm (FWHM ≈ 12 µm, about a soma diameter),
+        so deep cells read as the blurry halos seen in real 1-photon data.
         """
         return self.scatter_blur_per_um * z_um
 
