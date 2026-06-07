@@ -61,7 +61,30 @@ from minisim.steps.tissue import (
     smooth_spatial_field,
 )
 
+#: The declarative spec→step mapping, keyed by ``StepSpec.kind``. This single
+#: table *is* the relationship between a spec and its executable step;
+#: ``StepSpec.build`` looks the class up here rather than each spec hardcoding an
+#: import. It lives in the steps package (not ``spec``) because the step modules
+#: depend, through ``recording``, back on ``spec`` — so ``spec`` cannot import the
+#: classes at module load. ``test_spec`` asserts it stays in 1:1 sync with the
+#: spec ``kind`` catalog.
+STEP_FOR_KIND: dict[str, type[Step]] = {
+    "place_neurons": PlaceNeuronsStep,
+    "cell_activity": CellActivityStep,
+    "optics": CellOpticsStep,
+    "render": RenderStep,
+    "neuropil": NeuropilStep,
+    "vasculature": VasculatureStep,
+    "bleaching": BleachingStep,
+    "brain_motion": BrainMotionStep,
+    "illumination_profile": IlluminationProfileStep,
+    "vignette": VignetteStep,
+    "leakage": LeakageStep,
+    "sensor": SensorStep,
+}
+
 __all__ = [
+    "STEP_FOR_KIND",
     "BleachingStep",
     "BrainMotionStep",
     "CellActivityStep",

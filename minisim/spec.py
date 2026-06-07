@@ -19,10 +19,10 @@ This file defines the full Layer-1 surface, the unit conversions, the static
 ``AnyStep`` union (migration Step 2), and the Layer-2 physics helpers —
 ``Optics.diffraction_sigma_um``/``defocus_sigma_um``, ``Tissue.attenuation``/
 ``scatter_sigma_um``, the combined ``Acquisition.cell_optics``, and the
-``ImageSensor.photons_to_counts`` sensor model (Step 3). The executable steps
-that ``build()`` returns land in Step 5; until then ``StepSpec.build()`` is
-intentionally unimplemented — these classes are the schema plus its physics,
-not the execution engine.
+``ImageSensor.photons_to_counts`` sensor model (Step 3). ``StepSpec.build()``
+turns a spec into its executable step by looking its ``kind`` up in the
+declarative :data:`minisim.steps.STEP_FOR_KIND` table; the step bodies
+themselves live in :mod:`minisim.steps`.
 
 Units convention: **everything physical is in seconds and µm/mm — never frames
 or pixels.** ``Acquisition`` owns every conversion to pixels/frames.
@@ -511,7 +511,8 @@ class StepSpec(_Base):
     A concrete step spec carries its physical parameters and a literal ``kind``
     discriminator, and declares its ``domain`` (a class attribute used for
     ordering checks). ``build()`` turns the spec into the executable step that
-    mutates a ``Scene``; those bodies arrive in migration Step 5.
+    mutates a ``Scene``, resolving ``kind`` through the
+    :data:`minisim.steps.STEP_FOR_KIND` table.
 
     ``requires`` declares the step kinds whose output this step consumes through
     the shared ``Scene`` (e.g. ``render`` reads the footprints ``place_neurons``
@@ -530,13 +531,15 @@ class StepSpec(_Base):
     def build(self, acq: Acquisition, rng) -> Step:
         """Return the executable step (a callable that mutates a Scene).
 
-        Unimplemented until migration Step 5 — at this stage these classes are
-        the typed schema/contract, not the execution engine.
+        Resolves this spec's ``kind`` through the declarative
+        :data:`minisim.steps.STEP_FOR_KIND` table and constructs the matching
+        step. The table is imported lazily because the step modules depend
+        (through ``recording``) back on this module, so it cannot be imported at
+        load time.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__}.build() is implemented in migration Step 5; "
-            "Step 2 defines the spec surface only."
-        )
+        from minisim.steps import STEP_FOR_KIND
+
+        return STEP_FOR_KIND[self.kind](self, acq, rng)
 
 
 # ---------------------------------------------------------------------------
@@ -614,11 +617,6 @@ class PlaceNeurons(StepSpec):
             raise ValueError(f"depth_range_um max ({hi}) must be ≥ min ({lo}).")
         return v
 
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.cell import PlaceNeuronsStep
-
-        return PlaceNeuronsStep(self, acq, rng)
-
 
 class CellActivity(StepSpec):
     """Calcium activity: 2-state Markov gate → Poisson spikes → double-exp kernel.
@@ -666,11 +664,6 @@ class CellActivity(StepSpec):
         "override only; real noise enters at sensor/neuropil, not here.",
     )
 
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.cell import CellActivityStep
-
-        return CellActivityStep(self, acq, rng)
-
 
 class CellOptics(StepSpec):
     """Per-cell diffraction + defocus(|z − z_f|) + scatter(z) blur & attenuation.
@@ -688,11 +681,6 @@ class CellOptics(StepSpec):
     kind: Literal["optics"] = "optics"
     requires: ClassVar[tuple[str, ...]] = ("place_neurons",)  # degrades planted footprints
 
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.cell import CellOpticsStep
-
-        return CellOpticsStep(self, acq, rng)
-
 
 class Render(StepSpec):
     """Composite ``Σ_i degraded_footprint_i × trace_i`` into the movie.
@@ -706,11 +694,6 @@ class Render(StepSpec):
     # Composites footprint × trace. optics is an optional enhancer (render falls
     # back to the planted footprint), so it is not required.
     requires: ClassVar[tuple[str, ...]] = ("place_neurons", "cell_activity")
-
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.tissue import RenderStep
-
-        return RenderStep(self, acq, rng)
 
 
 class Neuropil(StepSpec):
@@ -740,11 +723,6 @@ class Neuropil(StepSpec):
     n_components: int = Field(ge=1, default=3, description="Number of independent diffuse components.")
     population_coupling: float = Field(ge=0, le=1, default=0.7, description="Fraction of the temporal envelope driven by local population activity vs independent slow drift (0=pure drift, 1=pure population).")
 
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.tissue import NeuropilStep
-
-        return NeuropilStep(self, acq, rng)
-
 
 class Vasculature(StepSpec):
     """Dark absorbing mask × (slow dilation + cardiac). Placeholder no-op for v1."""
@@ -752,11 +730,6 @@ class Vasculature(StepSpec):
     domain: ClassVar[str] = "tissue"
     kind: Literal["vasculature"] = "vasculature"
     enabled: bool = Field(default=False, description="Placeholder; multiplicative absorption lands in v1.1.")
-
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.tissue import VasculatureStep
-
-        return VasculatureStep(self, acq, rng)
 
 
 class Bleaching(StepSpec):
@@ -793,11 +766,6 @@ class Bleaching(StepSpec):
         "level). Deliberately unitless — absolute irradiance depends on the rig, depth, and "
         "optics. Scales the bleach rate linearly: the brighter-but-faster-fading trade-off.",
     )
-
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.tissue import BleachingStep
-
-        return BleachingStep(self, acq, rng)
 
 
 class BrainMotion(StepSpec):
@@ -872,11 +840,6 @@ class BrainMotion(StepSpec):
             )
         return self
 
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.motion import BrainMotionStep
-
-        return BrainMotionStep(self, acq, rng)
-
 
 class IlluminationProfile(StepSpec):
     """Static excitation-illumination falloff — the LED lights the FOV unevenly.
@@ -902,11 +865,6 @@ class IlluminationProfile(StepSpec):
         default=(0.0, 0.0), description="(dy, dx) offset of the bright center from FOV center, µm."
     )
 
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.sensor import IlluminationProfileStep
-
-        return IlluminationProfileStep(self, acq, rng)
-
 
 class Vignette(StepSpec):
     """Static radial vignette on the emission / return path (collection light loss).
@@ -930,11 +888,6 @@ class Vignette(StepSpec):
         default=(0.0, 0.0), description="(dy, dx) offset of the bright center from FOV center, µm."
     )
 
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.sensor import VignetteStep
-
-        return VignetteStep(self, acq, rng)
-
 
 class Leakage(StepSpec):
     """Static additive baseline — what minian's 'glow removal' subtracts."""
@@ -948,11 +901,6 @@ class Leakage(StepSpec):
         description="Spatial sigma for the gaussian profile, µm; None defaults to a "
         "quarter of the smaller FOV dimension. Ignored by the uniform profile.",
     )
-
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.sensor import LeakageStep
-
-        return LeakageStep(self, acq, rng)
 
 
 class Sensor(StepSpec):
@@ -973,11 +921,6 @@ class Sensor(StepSpec):
         description="Photons per fluorescence intensity unit (exposure/flux scale); sets the "
         "shot-noise regime. A scene/illumination property, not sensor hardware.",
     )
-
-    def build(self, acq: Acquisition, rng) -> Step:
-        from minisim.steps.sensor import SensorStep
-
-        return SensorStep(self, acq, rng)
 
 
 # The v1 catalog is closed and known, so AnyStep is a hand-written static union:

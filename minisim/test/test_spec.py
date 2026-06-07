@@ -259,6 +259,21 @@ def test_every_step_kind_builds():
         assert step.name and step.domain
 
 
+def test_step_registry_matches_spec_catalog():
+    # The declarative spec→step table must stay 1:1 with the StepSpec kinds: every
+    # concrete spec resolves to a step, and no registry entry is orphaned. Guards
+    # the table in steps/__init__ from drifting out of sync with the catalog.
+    from minisim.spec import StepSpec
+    from minisim.steps import STEP_FOR_KIND
+
+    catalog_kinds = {
+        s.model_fields["kind"].default for s in StepSpec.__subclasses__()
+    }
+    assert set(STEP_FOR_KIND) == catalog_kinds
+    for kind, step_cls in STEP_FOR_KIND.items():
+        assert issubclass(step_cls, Step)
+
+
 # --- Layer-2 physics helpers (Step 3) --------------------------------------
 # Diffraction
 
