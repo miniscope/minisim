@@ -45,7 +45,7 @@ def simulate_video(
     fps: float | None = None,
     vmin: float = 0.0,
     vmax: float | None = None,
-    codec: str = "mjpeg",
+    codec: str = "rawvideo",
     progress: bool = True,
 ) -> Path:
     """Simulate ``spec`` straight to a grayscale video at ``path``, streaming to disk.
@@ -59,9 +59,14 @@ def simulate_video(
     sensor's full ADC range (``2**bit_depth - 1``) when the spec has a ``sensor``
     step, so the file faithfully shows the true ADC utilization (a dim, honest
     frame). For a sensorless (continuous-intensity) spec there is no natural scale,
-    so ``vmax`` must be given. ``codec`` defaults to ``"mjpeg"`` (broadly compatible
-    in an ``.avi`` container); pass e.g. ``"ffv1"`` for a lossless file. Requires the
-    ``mediapy`` extra (``pip install 'minisim[notebook]'``). Returns ``path``.
+    so ``vmax`` must be given. ``codec`` defaults to ``"rawvideo"``: uncompressed
+    8-bit grayscale (fourcc ``Y800``), so the file carries the exact counts with no
+    compression artifacts and opens directly in ImageJ/Fiji. It is therefore large
+    (uncompressed: ~``n_frames * H * W`` bytes). For a small file pass ``"mjpeg"``
+    (lossy, but Fiji-readable); ``"png"``/``"ffv1"`` are smaller and lossless but
+    ffmpeg tags them ``MPNG``/``FFV1``, which Fiji's built-in AVI reader rejects.
+    Requires the ``mediapy`` extra (``pip install 'minisim[notebook]'``). Returns
+    ``path``.
     """
     acq = spec.acquisition
     fps = float(fps if fps is not None else acq.fps)
@@ -74,7 +79,7 @@ def simulate_video(
 
     bar = _ProgressBar(acq.n_frames, progress, f"writing {path.name}")
     try:
-        with media.VideoWriter(str(path), shape=fov, fps=fps, codec=codec) as writer:
+        with _open_gray_writer(media, path, fov, fps, codec) as writer:
             for _, frame in _iter_count_frames(spec, chunk):
                 writer.add_image(_to_uint8(frame, vmin, vmax))
                 bar.update()
@@ -179,6 +184,21 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
                 )
         for i in range(t1 - t0):
             yield t0 + i, frames[i]
+
+
+def _open_gray_writer(media, path, shape, fps, codec):
+    """A single-plane grayscale ``mediapy`` writer.
+
+    Feeds the ``(H, W)`` uint8 frames as one luma plane and encodes a single plane
+    (``encoded_format="gray"`` -- no RGB promotion, no chroma subsampling), so an
+    8-bit count survives a lossless codec (``ffv1``) bit-for-bit. The earlier default
+    (RGB roundtrip + ``mjpeg``) both quantized the data and added a small rounding
+    error of its own.
+    """
+    return media.VideoWriter(
+        str(path), shape=shape, fps=fps, codec=codec,
+        input_format="gray", encoded_format="gray",
+    )
 
 
 def _default_vmax(spec: Spec) -> float:

@@ -113,6 +113,18 @@ def test_simulate_video_writes_decodable_file(tmp_path):
     assert decoded.shape[1:3] == (48, 48)
 
 
+def test_default_codec_roundtrips_counts_losslessly(tmp_path):
+    # The default (ffv1 + gray) must preserve the exact 8-bit counts: a re-decoded
+    # frame equals simulate().observed bit-for-bit, with no lossy DCT blocking. This
+    # is the guard against silently regressing to a lossy default like mjpeg.
+    spec = _spec()
+    observed = simulate(spec).observed  # counts are well within 8-bit (vmax=255)
+    path = simulate_video(spec, tmp_path / "rec.avi", chunk_frames=8, progress=False)
+    decoded = np.asarray(mediapy.read_video(str(path)))
+    luma = decoded[..., 0] if decoded.ndim == 4 else decoded  # gray decodes as RGB
+    np.testing.assert_array_equal(luma, observed.astype(np.uint8))
+
+
 def test_write_video_and_simulate_video_agree(tmp_path):
     # Recording.write_video (in-memory) and simulate_video (streamed) encode the same
     # frames, so the decoded videos are identical.

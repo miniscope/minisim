@@ -274,20 +274,27 @@ class Recording(BaseModel):
         fps: float | None = None,
         vmin: float = 0.0,
         vmax: float | None = None,
-        codec: str = "mjpeg",
+        codec: str = "rawvideo",
         progress: bool = True,
     ) -> Path:
         """Write the in-memory ``observed`` movie to a grayscale video at ``path``.
 
         Maps counts to 8-bit gray over ``[vmin, vmax]`` (``vmax`` defaults to the
         sensor's full ADC range, ``2**bit_depth - 1``, so saturation reads as white)
-        and encodes with ``mediapy`` + ``codec`` (default ``"mjpeg"`` in an ``.avi``;
-        pass ``"ffv1"`` for lossless). Use this when you already hold a ``Recording``;
-        to stream a long recording to disk **without** building the whole movie in
-        memory, use :func:`minisim.video.simulate_video` instead. Requires the
-        ``mediapy`` extra. Returns ``path``.
+        and encodes with ``mediapy`` + ``codec`` (default ``"rawvideo"``: uncompressed
+        8-bit gray, fourcc ``Y800`` -- exact counts, no artifacts, opens in ImageJ/Fiji,
+        but large; pass ``"mjpeg"`` for a small lossy file). Use this when you already
+        hold a ``Recording``; to stream a long recording to disk **without** building
+        the whole movie in memory, use :func:`minisim.video.simulate_video` instead.
+        Requires the ``mediapy`` extra. Returns ``path``.
         """
-        from minisim.video import _ProgressBar, _default_vmax, _import_mediapy, _to_uint8
+        from minisim.video import (
+            _ProgressBar,
+            _default_vmax,
+            _import_mediapy,
+            _open_gray_writer,
+            _to_uint8,
+        )
 
         if self.observed.shape[0] == 0:
             raise ValueError("recording has no frames to write (observed is empty).")
@@ -299,7 +306,7 @@ class Recording(BaseModel):
         path = Path(path)
         bar = _ProgressBar(self.observed.shape[0], progress, f"writing {path.name}")
         try:
-            with media.VideoWriter(str(path), shape=fov, fps=fps, codec=codec) as writer:
+            with _open_gray_writer(media, path, fov, fps, codec) as writer:
                 for f in range(self.observed.shape[0]):
                     writer.add_image(_to_uint8(self.observed[f], vmin, vmax))
                     bar.update()
