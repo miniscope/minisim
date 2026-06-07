@@ -130,7 +130,7 @@ def test_per_effect_fields_present_for_full_pipeline():
         CellOptics(),
         Render(),
         Neuropil(n_components=2),
-        BrainMotion(walk_step_um=0.3, max_shift_um=max_shift_um),
+        BrainMotion(model="walk", walk_step_um=0.3, max_shift_um=max_shift_um),
         Vignette(falloff=0.6),
         Leakage(profile="gaussian", level=0.1),
         Sensor(),

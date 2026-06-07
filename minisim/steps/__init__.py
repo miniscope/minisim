@@ -33,6 +33,7 @@ from minisim.steps.cell import (
 from minisim.steps.motion import (
     BrainMotionStep,
     bounded_random_walk,
+    physical_brain_motion,
     shift_and_crop,
 )
 from minisim.steps.sensor import (
@@ -74,6 +75,7 @@ __all__ = [
     "neuron_footprint",
     "neuropil_envelope",
     "ou_process",
+    "physical_brain_motion",
     "population_envelope",
     "radius_grid",
     "resolve_focal_plane",

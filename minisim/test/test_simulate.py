@@ -68,7 +68,7 @@ def _full_spec(**output_kw):
             CellOptics(),
             Render(),
             Neuropil(n_components=2),
-            BrainMotion(walk_step_um=0.3, max_shift_um=2.0),  # ≤ 5% of the 64 µm FOV
+            BrainMotion(model="walk", walk_step_um=0.3, max_shift_um=2.0),  # ≤ 5% of the 64 µm FOV
             Vignette(falloff=0.6),
             Leakage(profile="gaussian", level=0.1),
             Sensor(photons_per_unit=120.0),
@@ -123,6 +123,32 @@ def test_simulate_until_cell_domain_skips_the_movie():
     assert rec.observed.shape == (0, 64, 64)
     assert rec.ground_truth.n_units > 0
     assert rec.ground_truth.C.shape[1] == acq.n_frames
+
+
+def test_simulate_physical_motion_runs_end_to_end():
+    # The default (physical) brain-motion model runs through the orchestrator: the
+    # margin is auto-sized from max_shift_um, the movie comes back cropped to the
+    # sensor FOV, and the recorded shifts start at the reference and stay bounded.
+    acq = _acq(duration_s=3.0)  # 60 frames, 64 µm FOV
+    spec = Spec(
+        acquisition=acq,
+        seed=5,
+        steps=[
+            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 80.0)),
+            CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+            CellOptics(),
+            Render(),
+            BrainMotion(motion_amplitude_um=2.0, max_shift_um=3.0),  # physical default
+            Sensor(photons_per_unit=120.0),
+        ],
+        output=Output(),
+    )
+    rec = simulate(spec)
+    assert rec.observed.shape == (acq.n_frames, 64, 64)
+    shifts = rec.ground_truth.shifts
+    np.testing.assert_array_equal(shifts[0], [0.0, 0.0])
+    assert np.hypot(shifts[:, 0], shifts[:, 1]).max() <= 3.0 + 1e-9
+    assert np.abs(shifts).max() > 0.0  # the brain really moved
 
 
 def test_simulate_save_intermediates_records_movie_stage_names():

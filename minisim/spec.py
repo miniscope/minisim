@@ -789,17 +789,69 @@ class BrainMotion(StepSpec):
     a margin ≥ the maximum shift (``Scene.zeros(acq, margin_px=…)``, sized
     automatically by ``simulate()``), so real off-FOV tissue moves into view
     instead of a fabricated fill. Ground truth records the per-frame ``(dy, dx)``
-    displacement in **pixels**. OU/jump and axial focus-drift motion are deferred
-    placeholders.
+    displacement in **pixels**.
+
+    Three sources of the trajectory, selected by ``model``:
+
+    * ``"physical"`` (default): a 2-D damped harmonic oscillator. The brain is a
+      damped mass elastically tethered to the (rigid) skull, driven on the dominant
+      ``locomotion_axis`` by an always-on locomotion rhythm at ``locomotion_freq_hz``
+      (mice/rats run at ~6-8 Hz) and on both axes by broadband sloshing noise. The
+      restoring force bounds the motion physically; ``motion_amplitude_um`` sets the
+      typical excursion and ``max_shift_um`` is the hard safety clamp (and the margin
+      size). This is the realistic model the teaching notebook uses.
+    * ``"walk"``: a bounded random walk (``walk_step_um`` per frame, clamped to the
+      ``max_shift_um`` disk). Cheap and rhythm-free; kept for simple tests/fixtures.
+    * an explicit ``trajectory_um`` overrides both, regardless of ``model``.
+
+    Axial focus-drift motion is a deferred placeholder.
     """
 
     domain: ClassVar[str] = "motion"
     kind: Literal["brain_motion"] = "brain_motion"
-    trajectory_um: list[tuple[float, float]] | None = Field(
-        default=None, description="Explicit per-frame (dy, dx) in µm; else a bounded random walk."
+    model: Literal["physical", "walk"] = Field(
+        default="physical",
+        description="Trajectory generator: 'physical' (driven damped oscillator) or 'walk' (bounded random walk). An explicit trajectory_um overrides both.",
     )
-    walk_step_um: float = Field(ge=0, default=0.3, description="Random-walk step size, µm/frame.")
-    max_shift_um: float = Field(gt=0, default=5.0, description="Bound on cumulative shift magnitude, µm.")
+    trajectory_um: list[tuple[float, float]] | None = Field(
+        default=None, description="Explicit per-frame (dy, dx) in µm; overrides model."
+    )
+    max_shift_um: float = Field(
+        gt=0, default=15.0,
+        description="Hard safety clamp on cumulative shift magnitude, µm (also sizes the tissue margin).",
+    )
+    # --- physical model ---
+    locomotion_freq_hz: float = Field(
+        gt=0, default=7.0, description="Locomotion (stride) drive frequency, Hz; mice/rats run at ~6-8 Hz."
+    )
+    motion_amplitude_um: float = Field(
+        gt=0, default=10.0, description="Extreme excursion (99th-percentile displacement radius), µm; most frames move less."
+    )
+    locomotion_axis: Literal["y", "x"] = Field(
+        default="y", description="Dominant motion axis the locomotion rhythm drives (y = height; the cross axis gets noise only)."
+    )
+    resonance_freq_hz: float = Field(
+        gt=0, default=6.0, description="Natural frequency of the brain-on-skull oscillator, Hz."
+    )
+    damping_ratio: float = Field(
+        gt=0, default=0.5, description="Damping ratio ζ of the oscillator (<1 under-damped, sloshy; ≥1 over-damped)."
+    )
+    locomotion_fraction: float = Field(
+        ge=0, le=1, default=0.25,
+        description="Share of motion amplitude carried by the locomotion rhythm vs broadband sloshing noise (noise-dominated by default).",
+    )
+    # --- walk model ---
+    walk_step_um: float = Field(ge=0, default=0.3, description="Random-walk step size, µm/frame (model='walk').")
+
+    @model_validator(mode="after")
+    def _amplitude_within_clamp(self) -> BrainMotion:
+        if self.model == "physical" and self.motion_amplitude_um > self.max_shift_um:
+            raise ValueError(
+                f"motion_amplitude_um ({self.motion_amplitude_um}) exceeds the max_shift_um "
+                f"clamp ({self.max_shift_um}); raise max_shift_um so the calibrated motion is "
+                "not crushed by the safety clamp."
+            )
+        return self
 
     def build(self, acq: Acquisition, rng) -> Step:
         from minisim.steps.motion import BrainMotionStep
@@ -994,6 +1046,8 @@ class Spec(_Base):
         min_fov = min(self.acquisition.fov_um)
         if mot.trajectory_um is not None:
             extent = max((max(abs(dy), abs(dx)) for dy, dx in mot.trajectory_um), default=0.0)
+        elif mot.model == "physical":
+            extent = mot.motion_amplitude_um
         else:
             extent = mot.max_shift_um
         if extent > 0.05 * min_fov:

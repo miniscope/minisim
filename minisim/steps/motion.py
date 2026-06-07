@@ -21,9 +21,29 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 from scipy.ndimage import shift as ndimage_shift
+from scipy.signal import lfilter
 
 from minisim.scene import MOVIE_DIMS, Scene
 from minisim.steps.base import Step
+
+# High-res integration rate for the physical oscillator, Hz. The trajectory is
+# integrated this finely then bin-averaged down to the frame rate (the same
+# fine-then-downsample idiom as cell_activity), so the exposure averaging and the
+# aliasing of stride-rate motion at the camera rate emerge honestly. ~300 Hz keeps
+# tens of steps per cycle for the 6-8 Hz band the symplectic integrator sees.
+_INTEGRATION_HZ = 300.0
+# Slow random drift of the locomotion frequency: real gait is near-periodic over a
+# few strides but not metronomic, so the stride frequency wanders by this fraction
+# (a low-pass-filtered process), broadening the spectral line into a narrow band.
+_LOCOMOTION_FREQ_CV = 0.06
+_LOCOMOTION_FREQ_TAU_S = 0.5  # time constant of that wander
+# Percentile of the displacement radius calibrated to motion_amplitude_um: a high
+# percentile, so amplitude is the *extreme* excursion while the bulk of frames sit
+# well inside it (most of a recording moves less than the worst moments). Robust to
+# the single largest swing, unlike the raw peak.
+_EXCURSION_PCTILE = 99.0
+# Guards divisions by a (near-)zero normalization; far below any real motion scale.
+_EPS = 1e-12
 
 
 def bounded_random_walk(
@@ -47,6 +67,101 @@ def bounded_random_walk(
             cand *= max_px / magnitude
         pos[f] = cand
     return pos
+
+
+def _lowpass(white: np.ndarray, tau_s: float, dt: float) -> np.ndarray:
+    """One-pole low-pass of a white series → a slow, unit-variance process."""
+    alpha = dt / (tau_s + dt)
+    slow = lfilter([alpha], [1.0, -(1.0 - alpha)], white)
+    std = float(slow.std())
+    return slow / std if std > _EPS else slow
+
+
+def _integrate_dho(accel: np.ndarray, dt: float, w0: float, zeta: float) -> np.ndarray:
+    """Position response of a damped harmonic oscillator to an acceleration drive.
+
+    Solves ``x'' + 2ζω₀ x' + ω₀² x = a(t)`` per column of ``accel`` with the
+    semi-implicit (symplectic) Euler scheme, which is a 2nd-order linear recurrence
+    and so runs as an IIR filter (``lfilter``): vectorized in C, no Python loop,
+    fast even for long recordings. Starts from rest (x = v = 0).
+
+    The scheme ``v_i = v_{i-1} + dt(a_i − 2ζω₀v_{i-1} − ω₀²x_{i-1})``, ``x_i =
+    x_{i-1} + dt·v_i`` eliminates to ``x_i = (2 − c₁dt − c₂dt²)x_{i-1} − (1 −
+    c₁dt)x_{i-2} + dt²a_i`` with ``c₁ = 2ζω₀``, ``c₂ = ω₀²``.
+    """
+    c1, c2 = 2.0 * zeta * w0, w0 * w0
+    b = [dt * dt]
+    a = [1.0, -(2.0 - c1 * dt - c2 * dt * dt), (1.0 - c1 * dt)]
+    return lfilter(b, a, accel, axis=0)
+
+
+def physical_brain_motion(
+    n_frames: int,
+    fps: float,
+    *,
+    locomotion_freq_hz: float,
+    resonance_freq_hz: float,
+    damping_ratio: float,
+    locomotion_fraction: float,
+    locomotion_axis: int,
+    amplitude_px: float,
+    max_px: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """2-D brain trajectory from a driven damped harmonic oscillator, per-frame px.
+
+    The tissue is a damped mass elastically tethered to the rigid skull:
+    ``x'' + 2ζω₀ x' + ω₀² x = a_drive(t)``. The drive is an always-on locomotion
+    rhythm (a stride-frequency sinusoidal acceleration whose frequency slowly
+    wanders, so the spectral line is a narrow band not a pure tone) on the dominant
+    ``locomotion_axis``, plus broadband acceleration noise on both axes. The two
+    drives are integrated separately, each normalized to unit RMS displacement, then
+    mixed by ``locomotion_fraction`` so that knob is the rhythm's share of the motion.
+
+    Integrated at :data:`_INTEGRATION_HZ` then bin-averaged to ``fps`` (exposure
+    integration), so stride-rate motion is honestly aliased at the camera rate. The
+    oscillator is linear in the drive, so the realized trajectory is scaled in one
+    shot to ``amplitude_px`` (the :data:`_EXCURSION_PCTILE` displacement radius),
+    then clamped onto the ``max_px`` safety disk. Frame 0 is pinned to the origin
+    (the reference view). Returns ``(n_frames, 2)`` in pixels.
+    """
+    bins = max(int(round(_INTEGRATION_HZ / fps)), 1)
+    dt = 1.0 / (bins * fps)
+    n_hr = n_frames * bins
+    w0, zeta = 2.0 * np.pi * resonance_freq_hz, damping_ratio
+
+    # Locomotion acceleration: a sinusoid whose instantaneous frequency drifts slowly
+    # about locomotion_freq_hz (near-periodic gait, not a metronome).
+    t = np.arange(n_hr) * dt
+    freq = locomotion_freq_hz * (
+        1.0 + _LOCOMOTION_FREQ_CV * _lowpass(rng.standard_normal(n_hr), _LOCOMOTION_FREQ_TAU_S, dt)
+    )
+    a_loco = np.zeros((n_hr, 2))
+    a_loco[:, locomotion_axis] = np.sin(2.0 * np.pi * np.cumsum(freq) * dt)
+    # Broadband sloshing acceleration on both axes (1/√dt keeps the diffusion
+    # resolution-independent).
+    a_noise = rng.standard_normal((n_hr, 2)) / np.sqrt(dt)
+
+    # Decimate each component's position to the frame rate (exposure-window mean),
+    # pin frame 0 to the reference, normalize to unit RMS radius, then mix.
+    def _frames(accel: np.ndarray) -> np.ndarray:
+        pos = _integrate_dho(accel, dt, w0, zeta).reshape(n_frames, bins, 2).mean(axis=1)
+        pos -= pos[0]
+        rms = float(np.sqrt(np.mean(pos[:, 0] ** 2 + pos[:, 1] ** 2)))
+        return pos / rms if rms > _EPS else pos
+
+    traj = locomotion_fraction * _frames(a_loco) + (1.0 - locomotion_fraction) * _frames(a_noise)
+
+    # One-shot amplitude calibration (linear system), then the hard safety clamp.
+    radius = np.hypot(traj[:, 0], traj[:, 1])
+    pctile = float(np.percentile(radius, _EXCURSION_PCTILE))
+    if pctile > _EPS:
+        traj *= amplitude_px / pctile
+    mag = np.hypot(traj[:, 0], traj[:, 1])
+    over = mag > max_px
+    if over.any():
+        traj[over] *= (max_px / mag[over])[:, None]
+    return traj
 
 
 def shift_and_crop(
@@ -78,9 +193,10 @@ class BrainMotionStep(Step):
     """Rigidly translate the brain-frame canvas per frame, then crop the sensor FOV.
 
     Resolves the per-frame ``(dy, dx)`` displacement — an explicit
-    ``trajectory_um`` (converted µm→px) if given, else a :func:`bounded_random_walk`
-    from ``walk_step_um``/``max_shift_um`` — then :func:`shift_and_crop`s the
-    canvas down to the sensor FOV. The canvas must carry a tissue margin
+    ``trajectory_um`` (converted µm→px) if given, else the ``model``-selected
+    generator: :func:`physical_brain_motion` (the default driven damped oscillator)
+    or :func:`bounded_random_walk` — then :func:`shift_and_crop`s the canvas down to
+    the sensor FOV. The canvas must carry a tissue margin
     (``Scene.zeros(acq, margin_px=…)``) at least as large as the maximum shift;
     otherwise the crop would expose the canvas edge and this step raises (rather
     than silently filling with fabricated tissue). ``simulate()`` (Step 6) sizes
@@ -129,7 +245,7 @@ class BrainMotionStep(Step):
         scene.truth.shifts = shifts_px
 
     def _resolve_shifts(self, n_frames: int) -> np.ndarray:
-        """Per-frame ``(dy, dx)`` in pixels — explicit trajectory or random walk."""
+        """Per-frame ``(dy, dx)`` in pixels: explicit trajectory, physical, or walk."""
         spec, acq = self.spec, self.acq
         if spec.trajectory_um is not None:
             if len(spec.trajectory_um) != n_frames:
@@ -139,6 +255,19 @@ class BrainMotionStep(Step):
                 )
             return np.array(
                 [[acq.um_to_px(dy), acq.um_to_px(dx)] for dy, dx in spec.trajectory_um]
+            )
+        if spec.model == "physical":
+            return physical_brain_motion(
+                n_frames,
+                acq.fps,
+                locomotion_freq_hz=spec.locomotion_freq_hz,
+                resonance_freq_hz=spec.resonance_freq_hz,
+                damping_ratio=spec.damping_ratio,
+                locomotion_fraction=spec.locomotion_fraction,
+                locomotion_axis=0 if spec.locomotion_axis == "y" else 1,
+                amplitude_px=acq.um_to_px(spec.motion_amplitude_um),
+                max_px=acq.um_to_px(spec.max_shift_um),
+                rng=self.rng,
             )
         return bounded_random_walk(
             n_frames,

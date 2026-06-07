@@ -45,6 +45,7 @@ from minisim.steps import (
     VignetteStep,
     bleaching_pool,
     bounded_random_walk,
+    physical_brain_motion,
     calcium_kernel,
     degrade_footprint,
     kernel_timing,
@@ -1070,6 +1071,88 @@ def test_bounded_random_walk_starts_at_zero_and_stays_bounded():
     assert mags.max() <= 4.0 + 1e-9  # never leaves the radius-max_px disk
 
 
+def test_physical_motion_starts_at_origin_and_stays_bounded():
+    traj = physical_brain_motion(
+        2000, fps=50.0, locomotion_freq_hz=7.0, resonance_freq_hz=6.0,
+        damping_ratio=0.5, locomotion_fraction=0.6, locomotion_axis=0,
+        amplitude_px=10.0, max_px=12.0, rng=np.random.default_rng(0),
+    )
+    assert traj.shape == (2000, 2)
+    np.testing.assert_array_equal(traj[0], [0.0, 0.0])  # frame 0 is the reference
+    assert np.hypot(traj[:, 0], traj[:, 1]).max() <= 12.0 + 1e-9  # clamped to the disk
+
+
+def test_physical_motion_amplitude_tracks_the_target():
+    # The oscillator is linear in the drive, so the trajectory is scaled exactly so
+    # the 99th-percentile displacement radius equals the requested amplitude (the
+    # extreme excursion), with the bulk of frames well inside it. Clamp well clear at
+    # max_px=30, so it never bites.
+    traj = physical_brain_motion(
+        3000, fps=50.0, locomotion_freq_hz=7.0, resonance_freq_hz=6.0,
+        damping_ratio=0.5, locomotion_fraction=0.25, locomotion_axis=0,
+        amplitude_px=10.0, max_px=30.0, rng=np.random.default_rng(1),
+    )
+    radius = np.hypot(traj[:, 0], traj[:, 1])
+    assert np.percentile(radius, 99) == pytest.approx(10.0, rel=1e-6)
+    assert np.median(radius) < 6.0  # most frames move much less than the extreme
+
+
+def test_physical_motion_spectrum_peaks_at_the_locomotion_frequency():
+    # The dominant axis carries the locomotion rhythm: its power spectrum (above the
+    # slow-drift bins) peaks at locomotion_freq_hz. Sample at 50 fps so 7 Hz is well
+    # below Nyquist and the line is cleanly resolved.
+    fps, f_loco = 50.0, 7.0
+    traj = physical_brain_motion(
+        4096, fps=fps, locomotion_freq_hz=f_loco, resonance_freq_hz=f_loco,
+        damping_ratio=0.4, locomotion_fraction=0.9, locomotion_axis=0,
+        amplitude_px=10.0, max_px=40.0, rng=np.random.default_rng(2),
+    )
+    freqs = np.fft.rfftfreq(traj.shape[0], d=1.0 / fps)
+    power = np.abs(np.fft.rfft(traj[:, 0] - traj[:, 0].mean())) ** 2
+    band = freqs > 1.0  # ignore DC and the slow-drift bins
+    assert freqs[band][np.argmax(power[band])] == pytest.approx(f_loco, abs=0.5)
+
+
+def test_physical_motion_cross_axis_lacks_the_locomotion_peak():
+    # Only the dominant (y) axis is driven by locomotion; the cross (x) axis sees
+    # broadband noise only, so its power at the stride frequency is far weaker.
+    fps, f_loco = 50.0, 7.0
+    traj = physical_brain_motion(
+        4096, fps=fps, locomotion_freq_hz=f_loco, resonance_freq_hz=f_loco,
+        damping_ratio=0.4, locomotion_fraction=0.9, locomotion_axis=0,
+        amplitude_px=10.0, max_px=40.0, rng=np.random.default_rng(3),
+    )
+    freqs = np.fft.rfftfreq(traj.shape[0], d=1.0 / fps)
+    bin_loco = int(np.argmin(np.abs(freqs - f_loco)))
+    p_y = np.abs(np.fft.rfft(traj[:, 0] - traj[:, 0].mean())) ** 2
+    p_x = np.abs(np.fft.rfft(traj[:, 1] - traj[:, 1].mean())) ** 2
+    assert p_y[bin_loco] > 20.0 * p_x[bin_loco]
+
+
+def test_physical_motion_is_deterministic_given_seed():
+    kw = dict(
+        locomotion_freq_hz=7.0, resonance_freq_hz=6.0, damping_ratio=0.5,
+        locomotion_fraction=0.6, locomotion_axis=0, amplitude_px=10.0, max_px=20.0,
+    )
+    a = physical_brain_motion(1000, fps=30.0, rng=np.random.default_rng(7), **kw)
+    b = physical_brain_motion(1000, fps=30.0, rng=np.random.default_rng(7), **kw)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_brain_motion_physical_is_the_default_and_records_bounded_shifts():
+    # The spec default (no model=) is the physical oscillator; it records per-frame
+    # pixel shifts starting at the origin and bounded by max_shift_um.
+    acq = _acq(n_px=64, duration_s=4.0)  # 1 µm/px, 80 frames
+    scene = Scene.zeros(acq, margin_px=12)
+    BrainMotion(motion_amplitude_um=6.0, max_shift_um=9.0).build(
+        acq, np.random.default_rng(4)
+    )(scene)
+    shifts = scene.truth.shifts
+    assert shifts.shape == (acq.n_frames, 2)
+    np.testing.assert_array_equal(shifts[0], [0.0, 0.0])
+    assert np.hypot(shifts[:, 0], shifts[:, 1]).max() <= 9.0 + 1e-9
+
+
 def test_shift_and_crop_recenters_a_padded_frame():
     # A 4 px frame padded to 8 px, shifted back by the margin, crops to the FOV.
     canvas = np.zeros((1, 8, 8))
@@ -1112,7 +1195,7 @@ def test_motion_brings_offscreen_tissue_into_view():
 def test_brain_motion_records_shifts_in_pixels():
     acq = _acq(n_px=16, duration_s=0.5)  # 10 frames
     scene = Scene.zeros(acq, margin_px=6)
-    BrainMotion(walk_step_um=0.5, max_shift_um=4.0).build(
+    BrainMotion(model="walk", walk_step_um=0.5, max_shift_um=4.0).build(
         acq, np.random.default_rng(2)
     )(scene)
     shifts = scene.truth.shifts
@@ -1129,7 +1212,7 @@ def test_static_field_is_invariant_under_motion():
     VignetteStep(Vignette(falloff=0.5), acq, np.random.default_rng(0))(s0)
 
     s1 = Scene.ones(acq, margin_px=4)
-    BrainMotion(walk_step_um=0.5, max_shift_um=3.0).build(
+    BrainMotion(model="walk", walk_step_um=0.5, max_shift_um=3.0).build(
         acq, np.random.default_rng(1)
     )(s1)
     VignetteStep(Vignette(falloff=0.5), acq, np.random.default_rng(2))(s1)
@@ -1171,7 +1254,7 @@ def test_full_pipeline_with_motion_runs_end_to_end():
         CellOptics(),
         Render(),
         Neuropil(amplitude=0.3),
-        BrainMotion(walk_step_um=0.4, max_shift_um=max_shift_um),
+        BrainMotion(model="walk", walk_step_um=0.4, max_shift_um=max_shift_um),
         Vignette(falloff=0.6),
         Leakage(profile="gaussian", level=0.1),
         Sensor(photons_per_unit=120.0),

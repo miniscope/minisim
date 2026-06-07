@@ -157,7 +157,7 @@ def test_static_fields_are_invariant_to_motion():
                 CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
                 CellOptics(),
                 Render(),
-                BrainMotion(walk_step_um=walk_step_um, max_shift_um=max_shift_um),
+                BrainMotion(model="walk", walk_step_um=walk_step_um, max_shift_um=max_shift_um),
                 Vignette(falloff=0.4, exponent=2.0),
                 Leakage(profile="gaussian", level=0.12, sigma_um=80.0),
                 Sensor(photons_per_unit=130.0),

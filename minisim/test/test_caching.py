@@ -74,7 +74,7 @@ def _full_spec(seed=11, **output_kw):
             CellOptics(),
             Render(),
             Neuropil(n_components=2),
-            BrainMotion(walk_step_um=0.3, max_shift_um=2.0),
+            BrainMotion(model="walk", walk_step_um=0.3, max_shift_um=2.0),
             Vignette(falloff=0.6),
             Leakage(profile="gaussian", level=0.1),
             Sensor(photons_per_unit=120.0),
