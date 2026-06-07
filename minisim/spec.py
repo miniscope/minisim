@@ -718,7 +718,7 @@ class Neuropil(StepSpec):
     spatial_sigma_um: float = Field(gt=0, default=40.0, description="Spatial smoothness of the mesh, µm.")
     temporal_tau_s: float = Field(gt=0, default=10.0, description="OU correlation time of the independent slow-drift leg, s (slow).")
     population_tau_s: float = Field(gt=0, default=1.5, description="Low-pass time constant of the population-coupled leg, s: the felt's integration/lag, short relative to the drift.")
-    amplitude: float = Field(gt=0, default=0.3, description="Background amplitude relative to cell signal.")
+    amplitude: float = Field(gt=0, default=0.5, description="Background amplitude relative to cell signal.")
     n_components: int = Field(ge=1, default=3, description="Number of independent diffuse components.")
     population_coupling: float = Field(ge=0, le=1, default=0.7, description="Fraction of the temporal envelope driven by local population activity vs independent slow drift (0=pure drift, 1=pure population).")
 
@@ -904,7 +904,7 @@ class Vignette(StepSpec):
     domain: ClassVar[str] = "sensor"
     kind: Literal["vignette"] = "vignette"
     falloff: float = Field(
-        ge=0, le=1, default=0.6, description="Corner brightness relative to center (1 = none)."
+        ge=0, le=1, default=0.5, description="Corner brightness relative to center (1 = none)."
     )
     exponent: float = Field(gt=0, default=2.0, description="Radial falloff exponent.")
     center_offset_um: tuple[float, float] = Field(
