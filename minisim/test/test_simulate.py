@@ -27,6 +27,7 @@ from minisim import (
     Vignette,
     simulate,
 )
+from minisim.steps import combined_falloff_field
 
 
 def _acq(n_px=64, fps=20.0, duration_s=1.0, bit_depth=8):
@@ -177,6 +178,54 @@ def test_simulate_records_both_illumination_and_vignette_fields():
     assert gt.illumination.max() == pytest.approx(1.0, abs=2e-3)  # bright center (even grid)
     assert gt.illumination[0, 0] == pytest.approx(0.5)  # edge excitation, farthest corner
     assert gt.vignette[0, 0] == pytest.approx(0.6)  # corner collection loss
+
+
+def test_combined_falloff_field_matches_the_applied_illumination_vignette_product():
+    # The spec-only field auto-focus consumes up front must equal what the sensor
+    # steps actually apply (the recorded illumination × vignette), or focus would
+    # be chosen against a different photon budget than the pipeline produces.
+    acq = _acq()
+    illum = IlluminationProfile(falloff=0.5, exponent=1.7, center_offset_um=(8.0, -4.0))
+    vig = Vignette(falloff=0.6, exponent=2.3)
+    spec = Spec(
+        acquisition=acq,
+        seed=7,
+        steps=[
+            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)),
+            CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+            CellOptics(),
+            Render(),
+            illum,
+            vig,
+            Sensor(photons_per_unit=120.0),
+        ],
+        output=Output(),
+    )
+    gt = simulate(spec).ground_truth
+    predicted = combined_falloff_field(acq, illum, vig)
+    np.testing.assert_allclose(predicted, gt.illumination * gt.vignette, rtol=0, atol=1e-12)
+
+
+def test_simulate_records_the_resolved_auto_focus_depth():
+    # "auto" focus is resolved once at the optics step; the chosen plane is recorded
+    # so it is observable. With no field curvature the effective depths are the cell
+    # depths, so the yield-maximizing plane lands within the placed layer.
+    acq = _acq()  # flat field (no curvature) -> effective depth == cell depth
+    spec = Spec(
+        acquisition=acq,
+        seed=7,
+        steps=[
+            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)),
+            CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+            CellOptics(),
+            Render(),
+            Sensor(photons_per_unit=120.0),
+        ],
+        output=Output(),
+    )
+    gt = simulate(spec).ground_truth
+    assert gt.focal_depth_um is not None
+    assert gt.depth_um.min() <= gt.focal_depth_um <= gt.depth_um.max()
 
 
 def test_simulate_save_intermediates_records_movie_stage_names():

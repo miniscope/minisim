@@ -47,6 +47,7 @@ from minisim.steps import (
     VignetteStep,
     bleaching_pool,
     bounded_random_walk,
+    combined_falloff_field,
     physical_brain_motion,
     radial_falloff,
     calcium_kernel,
@@ -547,6 +548,74 @@ def test_resolve_focal_plane_auto_accounts_for_field_curvature():
     assert curv > 100.0  # curvature pulls the focus deeper to recover off-axis cells
     flat = Optics(magnification=8.0)  # field_curvature_radius_um=None
     assert resolve_focal_plane(cells, "auto", flat, axis) == 100.0  # flat field -> median z
+
+
+def _scored_cell(z, y_um=25.0, x_um=25.0, lo=0.0, hi=100.0):
+    """A bare cell at depth ``z`` carrying a 2-frame trace (baseline ``lo``, peak ``hi``)."""
+    return Cell(center_um=(z, y_um, x_um), trace=np.array([lo, hi]))
+
+
+def test_resolve_focal_plane_auto_maximizes_detectable_yield_not_median():
+    # A tight shallow cluster (5 cells in 4 µm) plus 5 sparse deeper cells. The
+    # median depth sits in the empty gap (~42 µm), but the focus that recovers the
+    # MOST cells is the one parked on the cluster -- yield, not the median.
+    acq = _acq(focal_depth_in_tissue_um="auto")  # na 0.45 -> DOF ~3.4 µm
+    axis = (25.0, 25.0)
+    cluster = [_scored_cell(z) for z in (20.0, 21.0, 22.0, 23.0, 24.0)]
+    sparse = [_scored_cell(z) for z in (60.0, 80.0, 100.0, 120.0, 140.0)]
+    cells = cluster + sparse
+    sensor = Sensor(photons_per_unit=300.0)  # bright -> every in-focus cell detectable
+
+    assert resolve_focal_plane(cells, "auto", acq.optics, axis) == 42.0  # geometric median
+    focus = resolve_focal_plane(
+        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor
+    )
+    assert 20.0 <= focus <= 24.0  # parked on the dense cluster
+    assert focus < 40.0  # ...nowhere near the median gap
+
+
+def test_resolve_focal_plane_auto_focuses_shallower_when_scatter_dims_deep_cells():
+    # Equal-size shallow and deep clusters, symmetric so the median sits between
+    # them (~74 µm). Scatter attenuation dims the deep cluster below the SNR floor,
+    # so only the shallow cells are recoverable -- auto focus moves shallow.
+    acq = _acq(focal_depth_in_tissue_um="auto")
+    axis = (25.0, 25.0)
+    shallow = [_scored_cell(z, lo=20.0, hi=28.0) for z in (22.0, 24.0, 26.0)]
+    deep = [_scored_cell(z, lo=20.0, hi=28.0) for z in (122.0, 124.0, 126.0)]
+    cells = shallow + deep
+    sensor = Sensor(photons_per_unit=70.0)  # tuned: shallow clears the floor, deep does not
+
+    assert resolve_focal_plane(cells, "auto", acq.optics, axis) == 74.0  # geometric median
+    focus = resolve_focal_plane(
+        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor
+    )
+    assert focus < 50.0  # pulled to the recoverable shallow cluster, off the median
+    assert 20.0 <= focus <= 28.0
+
+
+def test_resolve_focal_plane_auto_shifts_when_vignette_removes_edge_cells():
+    # Field curvature makes off-axis (corner) cells focus deeper in effective depth
+    # than the on-axis cells, and they OUTNUMBER them -- so without vignetting the
+    # yield-optimal focus sits on the edge group. A strong vignette dims those
+    # corner cells below the floor, dropping them from the vote, so the focus
+    # snaps back to the on-axis cluster. The plane moves once you account for it.
+    acq = _acq(n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0))
+    axis = (100.0, 100.0)  # canvas center in µm (n_px=200, 1 µm/px)
+    center = [Cell(center_um=(80.0, 100.0, 100.0), trace=np.array([20.0, 28.0])) for _ in range(5)]
+    edge = [Cell(center_um=(80.0, 10.0, 10.0), trace=np.array([20.0, 28.0])) for _ in range(8)]
+    cells = center + edge
+    sensor = Sensor(photons_per_unit=200.0)
+    strong = combined_falloff_field(acq, None, Vignette(falloff=0.01, exponent=1.0))
+
+    focus_none = resolve_focal_plane(
+        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor, photon_field=None
+    )
+    focus_vig = resolve_focal_plane(
+        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor, photon_field=strong
+    )
+    assert focus_none > 90.0  # edge group (deeper effective depth) wins the count
+    assert focus_vig < 84.0  # vignette kills the edge cells -> back to the center cluster
+    assert focus_vig < focus_none - 5.0
 
 
 def test_optics_in_focus_surface_cell_is_barely_degraded():

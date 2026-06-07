@@ -119,6 +119,8 @@ def test_save_load_roundtrips_optional_fields_present(tmp_path):
     for name in ("shifts", "vignette", "leakage", "bleaching", "neuropil_temporal", "neuropil_spatial"):
         assert getattr(back, name) is not None, name
         np.testing.assert_array_equal(getattr(back, name), getattr(gt, name))
+    # the resolved "auto" focus is a scalar attr, not a dataset; it round-trips too
+    assert back.focal_depth_um == gt.focal_depth_um is not None
 
 
 def test_save_load_roundtrips_snapshots(tmp_path):

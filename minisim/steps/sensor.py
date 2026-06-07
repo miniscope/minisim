@@ -70,6 +70,31 @@ def radial_falloff(
     return 1.0 - (1.0 - falloff) * (radius_grid(shape, center_px) / r_max) ** exponent
 
 
+def combined_falloff_field(acq, illumination_spec, vignette_spec) -> np.ndarray | None:
+    """Spec-only product of the illumination × vignette falloff fields, FOV-sized.
+
+    A prediction of the per-pixel photon budget the sensor-domain
+    :class:`IlluminationProfileStep` / :class:`VignetteStep` will apply, built
+    straight from the sensor FOV shape and the spec parameters — so it is
+    identical (by construction, same :func:`radial_falloff`) to what those steps
+    record at run time, but is available *before* the pipeline reaches the sensor
+    domain. ``None`` when neither field is present (no dimming).
+
+    Auto-focus uses this to weight cells by the brightness their image will
+    actually get, so the focal plane can be chosen for recoverable yield rather
+    than raw defocus (see :func:`~minisim.steps.cell.resolve_focal_plane`).
+    """
+    shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
+    field: np.ndarray | None = None
+    for spec in (illumination_spec, vignette_spec):
+        if spec is None:
+            continue
+        center = falloff_center_px(shape, acq, spec.center_offset_um)
+        f = radial_falloff(shape, center, spec.falloff, spec.exponent)
+        field = f if field is None else field * f
+    return field
+
+
 class IlluminationProfileStep(Step):
     """Static excitation-illumination falloff: the LED lights the FOV unevenly.
 

@@ -29,6 +29,7 @@ import numpy as np
 from minisim.recording import Recording, finalize
 from minisim.scene import Scene
 from minisim.spec import Acquisition, Spec
+from minisim.steps.sensor import combined_falloff_field
 
 
 def simulate(spec: Spec, *, until: str | None = None) -> Recording:
@@ -44,10 +45,18 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
     rng = np.random.default_rng(spec.seed)
     scene = Scene.zeros(acq, rng, margin_px=_motion_margin_px(spec, acq))
 
-    # Excitation illumination drives bleaching faster at the bright center, so the
-    # bleaching step needs the illumination profile (a sensor-domain step that runs
-    # later). Inject it at build time; absent, bleaching keeps a uniform dose.
+    # Two sensor-domain effects must be known by earlier cell-domain steps, so
+    # they are looked up up front and injected at build time:
+    #   * the illumination profile drives bleaching faster at the bright center
+    #     (BleachingStep.illumination), and
+    #   * the illumination × vignette photon budget + the sensor noise floor let
+    #     "auto" focus choose the plane that maximizes recoverable yield
+    #     (CellOpticsStep.photon_field / .sensor_spec).
+    # Each falls back to a uniform / no-op default when its step is absent.
     illumination = next((s for s in spec.steps if s.kind == "illumination_profile"), None)
+    vignette = next((s for s in spec.steps if s.kind == "vignette"), None)
+    sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
+    photon_field = combined_falloff_field(acq, illumination, vignette)
 
     stopped = False
     stage_names: list[str] = []
@@ -55,6 +64,9 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
         step = step_spec.build(acq, rng)
         if step.name == "bleaching" and illumination is not None:
             step.illumination = illumination
+        if step.name == "optics":
+            step.sensor_spec = sensor_spec
+            step.photon_field = photon_field
         step(scene)
         stage_names.append(step.name)
         if spec.output.save_intermediates and step.domain != "cell":

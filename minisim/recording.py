@@ -24,7 +24,6 @@ Two things that were deliberately deferred from earlier steps land here:
 
 from __future__ import annotations
 
-import math
 import os
 import shutil
 from pathlib import Path
@@ -97,6 +96,10 @@ class GroundTruth(BaseModel):
     neuropil_temporal: NDArray[Shape["* component, * frame"], float] | None = None
     neuropil_spatial: NDArray[Shape["* component, * height, * width"], float] | None = None
     neuropil_population: NDArray[Shape["* frame"], float] | None = None
+    # The concrete focal depth (µm) the optics step resolved "auto" to — the plane
+    # that maximized recoverable yield. A scalar, so persisted as a group attr (not
+    # a dataset) by save/load; None when the optics step did not run.
+    focal_depth_um: float | None = None
 
     @property
     def n_units(self) -> int:
@@ -210,6 +213,9 @@ class Recording(BaseModel):
             for name in snapshot_names:
                 snap_group.create_dataset(name, data=np.asarray(self.snapshots[name].values))
 
+        # focal_depth_um is a scalar, not an array: stash it as a group attr.
+        gt_group.attrs["focal_depth_um"] = self.ground_truth.focal_depth_um
+
         root.attrs["format_version"] = _FORMAT_VERSION
         root.attrs["spec_cache_key"] = self.spec.cache_key()
         root.attrs["gt_present"] = present
@@ -245,6 +251,9 @@ class Recording(BaseModel):
         fields = {name: np.asarray(gt_group[name]) for name in _GT_REQUIRED}
         for name in root.attrs.get("gt_present", []):
             fields[name] = np.asarray(gt_group[name])
+        focal = gt_group.attrs.get("focal_depth_um")
+        if focal is not None:
+            fields["focal_depth_um"] = float(focal)
         ground_truth = GroundTruth(**fields)
 
         snapshots = {
@@ -344,6 +353,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         neuropil_temporal=scene.truth.neuropil_temporal,
         neuropil_spatial=_crop_components(scene.truth.neuropil_spatial, fov_h, fov_w),
         neuropil_population=scene.truth.neuropil_population,
+        focal_depth_um=scene.truth.focal_depth_um,
     )
     # observed is always the sensor FOV: brain_motion already crops the movie,
     # but a partial build (until= before motion) can leave it canvas-sized, so
@@ -424,6 +434,28 @@ def _illumination_at(
     return float(field[iy, ix])
 
 
+def detection_snr(peak_dF, baseline, gain, read_e):
+    """Transient SNR in detected electrons — the single detectability formula.
+
+    ``gain`` converts a cell's ΔF units to detected electrons
+    (``optical_brightness · illumination · photons_per_unit · QE``); ``peak_dF``
+    and ``baseline`` are the transient height and the (non-negative) resting level
+    in those same ΔF units. The noise floor is shot noise on the baseline
+    electrons plus the sensor read noise::
+
+        SNR = peak_dF·gain / sqrt(max(baseline,0)·gain + read_e²)
+
+    Works on scalars or numpy arrays (so both ``finalize`` and the auto-focus
+    yield scan share one definition). Where the noise floor is exactly zero the
+    SNR is ``inf`` if there is any signal, else ``0``.
+    """
+    signal_e = peak_dF * gain
+    noise_e = np.sqrt(np.maximum(baseline, 0.0) * gain + read_e * read_e)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        snr = signal_e / noise_e
+    return np.where(noise_e > 0, snr, np.where(signal_e > 0, np.inf, 0.0))
+
+
 def _is_detectable(
     cell: Cell,
     in_focus: bool,
@@ -438,11 +470,7 @@ def _is_detectable(
     The cell's peak ΔF is dimmed by its optical brightness (depth defocus +
     scatter) and the illumination/vignette field at its position, scaled to
     detected electrons by the exposure and QE, then compared to the shot + read
-    noise floor riding on its steady baseline::
-
-        signal_e   = peak_ΔF · optical_brightness · illumination · photons_per_unit · QE
-        baseline_e = baseline · optical_brightness · illumination · photons_per_unit · QE
-        SNR        = signal_e / sqrt(baseline_e + read_noise_e²)
+    noise floor riding on its steady baseline (see :func:`detection_snr`).
 
     ``detectable`` requires ``in_focus`` and ``SNR ≥ DETECT_SNR_THRESHOLD``. With
     no activity (no trace) a cell emits no transient and is not detectable; with
@@ -457,14 +485,8 @@ def _is_detectable(
         return False
     brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
     illum = _illumination_at(photon_field, y_fov_um, x_fov_um, acq.pixel_size_um)
-    qe = acq.image_sensor.quantum_efficiency
-    read_e = acq.image_sensor.read_noise_e
-    gain = brightness * illum * sensor_spec.photons_per_unit * qe
-
+    gain = brightness * illum * sensor_spec.photons_per_unit * acq.image_sensor.quantum_efficiency
     peak_dF = float(cell.trace.max() - cell.trace.min())
-    baseline = max(float(cell.trace.min()), 0.0)
-    signal_e = peak_dF * gain
-    noise_e = math.sqrt(baseline * gain + read_e * read_e)
-    if noise_e <= 0:
-        return signal_e > 0
-    return signal_e / noise_e >= DETECT_SNR_THRESHOLD
+    baseline = float(cell.trace.min())
+    snr = detection_snr(peak_dF, baseline, gain, acq.image_sensor.read_noise_e)
+    return bool(snr >= DETECT_SNR_THRESHOLD)

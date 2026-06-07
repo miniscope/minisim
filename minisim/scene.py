@@ -105,6 +105,9 @@ class GroundTruthBuilder:
     neuropil_temporal: np.ndarray | None = None
     neuropil_spatial: np.ndarray | None = None
     neuropil_population: np.ndarray | None = None
+    # The concrete focal depth the optics step resolved (µm below the surface);
+    # the one number "auto" focus turns into, recorded so it is observable.
+    focal_depth_um: float | None = None
 
 
 @dataclass

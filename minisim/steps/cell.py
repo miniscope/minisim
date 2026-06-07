@@ -27,11 +27,12 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.signal import oaconvolve
 
+from minisim.recording import DETECT_SNR_THRESHOLD, detection_snr
 from minisim.scene import Cell, Scene
 from minisim.steps.base import Step
 
 if TYPE_CHECKING:
-    from minisim.spec import PlaceNeurons
+    from minisim.spec import Acquisition, Optics, PlaceNeurons
 
 # Guards the noise normalization for a degenerate (flat) low-pass field; far
 # below any physically meaningful intensity.
@@ -630,30 +631,51 @@ class CellActivityStep(Step):
 # ---------------------------------------------------------------------------
 
 
+# Candidate focal planes scanned by the yield-maximizing "auto" focus. Over a
+# realistic ~200 µm imaging slab this is ~2 µm spacing — well under the depth of
+# field (≈ 8 µm at NA 0.3), so the optimum is sampled finely enough.
+_FOCUS_SCAN_N = 96
+
+
 def resolve_focal_plane(
     cells: list[Cell],
     focal_depth_in_tissue_um: float | str,
     optics: Optics | None = None,
     axis_yx: tuple[float, float] | None = None,
+    *,
+    acq: Acquisition | None = None,
+    sensor_spec=None,
+    photon_field: np.ndarray | None = None,
+    fov_offset_um: tuple[float, float] = (0.0, 0.0),
 ) -> float:
     """Resolve ``Acquisition.focal_depth_in_tissue_um`` to a concrete focal depth, µm.
 
-    A numeric value is the focal depth below the surface as-is. ``"auto"`` puts the
-    focal plane where it **minimizes the total defocus blur** over the population.
-    Defocus is ``σ = NA·|z − focal_eff|`` with ``focal_eff = focal − shift(r)`` the
-    field-curvature-corrected focal depth a cell at field radius ``r`` actually sees
-    (off-axis cells focus shallower). That is ``NA·|(z + shift(r)) − focal|`` —
-    linear in each cell's **effective depth** ``e = z + shift(r)`` — so the focal
-    that minimizes ``Σ σ`` is exactly the **median of the effective depths**. This
-    automatically accounts for field curvature: with an un-flattened field the
-    off-axis cells read deeper, pulling the plane down so more of them come into
-    focus than a naive median-of-``z`` would manage.
+    A numeric value is the focal depth below the surface as-is. ``"auto"`` chooses
+    the plane that maximizes **recoverable-cell yield** — the count of cells whose
+    realized transient clears the sensor detection floor — which is what an
+    experimenter actually focuses for, not the sharpest *average* cell.
 
-    Field curvature is only included when both ``optics`` (with a non-``None``
-    ``field_curvature_radius_um``) and ``axis_yx`` (the optical axis in canvas µm)
-    are supplied; otherwise ``"auto"`` falls back to the plain median cell depth.
-    An empty scene falls back to the surface (``0.0``). This is the one place
-    ``"auto"`` becomes concrete; every downstream read sees a number.
+    Each cell at field radius ``r`` focuses at ``focal_eff = focal − shift(r)``
+    (off-axis cells focus shallower under field curvature), so defocus is
+    ``σ = NA·|z − focal_eff| = NA·|e − focal|`` in the cell's **effective depth**
+    ``e = z + shift(r)``. For a candidate focal the per-cell detection SNR folds in
+    the defocus peak-drop, scatter attenuation, the illumination × vignette photon
+    budget at the cell's lateral position, and the shot + read noise floor (the
+    same :func:`~minisim.recording.detection_snr` ``finalize`` uses). The scan
+    picks the focal with the most detectable cells, ties broken by total in-focus
+    signal. Because scatter dims deep cells and the falloff fields dim edge cells,
+    this lands shallower / re-centered versus a naive blur optimum — and shifts
+    once you account for vignetting, which is the point.
+
+    The yield scan needs both ``acq`` (for the optics/sensor physics) and a
+    ``sensor_spec`` (the noise floor that defines "recoverable"); ``photon_field``
+    is the optional pre-built illumination × vignette product (FOV-sized, mapped
+    via ``fov_offset_um`` from the canvas to the sensor FOV). **Without a sensor**
+    there is no floor, so ``"auto"`` falls back to the geometric optimum: the focal
+    that minimizes total defocus ``Σ NA·|e − focal|`` is the **median effective
+    depth** (median ``z`` when no curvature info is supplied). An empty scene falls
+    back to the surface (``0.0``). This is the one place ``"auto"`` becomes
+    concrete; every downstream read sees a number.
     """
     if focal_depth_in_tissue_um != "auto":
         return float(focal_depth_in_tissue_um)
@@ -671,8 +693,101 @@ def resolve_focal_plane(
             ],
             dtype=float,
         )
-        return float(np.median(depths + shifts))  # median effective depth = min total defocus
-    return float(np.median(depths))
+    else:
+        shifts = np.zeros_like(depths)
+    effective = depths + shifts
+
+    # No sensor -> no noise floor to define "recoverable": fall back to the focal
+    # that minimizes total defocus blur, i.e. the median effective depth.
+    if acq is None or sensor_spec is None:
+        return float(np.median(effective))
+    scored = [i for i, cell in enumerate(cells) if cell.trace is not None]
+    if not scored:
+        return float(np.median(effective))  # nothing to detect -> geometric optimum
+    return _max_yield_focus(
+        cells, scored, effective, acq, sensor_spec, photon_field, fov_offset_um
+    )
+
+
+def _max_yield_focus(
+    cells: list[Cell],
+    scored: list[int],
+    effective: np.ndarray,
+    acq: Acquisition,
+    sensor_spec,
+    photon_field: np.ndarray | None,
+    fov_offset_um: tuple[float, float],
+) -> float:
+    """Scan candidate focal planes; return the one maximizing detectable-cell yield.
+
+    Only cells with a calcium trace (indices ``scored``) can be detected. For each
+    candidate focal ``F`` the per-cell detection SNR is computed fully vectorized
+    over (candidates × cells): the defocus peak-drop ``σ₀²/(σ₀² + (NA·(e−F))²)``
+    times the focal-independent gain (scatter attenuation × NA² collection ×
+    illumination × exposure × QE), against the shot + read floor. A cell counts
+    when it is within the depth of field of ``F`` **and** clears
+    ``DETECT_SNR_THRESHOLD``. Ties in count are broken by total in-focus signal so
+    the plane sits where the detectable cells are brightest.
+    """
+    optics, tissue = acq.optics, acq.tissue
+    eff = effective[scored]
+    z = np.array([cells[i].center_um[0] for i in scored], dtype=float)
+    # Focal-independent per-cell physics (σ₀² and the gain that is not the defocus
+    # peak-drop). σ₀ is diffraction + scatter blur; gain folds in everything that
+    # dims a cell regardless of focus.
+    sigma0_sq = optics.diffraction_sigma_um**2 + np.array(
+        [tissue.scatter_sigma_um(zi) ** 2 for zi in z]
+    )
+    atten = np.array([tissue.attenuation(zi) for zi in z])
+    illum = _photon_budget_at(cells, scored, photon_field, acq, fov_offset_um)
+    qe = acq.image_sensor.quantum_efficiency
+    read_e = acq.image_sensor.read_noise_e
+    gain_const = atten * optics.collection_efficiency * illum * sensor_spec.photons_per_unit * qe
+    peak_dF = np.array([float(cells[i].trace.max() - cells[i].trace.min()) for i in scored])
+    baseline = np.array([float(cells[i].trace.min()) for i in scored])
+    dof = optics.resolved_depth_of_field_um
+
+    candidates = np.linspace(eff.min(), eff.max(), _FOCUS_SCAN_N)
+    d = eff[None, :] - candidates[:, None]  # (n_candidates, n_cells)
+    peak_drop = sigma0_sq / (sigma0_sq + (optics.na * d) ** 2)
+    gain = gain_const * peak_drop
+    snr = detection_snr(peak_dF, baseline, gain, read_e)
+    detectable = (np.abs(d) <= dof) & (snr >= DETECT_SNR_THRESHOLD)
+    yields = detectable.sum(axis=1)
+    signals = np.where(detectable, peak_dF * gain, 0.0).sum(axis=1)
+
+    best_yield = yields.max()
+    tied = np.flatnonzero(yields == best_yield)
+    best = tied[np.argmax(signals[tied])]
+    return float(candidates[best])
+
+
+def _photon_budget_at(
+    cells: list[Cell],
+    scored: list[int],
+    photon_field: np.ndarray | None,
+    acq: Acquisition,
+    fov_offset_um: tuple[float, float],
+) -> np.ndarray:
+    """Illumination × vignette factor at each scored cell's sensor-FOV position.
+
+    All ones when no field was supplied. The cells live in canvas coordinates; the
+    field is the sensor FOV, so subtract the motion-margin ``fov_offset_um`` before
+    indexing — the same canvas → FOV mapping ``finalize`` applies.
+    """
+    if photon_field is None:
+        return np.ones(len(scored))
+    h, w = photon_field.shape
+    px = acq.pixel_size_um
+    iy = np.clip(
+        np.round((np.array([cells[i].center_um[1] for i in scored]) - fov_offset_um[0]) / px),
+        0, h - 1,
+    ).astype(int)
+    ix = np.clip(
+        np.round((np.array([cells[i].center_um[2] for i in scored]) - fov_offset_um[1]) / px),
+        0, w - 1,
+    ).astype(int)
+    return photon_field[iy, ix]
 
 
 _GAUSS_TRUNCATE = 4.0  # scipy gaussian_filter default; the PSF is exactly 0 beyond
@@ -750,6 +865,15 @@ class CellOpticsStep(Step):
     name = "optics"
     domain = "cell"
 
+    def __init__(self, spec, acq, rng) -> None:
+        super().__init__(spec, acq, rng)
+        # Injected by simulate() so "auto" focus can choose the plane that
+        # maximizes detectable yield: the sensor spec is the noise floor, the
+        # photon field is the (FOV-sized) illumination × vignette product. Absent
+        # (no sensor step), focus falls back to the geometric defocus optimum.
+        self.sensor_spec = None
+        self.photon_field = None
+
     def __call__(self, scene: Scene) -> None:
         acq = self.acq
         # Optical axis = canvas center (the sensor FOV is a centered crop of the
@@ -759,11 +883,25 @@ class CellOpticsStep(Step):
         h, w = scene.canvas_shape  # canvas dims without forcing a movie buffer
         axis_y = h * acq.pixel_size_um / 2.0
         axis_x = w * acq.pixel_size_um / 2.0
-        # "auto" focus minimizes total defocus over the population; pass the optics
-        # + axis so it folds in field curvature (off-axis cells read deeper).
-        focal = resolve_focal_plane(
-            scene.cells, acq.focal_depth_in_tissue_um, acq.optics, (axis_y, axis_x)
+        # "auto" focus maximizes recoverable yield: pass the optics + axis (so it
+        # folds in field curvature) and the sensor/photon-field context (so it
+        # weights cells by the brightness their image actually gets). The canvas →
+        # FOV offset lets the field be sampled at each cell's sensor position.
+        fov_off = (
+            (h - acq.image_sensor.n_px_height) / 2.0 * acq.pixel_size_um,
+            (w - acq.image_sensor.n_px_width) / 2.0 * acq.pixel_size_um,
         )
+        focal = resolve_focal_plane(
+            scene.cells,
+            acq.focal_depth_in_tissue_um,
+            acq.optics,
+            (axis_y, axis_x),
+            acq=acq,
+            sensor_spec=self.sensor_spec,
+            photon_field=self.photon_field,
+            fov_offset_um=fov_off,
+        )
+        scene.truth.focal_depth_um = focal  # the resolved "auto" plane, made observable
         dof = acq.optics.resolved_depth_of_field_um
         for cell in scene.cells:
             if cell.footprint_planted is None:
