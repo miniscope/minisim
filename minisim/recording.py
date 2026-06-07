@@ -288,31 +288,19 @@ class Recording(BaseModel):
         the whole movie in memory, use :func:`minisim.video.simulate_video` instead.
         Requires the ``mediapy`` extra. Returns ``path``.
         """
-        from minisim.video import (
-            _ProgressBar,
-            _default_vmax,
-            _import_mediapy,
-            _open_gray_writer,
-            _to_uint8,
-        )
+        from minisim.video import _default_vmax, _import_mediapy, _write_gray_video
 
-        if self.observed.shape[0] == 0:
+        n_frames = self.observed.shape[0]
+        if n_frames == 0:
             raise ValueError("recording has no frames to write (observed is empty).")
         fps = float(fps if fps is not None else self.spec.acquisition.fps)
         fov = (self.observed.shape[1], self.observed.shape[2])
         if vmax is None:
             vmax = _default_vmax(self.spec)
-        media = _import_mediapy()
-        path = Path(path)
-        bar = _ProgressBar(self.observed.shape[0], progress, f"writing {path.name}")
-        try:
-            with _open_gray_writer(media, path, fov, fps, codec) as writer:
-                for f in range(self.observed.shape[0]):
-                    writer.add_image(_to_uint8(self.observed[f], vmin, vmax))
-                    bar.update()
-        finally:
-            bar.close()
-        return path
+        frames = (self.observed[f] for f in range(n_frames))
+        return _write_gray_video(
+            _import_mediapy(), frames, n_frames, Path(path), fov, fps, vmin, vmax, codec, progress
+        )
 
 
 # ---------------------------------------------------------------------------

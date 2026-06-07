@@ -30,6 +30,7 @@ import math
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from scipy.signal import lfilter
 
 from minisim.scene import Scene
 from minisim.steps.base import Step
@@ -153,10 +154,10 @@ def population_envelope(
         return None
     g = np.sum(np.stack(traces), axis=0).astype(float)
     a = math.exp(-1.0 / tau_frames) if tau_frames > 0 else 0.0
-    smoothed = np.empty_like(g)
-    smoothed[0] = g[0]
-    for t in range(1, g.size):
-        smoothed[t] = a * smoothed[t - 1] + (1.0 - a) * g[t]
+    # The one-pole recurrence as an IIR filter (vectorized in C, the same idiom as
+    # motion._lowpass / _integrate_dho). The initial state ``zi = a·g[0]`` seeds the
+    # filter so smoothed[0] == g[0] (start at the first value, not the lfilter default).
+    smoothed, _ = lfilter([1.0 - a], [1.0, -a], g, zi=[a * g[0]])
     mean = float(smoothed.mean())
     if mean <= _EPS:
         return None
@@ -371,12 +372,11 @@ class BleachingStep(Step):
         center = falloff_center_px(shape, acq, self.illumination.center_offset_um)
         field = radial_falloff(shape, center, self.illumination.falloff, self.illumination.exponent)
         px = acq.pixel_size_um
-        dose = np.ones(n)
-        for i, cell in enumerate(scene.cells):
-            iy = int(np.clip(round(cell.center_um[1] / px), 0, shape[0] - 1))
-            ix = int(np.clip(round(cell.center_um[2] / px), 0, shape[1] - 1))
-            dose[i] = field[iy, ix]
-        return dose
+        ys = np.array([cell.center_um[1] for cell in scene.cells])
+        xs = np.array([cell.center_um[2] for cell in scene.cells])
+        iy = np.clip(np.round(ys / px), 0, shape[0] - 1).astype(int)
+        ix = np.clip(np.round(xs / px), 0, shape[1] - 1).astype(int)
+        return field[iy, ix]
 
 
 # ---------------------------------------------------------------------------

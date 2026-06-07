@@ -281,7 +281,7 @@ class BrainMotionStep(Step):
                 "symmetric margin; allocate the scene with Scene.zeros(acq, margin_px=…)."
             )
 
-        shifts_px = self._resolve_shifts(n_frames)
+        shifts_px = brain_motion_shifts(self.spec, self.acq, n_frames, self.rng)
         self._check_within_margin(shifts_px, margin_h, margin_w)
 
         cropped = shift_and_crop(canvas, shifts_px, fov)
@@ -296,10 +296,6 @@ class BrainMotionStep(Step):
             name="movie",
         )
         scene.truth.shifts = shifts_px
-
-    def _resolve_shifts(self, n_frames: int) -> np.ndarray:
-        """Per-frame ``(dy, dx)`` in pixels: explicit trajectory, physical, or walk."""
-        return brain_motion_shifts(self.spec, self.acq, n_frames, self.rng)
 
     @staticmethod
     def _check_within_margin(shifts_px: np.ndarray, margin_h: int, margin_w: int) -> None:

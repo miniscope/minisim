@@ -25,10 +25,10 @@ from pathlib import Path
 import numpy as np
 
 from minisim.scene import Scene
-from minisim.simulate import _motion_margin_px
+from minisim.simulate import _motion_margin_px, inject_cell_deps, sensor_context
 from minisim.spec import Spec
 from minisim.steps.motion import brain_motion_shifts, shift_and_crop
-from minisim.steps.sensor import combined_falloff_field, leakage_field
+from minisim.steps.sensor import leakage_field
 from minisim.steps.tissue import neuropil_components
 
 # Frames rendered+digitized per chunk. ~64 at 608x608 float64 is ~150 MB of working
@@ -77,10 +77,24 @@ def simulate_video(
     media = _import_mediapy()
     path = Path(path)
 
-    bar = _ProgressBar(acq.n_frames, progress, f"writing {path.name}")
+    frames = (frame for _, frame in _iter_count_frames(spec, chunk))
+    return _write_gray_video(
+        media, frames, acq.n_frames, path, fov, fps, vmin, vmax, codec, progress
+    )
+
+
+def _write_gray_video(media, frames, total, path, fov, fps, vmin, vmax, codec, progress):
+    """Encode an iterable of float ``(H, W)`` frames to a grayscale video at ``path``.
+
+    The shared write tail behind both :func:`simulate_video` (streaming the
+    chunked generator) and :meth:`minisim.recording.Recording.write_video`
+    (replaying an in-memory movie): open the single-plane writer, map each frame
+    to uint8 over ``[vmin, vmax]``, and drive a progress bar over ``total`` frames.
+    """
+    bar = _ProgressBar(total, progress, f"writing {path.name}")
     try:
         with _open_gray_writer(media, path, fov, fps, codec) as writer:
-            for _, frame in _iter_count_frames(spec, chunk):
+            for frame in frames:
                 writer.add_image(_to_uint8(frame, vmin, vmax))
                 bar.update()
     finally:
@@ -106,13 +120,10 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
     fov = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
     sensor_hw = acq.image_sensor
 
-    # Same up-front lookups + injection as simulate(): the photon field feeds both
-    # "auto" focus (so the resolved plane, and thus the footprints, match) and the
-    # later field application; bleaching needs the illumination profile.
-    illumination = next((s for s in spec.steps if s.kind == "illumination_profile"), None)
-    vignette = next((s for s in spec.steps if s.kind == "vignette"), None)
-    sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
-    photon_field = combined_falloff_field(acq, illumination, vignette)
+    # Same up-front lookups as simulate(): the photon field feeds both "auto" focus
+    # (so the resolved plane, and thus the footprints, match) and the later field
+    # application; bleaching needs the illumination profile.
+    illumination, sensor_spec, photon_field = sensor_context(spec, acq)
 
     neuropil = None  # (amplitude, spatial (k,Hc,Wc), temporal (k,frame))
     shifts = None  # (frame, 2) px, or None when there is no motion
@@ -127,11 +138,7 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
         kind = step_spec.kind
         if step_spec.domain == "cell":
             step = step_spec.build(acq, rng)
-            if step.name == "bleaching" and illumination is not None:
-                step.illumination = illumination
-            if step.name == "optics":
-                step.sensor_spec = sensor_spec
-                step.photon_field = photon_field
+            inject_cell_deps(step, illumination, sensor_spec, photon_field)
             step(scene)
         elif kind == "neuropil":
             spatial, temporal, _ = neuropil_components(

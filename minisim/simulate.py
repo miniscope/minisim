@@ -44,29 +44,13 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
     acq = spec.acquisition
     rng = np.random.default_rng(spec.seed)
     scene = Scene.zeros(acq, rng, margin_px=_motion_margin_px(spec, acq))
-
-    # Two sensor-domain effects must be known by earlier cell-domain steps, so
-    # they are looked up up front and injected at build time:
-    #   * the illumination profile drives bleaching faster at the bright center
-    #     (BleachingStep.illumination), and
-    #   * the illumination × vignette photon budget + the sensor noise floor let
-    #     "auto" focus choose the plane that maximizes recoverable yield
-    #     (CellOpticsStep.photon_field / .sensor_spec).
-    # Each falls back to a uniform / no-op default when its step is absent.
-    illumination = next((s for s in spec.steps if s.kind == "illumination_profile"), None)
-    vignette = next((s for s in spec.steps if s.kind == "vignette"), None)
-    sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
-    photon_field = combined_falloff_field(acq, illumination, vignette)
+    illumination, sensor_spec, photon_field = sensor_context(spec, acq)
 
     stopped = False
     stage_names: list[str] = []
     for step_spec in spec.steps:
         step = step_spec.build(acq, rng)
-        if step.name == "bleaching" and illumination is not None:
-            step.illumination = illumination
-        if step.name == "optics":
-            step.sensor_spec = sensor_spec
-            step.photon_field = photon_field
+        inject_cell_deps(step, illumination, sensor_spec, photon_field)
         step(scene)
         stage_names.append(step.name)
         if spec.output.save_intermediates and step.domain != "cell":
@@ -80,6 +64,43 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
             f"until={until!r} matched no step in this spec; stage names are {stage_names}."
         )
     return finalize(scene, spec)
+
+
+def sensor_context(spec: Spec, acq: Acquisition):
+    """Look up the sensor-domain specs that earlier cell-domain steps depend on.
+
+    Returns ``(illumination, sensor_spec, photon_field)``. Two sensor-domain
+    effects must be known before the cell-domain steps that consume them run:
+
+    * the illumination profile drives bleaching faster at the bright center
+      (``BleachingStep.illumination``), and
+    * the illumination × vignette photon budget + the sensor noise floor let
+      "auto" focus choose the plane that maximizes recoverable yield
+      (``CellOpticsStep.photon_field`` / ``.sensor_spec``).
+
+    Each falls back to a uniform / no-op default when its step is absent. Shared
+    with the streaming writer (:func:`minisim.video._iter_count_frames`) so both
+    paths resolve the same context and make identical focus/bleaching decisions.
+    """
+    illumination = next((s for s in spec.steps if s.kind == "illumination_profile"), None)
+    vignette = next((s for s in spec.steps if s.kind == "vignette"), None)
+    sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
+    photon_field = combined_falloff_field(acq, illumination, vignette)
+    return illumination, sensor_spec, photon_field
+
+
+def inject_cell_deps(step, illumination, sensor_spec, photon_field) -> None:
+    """Push the sibling specs from :func:`sensor_context` into a built cell step.
+
+    ``bleaching`` needs the illumination profile; ``optics`` needs the photon
+    field and sensor floor for "auto" focus. A no-op for every other step. Shared
+    by ``simulate`` and the streaming writer so the footprints match bit-for-bit.
+    """
+    if step.name == "bleaching" and illumination is not None:
+        step.illumination = illumination
+    if step.name == "optics":
+        step.sensor_spec = sensor_spec
+        step.photon_field = photon_field
 
 
 def _motion_margin_px(spec: Spec, acq: Acquisition) -> int:
