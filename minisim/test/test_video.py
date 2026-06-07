@@ -7,6 +7,8 @@ and are skipped when ``mediapy`` is unavailable.
 """
 from __future__ import annotations
 
+import shutil
+
 import numpy as np
 import pytest
 
@@ -98,9 +100,13 @@ def test_default_vmax_is_adc_range_with_sensor_else_errors():
         _default_vmax(_spec(sensor=False))
 
 
-# --- file writing (needs mediapy + ffmpeg) ---------------------------------
-
+# --- file writing (needs mediapy + the ffmpeg binary) ----------------------
+# mediapy imports fine without ffmpeg but shells out to it at encode/decode time,
+# so guard on the binary too (CI installs it on Linux; other runners skip these).
 mediapy = pytest.importorskip("mediapy")
+if shutil.which("ffmpeg") is None:
+    pytest.skip("ffmpeg binary not on PATH; video file I/O tests need it",
+                allow_module_level=True)
 
 
 def test_simulate_video_writes_decodable_file(tmp_path):
