@@ -83,7 +83,7 @@ def bounded_random_walk(
 def _lowpass(white: np.ndarray, tau_s: float, dt: float) -> np.ndarray:
     """One-pole low-pass of a white series → a slow, unit-variance process."""
     alpha = dt / (tau_s + dt)
-    slow = lfilter([alpha], [1.0, -(1.0 - alpha)], white)
+    slow = np.asarray(lfilter([alpha], [1.0, -(1.0 - alpha)], white))
     std = float(slow.std())
     return slow / std if std > _EPS else slow
 
@@ -103,7 +103,7 @@ def _integrate_dho(accel: np.ndarray, dt: float, w0: float, zeta: float) -> np.n
     c1, c2 = 2.0 * zeta * w0, w0 * w0
     b = [dt * dt]
     a = [1.0, -(2.0 - c1 * dt - c2 * dt * dt), (1.0 - c1 * dt)]
-    return lfilter(b, a, accel, axis=0)
+    return np.asarray(lfilter(b, a, accel, axis=0))
 
 
 def physical_brain_motion(

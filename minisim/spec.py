@@ -34,6 +34,7 @@ import hashlib
 import math
 import warnings
 from collections import Counter
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 import numpy as np
@@ -120,7 +121,7 @@ class Optics(_Base):
 
     @field_validator("depth_of_field_um")
     @classmethod
-    def _check_dof(cls, v: float | str) -> float | str:
+    def _check_dof(cls, v: float | Literal["auto"]) -> float | Literal["auto"]:
         if v != "auto" and v <= 0:
             raise ValueError(f"depth_of_field_um ({v}) must be > 0, or 'auto'.")
         return v
@@ -392,7 +393,7 @@ class Acquisition(_Base):
 
     @field_validator("focal_depth_in_tissue_um")
     @classmethod
-    def _check_focal_depth(cls, v: float | str) -> float | str:
+    def _check_focal_depth(cls, v: float | Literal["auto"]) -> float | Literal["auto"]:
         if v != "auto" and v < 0:
             raise ValueError(f"focal_depth_in_tissue_um ({v}) must be ≥ 0, or 'auto'.")
         return v
@@ -1006,10 +1007,10 @@ class Spec(_Base):
                 )
             seen.add(s.kind)
 
-    def _check_footprint_vs_fov(self, by_kind: dict[str, StepSpec]) -> None:
+    def _check_footprint_vs_fov(self, by_kind: Mapping[str, StepSpec]) -> None:
         """Rule 2: a soma larger than the entire FOV is a misconfiguration."""
         pc = by_kind.get("place_neurons")
-        if pc is None:
+        if not isinstance(pc, PlaceNeurons):
             return
         min_fov = min(self.acquisition.fov_um)
         if 2 * pc.soma_radius_um > min_fov:
@@ -1018,10 +1019,10 @@ class Spec(_Base):
                 f"the FOV ({min_fov:.3g} µm). Reduce the soma or enlarge the FOV."
             )
 
-    def _check_sampling_vs_kinetics(self, by_kind: dict[str, StepSpec]) -> None:
+    def _check_sampling_vs_kinetics(self, by_kind: Mapping[str, StepSpec]) -> None:
         """Rule 3: ``tau_decay_s · fps`` must be ≳ 1, else the decay is unresolvable."""
         act = by_kind.get("cell_activity")
-        if act is None:
+        if not isinstance(act, CellActivity):
             return
         samples_per_decay = act.tau_decay_s * self.acquisition.fps
         if samples_per_decay < 1.0:
@@ -1044,11 +1045,11 @@ class Spec(_Base):
                 stacklevel=2,
             )
 
-    def _warn_focal_plane(self, by_kind: dict[str, StepSpec]) -> None:
+    def _warn_focal_plane(self, by_kind: Mapping[str, StepSpec]) -> None:
         """Rule 6: a numeric focal depth outside the cell depth range is unusual."""
         focal = self.acquisition.focal_depth_in_tissue_um
         pc = by_kind.get("place_neurons")
-        if focal == "auto" or pc is None:
+        if focal == "auto" or not isinstance(pc, PlaceNeurons):
             return
         lo, hi = pc.depth_range_um
         if not (lo <= focal <= hi):
@@ -1058,10 +1059,10 @@ class Spec(_Base):
                 stacklevel=2,
             )
 
-    def _warn_motion_magnitude(self, by_kind: dict[str, StepSpec]) -> None:
+    def _warn_motion_magnitude(self, by_kind: Mapping[str, StepSpec]) -> None:
         """Rule 7: shifts beyond ~5% of the FOV likely indicate a misconfig."""
         mot = by_kind.get("brain_motion")
-        if mot is None:
+        if not isinstance(mot, BrainMotion):
             return
         min_fov = min(self.acquisition.fov_um)
         if mot.trajectory_um is not None:

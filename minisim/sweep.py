@@ -20,7 +20,7 @@ from itertools import product
 
 from pydantic import BaseModel, Field
 
-from minisim.spec import Spec, StepSpec
+from minisim.spec import Spec
 
 
 class SweptSpec(Spec):
@@ -94,7 +94,9 @@ def _set_path(model: BaseModel, parts: list[str], full_path: str, value) -> Base
             raise ValueError(f"steps path {full_path!r} must be steps.<kind>.<field>.")
         kind, *field_parts = rest
         idx = _step_index(model, kind, full_path)
-        new_steps = list(model.steps)
+        # `steps` lives on Spec, not the BaseModel this recursive setter is typed
+        # for; the "steps" path only ever fires at the top-level Spec.
+        new_steps = list(getattr(model, "steps"))
         new_steps[idx] = _set_path(new_steps[idx], field_parts, full_path, value)
         return model.model_copy(update={"steps": new_steps})
 
@@ -111,7 +113,8 @@ def _set_path(model: BaseModel, parts: list[str], full_path: str, value) -> Base
 
 def _step_index(model: BaseModel, kind: str, full_path: str) -> int:
     """Index in ``model.steps`` of the step whose ``kind`` matches (kinds are unique)."""
-    steps: list[StepSpec] = model.steps
+    # `steps` lives on Spec, not the BaseModel this helper is typed for.
+    steps = getattr(model, "steps")
     for i, step in enumerate(steps):
         if step.kind == kind:
             return i

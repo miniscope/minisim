@@ -137,19 +137,20 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
     # vignette/leakage/sensor draw no RNG, so building their (deterministic) artifacts
     # here -- or skipping them -- never desyncs the stream.
     for step_spec in spec.steps:
-        kind = step_spec.kind
+        # Branch on step_spec.kind (not a local copy) so the discriminated union
+        # narrows step_spec to the concrete spec type inside each branch.
         if step_spec.domain == "cell":
             step = step_spec.build(acq, rng)
             step.prepare(context)
             step(scene)
-        elif kind == "neuropil":
+        elif step_spec.kind == "neuropil":
             spatial, temporal, _ = neuropil_components(
                 step_spec, acq, scene.cells, canvas_shape, n_frames, rng
             )
             neuropil = (step_spec.amplitude, spatial, temporal)
-        elif kind == "brain_motion":
+        elif step_spec.kind == "brain_motion":
             shifts = brain_motion_shifts(step_spec, acq, n_frames, rng)
-        elif kind == "leakage":
+        elif step_spec.kind == "leakage":
             leak = leakage_field(step_spec, acq, fov)
         # render / vasculature / illumination_profile / vignette / sensor: no RNG,
         # handled in the chunk loop (or already folded into photon_field).
@@ -170,7 +171,7 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
     for t0 in range(0, n_frames, chunk_frames):
         t1 = min(t0 + chunk_frames, n_frames)
         canvas = np.zeros((t1 - t0, canvas_shape[0], canvas_shape[1]))
-        if A is not None:
+        if A is not None and CB is not None:
             canvas += np.tensordot(CB[:, t0:t1], A, axes=([0], [0]))
         if neuropil is not None:
             amp, spatial, temporal = neuropil

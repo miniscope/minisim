@@ -20,6 +20,28 @@ jobs:
       - name: Ruff Linting
         run: ruff check minisim
 
+  typecheck:
+    name: pyright
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: install pdm
+        run: python -m pip install "pdm>=2.26.9"
+      # An in-project .venv so pyright (configured with venv=".venv") resolves the
+      # installed numpy/pydantic/xarray/zarr/mediapy stubs. `test` pulls the
+      # notebook extra, which provides mediapy for video.py's import.
+      - name: install project + deps
+        run: |
+          pdm config venv.in_project true
+          pdm install --with test
+      - name: install pyright into the venv
+        run: pdm run pip install "pyright>=1.1.390"
+      - name: Pyright type check
+        run: pdm run pyright
+
   lock:
     name: lockfile current
     runs-on: ubuntu-latest

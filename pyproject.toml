@@ -120,6 +120,29 @@ target-version = "py310"
 select = ["UP"]
 fixable = ["ALL"]
 
+[tool.pyright]
+include = ["minisim"]
+exclude = [
+    "**/__pycache__",
+    # Tests exercise dynamic xarray/numpy indexing heavily; type-gating them is
+    # high-noise, low-value, so they are out of scope.
+    "minisim/test",
+    # numpydantic's Shape["..."] DSL is not statically parseable, so pyright
+    # mis-infers GroundTruth's array fields and the error cascades through the
+    # whole module. Excluded *pending* a numpydantic static-typing story (a stub
+    # or TYPE_CHECKING-friendly form) -- see the upstream discussion -- not a
+    # permanent punt. The rest of the package is gated.
+    "minisim/recording.py",
+]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+# pydantic step specs legitimately redeclare the `kind`/`domain` ClassVars the
+# StepSpec base declares (the discriminated-union idiom); pyright's
+# incompatible-override check is a false positive for that pattern.
+reportIncompatibleVariableOverride = false
+
 [tool.pytest.ini_options]
 addopts = [
     '-v',

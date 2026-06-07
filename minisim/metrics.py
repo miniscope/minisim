@@ -160,7 +160,7 @@ def spike_precision_recall(
         for t in true_t:
             candidates = [e for e in est_t if e not in used and abs(int(e) - int(t)) <= tol_frames]
             if candidates:
-                used.add(min(candidates, key=lambda e: abs(int(e) - int(t))))
+                used.add(int(min(candidates, key=lambda e: abs(int(e) - int(t)))))
                 tp += 1
             else:
                 fn += 1

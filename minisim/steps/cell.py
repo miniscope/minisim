@@ -21,7 +21,7 @@ Step 5b); until it lands, ``render`` composites the planted footprint directly.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -427,11 +427,13 @@ def _half_max_u(r: float) -> tuple[float, float]:
 
     up = _peak_u(r)
     half = _shape_u(up, r) / 2.0
-    u_lo = brentq(lambda u: _shape_u(u, r) - half, 1e-12, up)
+    # brentq returns a float here (full_output defaults to False); scipy types it
+    # as a float|tuple union, so cast to keep the arithmetic below typed.
+    u_lo = cast("float", brentq(lambda u: _shape_u(u, r) - half, 1e-12, up))
     hi = up
     while _shape_u(hi, r) > half:  # grow until the decay falls below half max
         hi *= 2.0
-    u_hi = brentq(lambda u: _shape_u(u, r) - half, up, hi)
+    u_hi = cast("float", brentq(lambda u: _shape_u(u, r) - half, up, hi))
     return u_lo, u_hi
 
 
@@ -479,7 +481,7 @@ def tau_from_kernel_timing(t_peak_s: float, fwhm_s: float) -> tuple[float, float
     elif rho >= hi:
         r = _R_HI
     else:
-        r = brentq(lambda rr: ratio(rr) - rho, _R_LO, _R_HI)
+        r = cast("float", brentq(lambda rr: ratio(rr) - rho, _R_LO, _R_HI))
     tau_decay = t_peak_s / _peak_u(r)
     return r * tau_decay, tau_decay
 
@@ -515,7 +517,10 @@ def spike_activity_params(activity: float) -> tuple[float, float, float, float]:
         t, lo, hi = a / 0.5, _ACTIVITY_SPARSE, _ACTIVITY_MODERATE
     else:
         t, lo, hi = (a - 0.5) / 0.5, _ACTIVITY_MODERATE, _ACTIVITY_DENSE
-    return tuple(l + t * (h - l) for l, h in zip(lo, hi))
+    p_q2a, p_a2q, active_rate_hz, quiescent_rate_hz = (
+        l + t * (h - l) for l, h in zip(lo, hi)
+    )
+    return p_q2a, p_a2q, active_rate_hz, quiescent_rate_hz
 
 
 class CellActivityStep(Step["CellActivity"]):
@@ -749,8 +754,14 @@ def _max_yield_focus(
     qe = acq.image_sensor.quantum_efficiency
     read_e = acq.image_sensor.read_noise_e
     gain_const = atten * optics.collection_efficiency * illum * sensor_spec.photons_per_unit * qe
-    peak_dF = np.array([float(cells[i].trace.max() - cells[i].trace.min()) for i in scored])
-    baseline = np.array([float(cells[i].trace.min()) for i in scored])
+    peak_dF_list, baseline_list = [], []
+    for i in scored:
+        trace = cells[i].trace
+        assert trace is not None  # scored cells are activity-bearing (have a trace)
+        peak_dF_list.append(float(trace.max() - trace.min()))
+        baseline_list.append(float(trace.min()))
+    peak_dF = np.array(peak_dF_list)
+    baseline = np.array(baseline_list)
     dof = optics.resolved_depth_of_field_um
 
     candidates = np.linspace(eff.min(), eff.max(), _FOCUS_SCAN_N)
