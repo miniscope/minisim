@@ -32,11 +32,17 @@ from minisim.steps.base import Step
 # aliasing of stride-rate motion at the camera rate emerge honestly. ~300 Hz keeps
 # tens of steps per cycle for the 6-8 Hz band the symplectic integrator sees.
 _INTEGRATION_HZ = 300.0
-# Slow random drift of the locomotion frequency: real gait is near-periodic over a
-# few strides but not metronomic, so the stride frequency wanders by this fraction
-# (a low-pass-filtered process), broadening the spectral line into a narrow band.
-_LOCOMOTION_FREQ_CV = 0.06
-_LOCOMOTION_FREQ_TAU_S = 0.5  # time constant of that wander
+# Random drift of the locomotion frequency: real gait is near-periodic over a few
+# strides but far from metronomic (the animal speeds up and slows down), so the stride
+# frequency wanders by this fraction (a low-pass-filtered process), broadening the
+# spectral line into a band rather than a razor-sharp tone.
+_LOCOMOTION_FREQ_CV = 0.15
+_LOCOMOTION_FREQ_TAU_S = 0.3  # time constant of that wander
+# Correlation time of the broadband behavioral forcing. Real brain motion is dominated
+# by LOW frequencies (postural shifts, walking, head movement, slow drift), so the
+# acceleration noise is red (low-pass white) with this time constant rather than white
+# -- most of the motion's power then sits below the stride rhythm, not at it.
+_BEHAVIORAL_TAU_S = 0.12
 # Percentile of the displacement radius calibrated to motion_amplitude_um: a high
 # percentile, so amplitude is the *extreme* excursion while the bulk of frames sit
 # well inside it (most of a recording moves less than the worst moments). Robust to
@@ -138,9 +144,13 @@ def physical_brain_motion(
     )
     a_loco = np.zeros((n_hr, 2))
     a_loco[:, locomotion_axis] = np.sin(2.0 * np.pi * np.cumsum(freq) * dt)
-    # Broadband sloshing acceleration on both axes (1/√dt keeps the diffusion
-    # resolution-independent).
-    a_noise = rng.standard_normal((n_hr, 2)) / np.sqrt(dt)
+    # Broadband behavioral acceleration on both axes, RED (low-pass white) so its
+    # power sits at low frequencies -- the slow drift, walking, and head movement that
+    # dominate real brain motion, with the stride rhythm riding above it.
+    a_noise = np.stack(
+        [_lowpass(rng.standard_normal(n_hr), _BEHAVIORAL_TAU_S, dt) for _ in range(2)],
+        axis=1,
+    )
 
     # Decimate each component's position to the frame rate (exposure-window mean),
     # pin frame 0 to the reference, normalize to unit RMS radius, then mix.
