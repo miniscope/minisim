@@ -20,13 +20,36 @@ signature the orchestrator and the unit tests both use.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 if TYPE_CHECKING:
     import numpy as np
 
     from minisim.scene import Scene
-    from minisim.spec import Acquisition, StepSpec
+    from minisim.spec import Acquisition, IlluminationProfile, Sensor, StepSpec
+
+
+@dataclass(frozen=True)
+class PipelineContext:
+    """Cross-step context resolved once before a run, offered to each step's
+    :meth:`Step.prepare`.
+
+    A few cell-domain steps depend on parameters defined by *later* sensor-domain
+    steps: ``bleaching`` bleaches faster under brighter excitation
+    (``illumination``), and ``optics`` "auto" focus weights cells by the photon
+    budget their image gets and the sensor noise floor (``photon_field`` /
+    ``sensor_spec``). Rather than the orchestrator reaching into each step by name,
+    the context is assembled up front (:func:`minisim.simulate.build_context`) and
+    handed to every step via ``prepare``; each step pulls only the fields it needs.
+
+    Every field is optional: a step absent from the spec leaves its slot ``None``
+    and dependents fall back to a uniform / no-op default.
+    """
+
+    illumination: IlluminationProfile | None = None
+    sensor_spec: Sensor | None = None
+    photon_field: np.ndarray | None = None
 
 
 class Step:
@@ -53,6 +76,19 @@ class Step:
         self.spec = spec
         self.acq = acq
         self.rng = rng
+
+    def prepare(self, context: PipelineContext) -> None:
+        """Pull any cross-step dependencies off the resolved ``context``.
+
+        Called by the orchestrator after :meth:`StepSpec.build` and before
+        :meth:`__call__`. The base implementation is a no-op; a step that needs a
+        sibling step's resolved spec or field (e.g. ``bleaching``'s illumination,
+        ``optics``' photon budget) overrides this to read it from ``context``.
+        Keeping it a *pull* (the step takes what it needs) rather than a *push*
+        (the orchestrator sets attributes by name) keeps each cross-step
+        dependency declared on the step that actually has it. A step run directly
+        in a unit test may skip ``prepare`` and set the dependency itself.
+        """
 
     def __call__(self, scene: Scene) -> None:
         """Mutate ``scene`` in place. Implemented by each concrete step."""

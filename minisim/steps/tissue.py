@@ -33,7 +33,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.signal import lfilter
 
 from minisim.scene import Scene
-from minisim.steps.base import Step
+from minisim.steps.base import PipelineContext, Step
 
 # Guards a divide-by-peak for a degenerate (flat) smooth field; far below any
 # physically meaningful intensity.
@@ -325,10 +325,11 @@ class BleachingStep(Step):
     fades with the population-average ``B``. ``finalize`` stacks the per-cell
     envelopes into ground truth ``(unit, frame)``, a scoreable confound.
 
-    If an :class:`~minisim.spec.IlluminationProfile` is present, ``simulate`` injects
-    it as ``self.illumination`` and the per-cell excitation dose is scaled by the
-    illumination at the cell's **rest** lateral position — so brightly-lit center
-    cells bleach faster than dim edge cells. (Motion's effect on a cell's dose as it
+    If an :class:`~minisim.spec.IlluminationProfile` is present, ``prepare`` pulls it
+    from the :class:`~minisim.steps.base.PipelineContext` and the per-cell excitation
+    dose is scaled by the illumination at the cell's **rest** lateral position, so
+    brightly-lit center cells bleach faster than dim edge cells. (Motion's effect on a
+    cell's dose as it
     jiggles through the gradient is second-order and ignored.) This is the one way
     the excitation-side illumination differs from the collection-side vignette.
     """
@@ -338,9 +339,13 @@ class BleachingStep(Step):
 
     def __init__(self, spec, acq, rng) -> None:
         super().__init__(spec, acq, rng)
-        # Optional IlluminationProfile spec, injected by simulate() when present, so
-        # the excitation dose varies across the FOV. None -> spatially uniform dose.
+        # Optional IlluminationProfile spec, pulled from the PipelineContext in
+        # prepare() when present, so the excitation dose varies across the FOV.
+        # None -> spatially uniform dose.
         self.illumination = None
+
+    def prepare(self, context: PipelineContext) -> None:
+        self.illumination = context.illumination
 
     def __call__(self, scene: Scene) -> None:
         spec, acq = self.spec, self.acq

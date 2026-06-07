@@ -29,7 +29,7 @@ from scipy.signal import oaconvolve
 
 from minisim.recording import DETECT_SNR_THRESHOLD, detection_snr
 from minisim.scene import Cell, Scene
-from minisim.steps.base import Step
+from minisim.steps.base import PipelineContext, Step
 
 if TYPE_CHECKING:
     from minisim.spec import Acquisition, Optics, PlaceNeurons
@@ -867,12 +867,17 @@ class CellOpticsStep(Step):
 
     def __init__(self, spec, acq, rng) -> None:
         super().__init__(spec, acq, rng)
-        # Injected by simulate() so "auto" focus can choose the plane that
-        # maximizes detectable yield: the sensor spec is the noise floor, the
-        # photon field is the (FOV-sized) illumination × vignette product. Absent
-        # (no sensor step), focus falls back to the geometric defocus optimum.
+        # Pulled from the PipelineContext in prepare() so "auto" focus can choose
+        # the plane that maximizes detectable yield: the sensor spec is the noise
+        # floor, the photon field is the (FOV-sized) illumination × vignette
+        # product. Absent (no sensor step), focus falls back to the geometric
+        # defocus optimum.
         self.sensor_spec = None
         self.photon_field = None
+
+    def prepare(self, context: PipelineContext) -> None:
+        self.sensor_spec = context.sensor_spec
+        self.photon_field = context.photon_field
 
     def __call__(self, scene: Scene) -> None:
         acq = self.acq

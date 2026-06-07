@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from minisim.scene import Scene
-from minisim.simulate import _motion_margin_px, inject_cell_deps, sensor_context
+from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
 from minisim.steps.motion import brain_motion_shifts, shift_and_crop
 from minisim.steps.sensor import leakage_field
@@ -120,10 +120,12 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
     fov = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
     sensor_hw = acq.image_sensor
 
-    # Same up-front lookups as simulate(): the photon field feeds both "auto" focus
-    # (so the resolved plane, and thus the footprints, match) and the later field
-    # application; bleaching needs the illumination profile.
-    illumination, sensor_spec, photon_field = sensor_context(spec, acq)
+    # Same resolved context as simulate(): the photon field feeds both "auto" focus
+    # (so the resolved plane, and thus the footprints, match) via each cell step's
+    # prepare(), and the later per-frame field application below.
+    context = build_context(spec, acq)
+    sensor_spec = context.sensor_spec
+    photon_field = context.photon_field
 
     neuropil = None  # (amplitude, spatial (k,Hc,Wc), temporal (k,frame))
     shifts = None  # (frame, 2) px, or None when there is no motion
@@ -138,7 +140,7 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
         kind = step_spec.kind
         if step_spec.domain == "cell":
             step = step_spec.build(acq, rng)
-            inject_cell_deps(step, illumination, sensor_spec, photon_field)
+            step.prepare(context)
             step(scene)
         elif kind == "neuropil":
             spatial, temporal, _ = neuropil_components(
