@@ -174,6 +174,27 @@ def test_unresolvable_decay_fails():
         Spec(acquisition=acq, steps=steps)
 
 
+def test_step_before_its_prerequisite_fails():
+    # cell_activity requires place_neurons; with both present but reversed, the
+    # invisible Scene data-dependency is now an explicit ordering error.
+    steps = [CellActivity(tau_decay_s=0.4), PlaceNeurons(soma_radius_um=3.0), Render()]
+    with pytest.raises(ValidationError, match="must come after"):
+        _valid_spec(steps=steps)
+
+
+def test_render_before_its_producers_fails():
+    steps = [Render(), PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.4)]
+    with pytest.raises(ValidationError, match="must come after"):
+        _valid_spec(steps=steps)
+
+
+def test_absent_prerequisite_is_allowed_for_partial_pipelines():
+    # A partial pipeline (cells rendered, no cell_activity / motion / sensor) is
+    # valid: requires enforces order-when-present, not completeness — so a few
+    # stages can be run to make targeted test data. place_neurons precedes render.
+    Spec(acquisition=_tiny_acquisition(), steps=[PlaceNeurons(soma_radius_um=3.0), Render()])
+
+
 # --- validators: advisory warnings -----------------------------------------
 
 

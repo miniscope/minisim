@@ -23,10 +23,15 @@ shrink the usable FOV below the physical one.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from minisim.scene import Scene
 from minisim.steps.base import Step
+
+if TYPE_CHECKING:
+    from minisim.spec import IlluminationProfile, Leakage, Sensor, Vignette
 
 
 def radius_grid(shape: tuple[int, int], center_px: tuple[float, float]) -> np.ndarray:
@@ -95,7 +100,7 @@ def combined_falloff_field(acq, illumination_spec, vignette_spec) -> np.ndarray 
     return field
 
 
-class IlluminationProfileStep(Step):
+class IlluminationProfileStep(Step["IlluminationProfile"]):
     """Static excitation-illumination falloff: the LED lights the FOV unevenly.
 
     Multiplies every frame by a :func:`radial_falloff` field — brightest at the
@@ -122,7 +127,7 @@ class IlluminationProfileStep(Step):
         scene.truth.illumination = field
 
 
-class VignetteStep(Step):
+class VignetteStep(Step["Vignette"]):
     """Multiplicative radial vignette: emission / return-path light loss (static).
 
     Multiplies every frame by a :func:`radial_falloff` field for the **collection**
@@ -165,7 +170,7 @@ def leakage_field(spec, acq, shape: tuple[int, int]) -> np.ndarray:
     return spec.level * np.exp(-(r**2) / (2.0 * sigma_px**2))
 
 
-class LeakageStep(Step):
+class LeakageStep(Step["Leakage"]):
     """Additive static baseline — the "glow" minian's glow-removal subtracts.
 
     Adds the same field to every frame: ``uniform`` is a flat ``level``
@@ -187,7 +192,7 @@ class LeakageStep(Step):
         scene.truth.leakage = field
 
 
-class SensorStep(Step):
+class SensorStep(Step["Sensor"]):
     """Intensity → expected photons → digitized counts (the only count-producing step).
 
     Multiplies the working movie by ``photons_per_unit`` to get the per-pixel

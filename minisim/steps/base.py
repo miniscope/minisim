@@ -21,13 +21,19 @@ signature the orchestrator and the unit tests both use.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Generic, Literal, TypeVar
 
 if TYPE_CHECKING:
     import numpy as np
 
     from minisim.scene import Scene
     from minisim.spec import Acquisition, IlluminationProfile, Sensor, StepSpec
+
+#: The concrete :class:`~minisim.spec.StepSpec` subtype a step is built from.
+#: Parametrizing ``Step`` on it (``class RenderStep(Step[Render])``) makes every
+#: ``self.spec`` access resolve to the concrete spec's typed fields instead of the
+#: untyped base.
+SpecT = TypeVar("SpecT", bound="StepSpec")
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,7 @@ class PipelineContext:
     photon_field: np.ndarray | None = None
 
 
-class Step:
+class Step(Generic[SpecT]):
     """Base class for an executable pipeline step.
 
     Subclasses set the two class attributes and implement :meth:`__call__`:
@@ -71,9 +77,9 @@ class Step:
     domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
 
     def __init__(
-        self, spec: StepSpec, acq: Acquisition, rng: np.random.Generator
+        self, spec: SpecT, acq: Acquisition, rng: np.random.Generator
     ) -> None:
-        self.spec = spec
+        self.spec: SpecT = spec
         self.acq = acq
         self.rng = rng
 

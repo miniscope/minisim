@@ -27,6 +27,7 @@ coordinates with (render emits ``C·B``; neuropil fades with the population ``B`
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -34,6 +35,9 @@ from scipy.signal import lfilter
 
 from minisim.scene import Scene
 from minisim.steps.base import PipelineContext, Step
+
+if TYPE_CHECKING:
+    from minisim.spec import Bleaching, Neuropil, Render, Vasculature
 
 # Guards a divide-by-peak for a degenerate (flat) smooth field; far below any
 # physically meaningful intensity.
@@ -46,7 +50,7 @@ _EPS = 1e-12
 _NEUROPIL_FLUCT_LOG_STD = 0.4
 
 
-class RenderStep(Step):
+class RenderStep(Step["Render"]):
     """Composite ``Σ_i footprint_i · trace_i`` additively into the movie.
 
     Each cell contributes its footprint scaled, frame by frame, by the light it
@@ -216,7 +220,7 @@ def neuropil_components(
     return spatial, temporal, population
 
 
-class NeuropilStep(Step):
+class NeuropilStep(Step["Neuropil"]):
     """Additive diffuse background: ``amplitude · meanₖ(Sₖ(y,x) · Tₖ(t))``.
 
     Sums ``n_components`` diffuse sources, each a smooth spatial field
@@ -312,7 +316,7 @@ def bleaching_pool(
     return out
 
 
-class BleachingStep(Step):
+class BleachingStep(Step["Bleaching"]):
     """Per-cell, activity-driven fluorophore decay — bleaching fought by turnover.
 
     Gives each cell an intact-fluorophore envelope ``Bᵢ(t)`` from
@@ -389,7 +393,7 @@ class BleachingStep(Step):
 # ---------------------------------------------------------------------------
 
 
-class VasculatureStep(Step):
+class VasculatureStep(Step["Vasculature"]):
     """Honest no-op placeholder — the absorbing-vessel model is deferred to v1.1.
 
     The dark, pulsating vasculature mask (a multiplicative absorber driven by slow

@@ -512,9 +512,19 @@ class StepSpec(_Base):
     discriminator, and declares its ``domain`` (a class attribute used for
     ordering checks). ``build()`` turns the spec into the executable step that
     mutates a ``Scene``; those bodies arrive in migration Step 5.
+
+    ``requires`` declares the step kinds whose output this step consumes through
+    the shared ``Scene`` (e.g. ``render`` reads the footprints ``place_neurons``
+    makes and the traces ``cell_activity`` makes). The spec validator enforces
+    *order*, not presence: a required kind that is in the list must precede this
+    step, but it may be absent entirely. Partial pipelines are first-class — a
+    spec of ``[place_neurons, cell_activity, render]`` with no sensor is valid, so
+    targeted test data for a downstream calcium pipeline can exercise just a few
+    stages — so an absent prerequisite is allowed, while a misordered one is not.
     """
 
     domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
+    requires: ClassVar[tuple[str, ...]] = ()
     kind: str
 
     def build(self, acq: Acquisition, rng) -> Step:
@@ -632,6 +642,7 @@ class CellActivity(StepSpec):
 
     domain: ClassVar[str] = "cell"
     kind: Literal["cell_activity"] = "cell_activity"
+    requires: ClassVar[tuple[str, ...]] = ("place_neurons",)  # needs cells to animate
     spike_sim_hz: float = Field(gt=0, default=300.0, description="High-res spike-simulation rate, Hz (~300 = a ~3 ms refractory); binned to the frame rate.")
     # Defaults = CaLab's "moderate" SPIKE_ACTIVITY level; see spike_activity_params.
     p_quiescent_to_active: float = Field(gt=0, default=0.005, description="Per-frame quiescent→active transition prob.")
@@ -675,6 +686,7 @@ class CellOptics(StepSpec):
 
     domain: ClassVar[str] = "cell"
     kind: Literal["optics"] = "optics"
+    requires: ClassVar[tuple[str, ...]] = ("place_neurons",)  # degrades planted footprints
 
     def build(self, acq: Acquisition, rng) -> Step:
         from minisim.steps.cell import CellOpticsStep
@@ -691,6 +703,9 @@ class Render(StepSpec):
 
     domain: ClassVar[str] = "tissue"
     kind: Literal["render"] = "render"
+    # Composites footprint × trace. optics is an optional enhancer (render falls
+    # back to the planted footprint), so it is not required.
+    requires: ClassVar[tuple[str, ...]] = ("place_neurons", "cell_activity")
 
     def build(self, acq: Acquisition, rng) -> Step:
         from minisim.steps.tissue import RenderStep
@@ -715,6 +730,9 @@ class Neuropil(StepSpec):
 
     domain: ClassVar[str] = "tissue"
     kind: Literal["neuropil"] = "neuropil"
+    # Couples to the local population's calcium; falls back to independent drift if
+    # absent, so cell_activity is order-only (must precede when present), not required.
+    requires: ClassVar[tuple[str, ...]] = ("cell_activity",)
     spatial_sigma_um: float = Field(gt=0, default=40.0, description="Spatial smoothness of the mesh, µm.")
     temporal_tau_s: float = Field(gt=0, default=10.0, description="OU correlation time of the independent slow-drift leg, s (slow).")
     population_tau_s: float = Field(gt=0, default=1.5, description="Low-pass time constant of the population-coupled leg, s: the felt's integration/lag, short relative to the drift.")
@@ -758,6 +776,7 @@ class Bleaching(StepSpec):
 
     domain: ClassVar[str] = "cell"
     kind: Literal["bleaching"] = "bleaching"
+    requires: ClassVar[tuple[str, ...]] = ("cell_activity",)  # bleaches each cell's emission
     bleach_susceptibility: float = Field(
         ge=0, default=6.3e-6,
         description="Bleach rate per second at unit excitation and baseline emission (the "
@@ -1009,6 +1028,7 @@ class Spec(_Base):
     @model_validator(mode="after")
     def _validate(self) -> Spec:
         self._check_unique_kinds()  # hard fail; everything below assumes unique kinds
+        self._check_step_dependencies()
         by_kind = {s.kind: s for s in self.steps}
         self._warn_domain_order()
         self._check_footprint_vs_fov(by_kind)
@@ -1025,6 +1045,23 @@ class Spec(_Base):
         dupes = sorted(k for k, n in Counter(s.kind for s in self.steps).items() if n > 1)
         if dupes:
             raise ValueError(f"Duplicate step kind(s) in spec: {dupes}. Each kind must be unique.")
+
+    def _check_step_dependencies(self) -> None:
+        """Rule 4b: a step's declared ``requires`` kinds, when present in the spec,
+        must precede it — the data dependencies that otherwise flow invisibly
+        through the shared ``Scene``. Enforces *order*, not presence: an absent
+        prerequisite is fine (partial pipelines are first-class), a misordered one
+        is not."""
+        present = {s.kind for s in self.steps}
+        seen: set[str] = set()
+        for s in self.steps:
+            late = [r for r in s.requires if r in present and r not in seen]
+            if late:
+                raise ValueError(
+                    f"Step {s.kind!r} must come after {late} in the steps list: it "
+                    "consumes their output through the shared Scene."
+                )
+            seen.add(s.kind)
 
     def _check_footprint_vs_fov(self, by_kind: dict[str, StepSpec]) -> None:
         """Rule 2: a soma larger than the entire FOV is a misconfiguration."""

@@ -32,7 +32,13 @@ from minisim.scene import Cell, Scene
 from minisim.steps.base import PipelineContext, Step
 
 if TYPE_CHECKING:
-    from minisim.spec import Acquisition, Optics, PlaceNeurons
+    from minisim.spec import (
+        Acquisition,
+        CellActivity,
+        CellOptics,
+        Optics,
+        PlaceNeurons,
+    )
 
 # Guards the noise normalization for a degenerate (flat) low-pass field; far
 # below any physically meaningful intensity.
@@ -313,7 +319,7 @@ def _sample_brightness(cv: float, n: int, rng: np.random.Generator) -> np.ndarra
     return np.exp(rng.normal(mu, sigma, size=n))
 
 
-class PlaceNeuronsStep(Step):
+class PlaceNeuronsStep(Step["PlaceNeurons"]):
     """Position neurons in a 3-D µm volume and stamp a planted footprint each.
 
     Placement (*where cells go*) is delegated to :func:`sample_neurons`; this step
@@ -512,7 +518,7 @@ def spike_activity_params(activity: float) -> tuple[float, float, float, float]:
     return tuple(l + t * (h - l) for l, h in zip(lo, hi))
 
 
-class CellActivityStep(Step):
+class CellActivityStep(Step["CellActivity"]):
     """Give each soma a calcium trace, the CaLab way: 300 Hz spikes → kernel → bin.
 
     Spikes are generated on a **high-resolution grid** (``spike_sim_hz``, ~300 Hz)
@@ -831,7 +837,7 @@ def degrade_footprint(
     return observed
 
 
-class CellOpticsStep(Step):
+class CellOpticsStep(Step["CellOptics"]):
     """Degrade each planted footprint by diffraction + defocus(|z−focal|) + scatter(z).
 
     Reads each cell's depth ``z`` and the physical ``Optics``/``Tissue``

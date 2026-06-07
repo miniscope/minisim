@@ -18,6 +18,8 @@ correction stage must estimate.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import xarray as xr
 from scipy.ndimage import shift as ndimage_shift
@@ -25,6 +27,9 @@ from scipy.signal import lfilter
 
 from minisim.scene import MOVIE_DIMS, Scene
 from minisim.steps.base import Step
+
+if TYPE_CHECKING:
+    from minisim.spec import BrainMotion
 
 # High-res integration rate for the physical oscillator, Hz. The trajectory is
 # integrated this finely then bin-averaged down to the frame rate (the same
@@ -242,7 +247,7 @@ def shift_and_crop(
     return out
 
 
-class BrainMotionStep(Step):
+class BrainMotionStep(Step["BrainMotion"]):
     """Rigidly translate the brain-frame canvas per frame, then crop the sensor FOV.
 
     Resolves the per-frame ``(dy, dx)`` displacement — an explicit
