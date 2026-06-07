@@ -174,6 +174,49 @@ def physical_brain_motion(
     return traj
 
 
+def brain_motion_shifts(
+    spec, acq, n_frames: int, rng: np.random.Generator
+) -> np.ndarray:
+    """Per-frame ``(dy, dx)`` displacement in pixels for a ``BrainMotion`` spec.
+
+    The shift-generation half of :class:`BrainMotionStep`, factored out so the step
+    *and* the streaming video writer (which renders frame-chunks without ever
+    materializing a full movie) produce the **identical** trajectory from the same
+    RNG draws — the property the streamer relies on to match ``simulate()``
+    bit-for-bit. An explicit ``trajectory_um`` (µm→px) takes precedence, else the
+    ``model``-selected generator (:func:`physical_brain_motion` or
+    :func:`bounded_random_walk`).
+    """
+    if spec.trajectory_um is not None:
+        if len(spec.trajectory_um) != n_frames:
+            raise ValueError(
+                f"trajectory_um has {len(spec.trajectory_um)} entries but the "
+                f"recording has {n_frames} frames; they must match."
+            )
+        return np.array(
+            [[acq.um_to_px(dy), acq.um_to_px(dx)] for dy, dx in spec.trajectory_um]
+        )
+    if spec.model == "physical":
+        return physical_brain_motion(
+            n_frames,
+            acq.fps,
+            locomotion_freq_hz=spec.locomotion_freq_hz,
+            resonance_freq_hz=spec.resonance_freq_hz,
+            damping_ratio=spec.damping_ratio,
+            locomotion_fraction=spec.locomotion_fraction,
+            locomotion_axis=0 if spec.locomotion_axis == "y" else 1,
+            amplitude_px=acq.um_to_px(spec.motion_amplitude_um),
+            max_px=acq.um_to_px(spec.max_shift_um),
+            rng=rng,
+        )
+    return bounded_random_walk(
+        n_frames,
+        acq.um_to_px(spec.walk_step_um),
+        acq.um_to_px(spec.max_shift_um),
+        rng,
+    )
+
+
 def shift_and_crop(
     canvas: np.ndarray, shifts_px: np.ndarray, fov_shape: tuple[int, int]
 ) -> np.ndarray:
@@ -256,35 +299,7 @@ class BrainMotionStep(Step):
 
     def _resolve_shifts(self, n_frames: int) -> np.ndarray:
         """Per-frame ``(dy, dx)`` in pixels: explicit trajectory, physical, or walk."""
-        spec, acq = self.spec, self.acq
-        if spec.trajectory_um is not None:
-            if len(spec.trajectory_um) != n_frames:
-                raise ValueError(
-                    f"trajectory_um has {len(spec.trajectory_um)} entries but the "
-                    f"recording has {n_frames} frames; they must match."
-                )
-            return np.array(
-                [[acq.um_to_px(dy), acq.um_to_px(dx)] for dy, dx in spec.trajectory_um]
-            )
-        if spec.model == "physical":
-            return physical_brain_motion(
-                n_frames,
-                acq.fps,
-                locomotion_freq_hz=spec.locomotion_freq_hz,
-                resonance_freq_hz=spec.resonance_freq_hz,
-                damping_ratio=spec.damping_ratio,
-                locomotion_fraction=spec.locomotion_fraction,
-                locomotion_axis=0 if spec.locomotion_axis == "y" else 1,
-                amplitude_px=acq.um_to_px(spec.motion_amplitude_um),
-                max_px=acq.um_to_px(spec.max_shift_um),
-                rng=self.rng,
-            )
-        return bounded_random_walk(
-            n_frames,
-            acq.um_to_px(spec.walk_step_um),
-            acq.um_to_px(spec.max_shift_um),
-            self.rng,
-        )
+        return brain_motion_shifts(self.spec, self.acq, n_frames, self.rng)
 
     @staticmethod
     def _check_within_margin(shifts_px: np.ndarray, margin_h: int, margin_w: int) -> None:

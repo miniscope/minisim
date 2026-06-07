@@ -267,6 +267,46 @@ class Recording(BaseModel):
             snapshots=snapshots,
         )
 
+    def write_video(
+        self,
+        path: str | Path,
+        *,
+        fps: float | None = None,
+        vmin: float = 0.0,
+        vmax: float | None = None,
+        codec: str = "mjpeg",
+        progress: bool = True,
+    ) -> Path:
+        """Write the in-memory ``observed`` movie to a grayscale video at ``path``.
+
+        Maps counts to 8-bit gray over ``[vmin, vmax]`` (``vmax`` defaults to the
+        sensor's full ADC range, ``2**bit_depth - 1``, so saturation reads as white)
+        and encodes with ``mediapy`` + ``codec`` (default ``"mjpeg"`` in an ``.avi``;
+        pass ``"ffv1"`` for lossless). Use this when you already hold a ``Recording``;
+        to stream a long recording to disk **without** building the whole movie in
+        memory, use :func:`minisim.video.simulate_video` instead. Requires the
+        ``mediapy`` extra. Returns ``path``.
+        """
+        from minisim.video import _ProgressBar, _default_vmax, _import_mediapy, _to_uint8
+
+        if self.observed.shape[0] == 0:
+            raise ValueError("recording has no frames to write (observed is empty).")
+        fps = float(fps if fps is not None else self.spec.acquisition.fps)
+        fov = (self.observed.shape[1], self.observed.shape[2])
+        if vmax is None:
+            vmax = _default_vmax(self.spec)
+        media = _import_mediapy()
+        path = Path(path)
+        bar = _ProgressBar(self.observed.shape[0], progress, f"writing {path.name}")
+        try:
+            with media.VideoWriter(str(path), shape=fov, fps=fps, codec=codec) as writer:
+                for f in range(self.observed.shape[0]):
+                    writer.add_image(_to_uint8(self.observed[f], vmin, vmax))
+                    bar.update()
+        finally:
+            bar.close()
+        return path
+
 
 # ---------------------------------------------------------------------------
 # finalize: Scene -> Recording

@@ -48,6 +48,7 @@ from minisim.spec import (
     Vignette,
 )
 from minisim.sweep import SweptSpec, sweep
+from minisim.video import simulate_video
 
 __all__ = [
     "Acquisition",
@@ -87,6 +88,7 @@ __all__ = [
     "shift_rmse",
     "simulate",
     "simulate_cached",
+    "simulate_video",
     "spike_precision_recall",
     "sweep",
     "trace_pearson",

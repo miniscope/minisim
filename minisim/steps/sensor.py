@@ -148,6 +148,23 @@ class VignetteStep(Step):
         scene.truth.vignette = field
 
 
+def leakage_field(spec, acq, shape: tuple[int, int]) -> np.ndarray:
+    """The static additive leakage field for a ``Leakage`` spec, FOV-sized.
+
+    Factored out of :class:`LeakageStep` so the streaming video writer can add the
+    same glow without running the step. ``uniform`` is a flat ``level``; ``gaussian``
+    is a central glow ``level·exp(−r²/2σ²)`` (``sigma_um`` defaults to a quarter of
+    the smaller FOV dimension). No RNG — deterministic from the spec.
+    """
+    h, w = shape
+    if spec.profile == "uniform":
+        return np.full((h, w), spec.level)
+    sigma_um = spec.sigma_um if spec.sigma_um is not None else 0.25 * min(acq.fov_um)
+    sigma_px = acq.um_to_px(sigma_um)
+    r = radius_grid((h, w), ((h - 1) / 2.0, (w - 1) / 2.0))
+    return spec.level * np.exp(-(r**2) / (2.0 * sigma_px**2))
+
+
 class LeakageStep(Step):
     """Additive static baseline — the "glow" minian's glow-removal subtracts.
 
@@ -164,16 +181,8 @@ class LeakageStep(Step):
     domain = "sensor"
 
     def __call__(self, scene: Scene) -> None:
-        spec, acq = self.spec, self.acq
         # Grid from the scene movie (the sensor FOV post-crop); see VignetteStep.
-        h, w = scene.movie.values.shape[1:]
-        if spec.profile == "uniform":
-            field = np.full((h, w), spec.level)
-        else:  # gaussian central glow
-            sigma_um = spec.sigma_um if spec.sigma_um is not None else 0.25 * min(acq.fov_um)
-            sigma_px = acq.um_to_px(sigma_um)
-            r = radius_grid((h, w), ((h - 1) / 2.0, (w - 1) / 2.0))
-            field = spec.level * np.exp(-(r**2) / (2.0 * sigma_px**2))
+        field = leakage_field(self.spec, self.acq, scene.movie.values.shape[1:])
         scene.movie.values[:] += field
         scene.truth.leakage = field
 
@@ -194,6 +203,13 @@ class SensorStep(Step):
     domain = "sensor"
 
     def __call__(self, scene: Scene) -> None:
-        photons = np.clip(scene.movie.values * self.spec.photons_per_unit, 0.0, None)
-        counts = self.acq.image_sensor.photons_to_counts(photons, self.rng)
-        scene.movie.values[:] = counts
+        # Digitize FRAME BY FRAME, in order, on the shared rng: each frame draws its
+        # shot then read noise before the next. The per-frame draw order is what
+        # makes a chunked stream (minisim.video.simulate_video) reproduce these
+        # counts bit-for-bit -- a single whole-array poisson-then-normal pass could
+        # not be reproduced chunk by chunk. The result is identical for any framing.
+        sensor, ppu, rng = self.acq.image_sensor, self.spec.photons_per_unit, self.rng
+        movie = scene.movie.values
+        for f in range(movie.shape[0]):
+            photons = np.clip(movie[f] * ppu, 0.0, None)
+            movie[f] = sensor.photons_to_counts(photons, rng)

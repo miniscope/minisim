@@ -180,6 +180,41 @@ def neuropil_envelope(
     return np.exp(s * ou_process(n_frames, tau_frames, rng) - 0.5 * s * s)
 
 
+def neuropil_components(
+    spec, acq, cells, shape: tuple[int, int], n_frames: int, rng: np.random.Generator
+):
+    """The ``(spatial, temporal, population)`` neuropil components for a spec.
+
+    The RNG-consuming generation half of :class:`NeuropilStep`, factored out so the
+    step *and* the streaming video writer build the **identical** components from
+    the same RNG draws (the draws run in a fixed order: all ``n_components`` spatial
+    fields, then all ``n_components`` temporal envelopes — :func:`population_envelope`
+    is deterministic). ``shape`` is the canvas ``(h, w)``; ``n_frames`` the recording
+    length. The diffuse background fades with the population-average bleaching
+    envelope when ``bleaching`` has run. Returns peak-normalized spatial fields
+    ``(component, h, w)``, realized temporal envelopes ``(component, frame)``, and
+    the population driver ``(frame,)`` (or ``None``).
+    """
+    sigma_px = acq.um_to_px(spec.spatial_sigma_um)
+    drift_tau_frames = acq.s_to_frame(spec.temporal_tau_s)
+    pop_tau_frames = acq.s_to_frame(spec.population_tau_s)
+    spatial = np.stack(
+        [smooth_spatial_field(shape, sigma_px, rng) for _ in range(spec.n_components)]
+    )
+    traces = [cell.trace for cell in cells if cell.trace is not None]
+    population = population_envelope(traces, pop_tau_frames)
+    c = spec.population_coupling if population is not None else 0.0
+    temporal = np.stack([
+        (1.0 - c) * neuropil_envelope(n_frames, drift_tau_frames, rng)
+        + (c * population if population is not None else 0.0)
+        for _ in range(spec.n_components)
+    ])
+    bleaches = [cell.bleach for cell in cells if cell.bleach is not None]
+    if bleaches:
+        temporal = temporal * np.mean(np.stack(bleaches), axis=0)[None, :]
+    return spatial, temporal, population
+
+
 class NeuropilStep(Step):
     """Additive diffuse background: ``amplitude · meanₖ(Sₖ(y,x) · Tₖ(t))``.
 
@@ -217,36 +252,16 @@ class NeuropilStep(Step):
     domain = "tissue"
 
     def __call__(self, scene: Scene) -> None:
-        spec, acq, rng = self.spec, self.acq, self.rng
         # Grid from the scene canvas (which a motion margin may enlarge beyond
         # the sensor) so the diffuse background covers the same tissue the cells
         # do and moves with it under motion.
         n_frames, h, w = scene.movie.values.shape
-        sigma_px = acq.um_to_px(spec.spatial_sigma_um)
-        drift_tau_frames = acq.s_to_frame(spec.temporal_tau_s)
-        pop_tau_frames = acq.s_to_frame(spec.population_tau_s)
-
-        spatial = np.stack(
-            [smooth_spatial_field((h, w), sigma_px, rng) for _ in range(spec.n_components)]
+        spatial, temporal, population = neuropil_components(
+            self.spec, self.acq, scene.cells, (h, w), n_frames, self.rng
         )
-        # The shared population driver, lagged/smoothed aggregate of the cells'
-        # calcium; None (-> coupling 0) before cell_activity or when all silent.
-        traces = [cell.trace for cell in scene.cells if cell.trace is not None]
-        population = population_envelope(traces, pop_tau_frames)
-        c = spec.population_coupling if population is not None else 0.0
-        temporal = np.stack([
-            (1.0 - c) * neuropil_envelope(n_frames, drift_tau_frames, rng)
-            + (c * population if population is not None else 0.0)
-            for _ in range(spec.n_components)
-        ])
-        # Fade the background with the cells: scale every component by the
-        # population-average intact-fluorophore fraction, if bleaching has run.
-        bleaches = [cell.bleach for cell in scene.cells if cell.bleach is not None]
-        if bleaches:
-            temporal = temporal * np.mean(np.stack(bleaches), axis=0)[None, :]
         # mean over components of the (frame, h, w) outer products, then scale.
-        contrib = np.tensordot(temporal, spatial, axes=([0], [0])) / spec.n_components
-        scene.movie.values[:] += spec.amplitude * contrib
+        contrib = np.tensordot(temporal, spatial, axes=([0], [0])) / self.spec.n_components
+        scene.movie.values[:] += self.spec.amplitude * contrib
         scene.truth.neuropil_spatial = spatial
         scene.truth.neuropil_temporal = temporal
         scene.truth.neuropil_population = population

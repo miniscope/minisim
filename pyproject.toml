@@ -58,6 +58,7 @@ notebook = [
     "jupyter",
     "matplotlib",
     "mediapy",
+    "tqdm",
 ]
 test = [
     "minisim[notebook]",
