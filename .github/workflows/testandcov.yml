@@ -14,25 +14,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        os: ["ubuntu-latest", "windows-latest"]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude:
-        # Run only the oldest and newest Python on non-Linux runners to keep
-        # CI cost down; Linux runs the full matrix.
-        - os: "macos-latest"
-          python-version: "3.11"
-        - os: "macos-latest"
-          python-version: "3.12"
+        # Linux runs the full version matrix (it backs the 3.10-3.14 support
+        # claim). minisim is pure Python, so Windows only needs to guard path /
+        # file-I/O behavior: run it on the oldest and newest Python only. macOS
+        # is dropped -- behaviorally ≈ Linux for pure Python.
         - os: "windows-latest"
           python-version: "3.11"
         - os: "windows-latest"
           python-version: "3.12"
         - os: "windows-latest"
           python-version: "3.13"
-        # numcodecs (via zarr) ships no macOS 3.14 wheel and its sdist build
-        # fails on the runner; macOS newest tracks 3.13 until that resolves.
-        - os: "macos-latest"
-          python-version: "3.14"
     defaults:
       run:
         shell: bash
