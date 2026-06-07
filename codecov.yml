@@ -1,9 +1,23 @@
 coverage:
-  range: 50..90
+  precision: 1
+  round: down
+  range: "85...100"
   status:
     project:
       default:
-        informational: true
+        target: auto      # compare to the base commit
+        threshold: 1%      # tolerate a 1% dip without failing CI
     patch:
       default:
-        informational: true
+        informational: true   # report diff coverage, never block a PR
+
+comment:
+  layout: "reach, diff, files"
+  require_changes: true   # only comment when coverage actually changes
+
+# minisim runs pytest with --cov=minisim, which also measures the test suite and
+# notebooks (they execute, so they report as covered and inflate the number).
+# Ignore them so the reported figure reflects the library source.
+ignore:
+  - "minisim/test"
+  - "minisim/notebooks"

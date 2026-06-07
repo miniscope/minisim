@@ -1,5 +1,11 @@
 # minisim
 
+[![pytest](https://github.com/miniscope/minisim/actions/workflows/testandcov.yml/badge.svg)](https://github.com/miniscope/minisim/actions/workflows/testandcov.yml)
+[![codecov](https://codecov.io/gh/miniscope/minisim/branch/main/graph/badge.svg)](https://codecov.io/gh/miniscope/minisim)
+[![PyPI](https://img.shields.io/pypi/v/minisim.svg)](https://pypi.org/project/minisim/)
+[![Python versions](https://img.shields.io/pypi/pyversions/minisim.svg)](https://pypi.org/project/minisim/)
+[![License](https://img.shields.io/pypi/l/minisim.svg)](https://github.com/miniscope/minisim/blob/main/LICENSE)
+
 **Physically-driven synthetic 1-photon miniscope data: a forward-model
 generator and teaching tool.**
 
@@ -9,8 +15,8 @@ Instead of recovering signals from a movie, it starts from biology and optics an
 produces the movie, together with the ground truth that generated it:
 
 ```
-place neurons -> cell activity -> optics -> render -> neuropil -> bleaching
-             -> brain motion -> vignette -> leakage -> image sensor
+place neurons -> cell activity -> bleaching -> optics -> render -> neuropil
+             -> brain motion -> illumination profile -> vignette -> leakage -> image sensor
 ```
 
 Each stage is a small, inspectable physical model. Because the recording is built
