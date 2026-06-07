@@ -859,8 +859,47 @@ class BrainMotion(StepSpec):
         return BrainMotionStep(self, acq, rng)
 
 
+class IlluminationProfile(StepSpec):
+    """Static excitation-illumination falloff — the LED lights the FOV unevenly.
+
+    A single excitation LED illuminates the tissue brightest at the center and
+    dimmer toward the edges, so peripheral cells fluoresce less to begin with.
+    Modeled as a multiplicative radial falloff (``1`` at the bright center, dropping
+    to ``falloff`` at the farthest corner, ``exponent`` shaping the rolloff) — fixed
+    to the scope, so it does **not** move with the brain. Typically a gentle, broad
+    rolloff (vs the sharper emission ``Vignette``). Being on the *excitation* side,
+    this falloff also drives photobleaching faster at the bright center: that
+    coupling is wired in ``Bleaching`` (which evaluates this field at each cell's
+    rest position), the one way it differs from the collection-side vignette.
+    """
+
+    domain: ClassVar[str] = "sensor"
+    kind: Literal["illumination_profile"] = "illumination_profile"
+    falloff: float = Field(
+        ge=0, le=1, default=0.7, description="Edge excitation relative to center (1 = uniform)."
+    )
+    exponent: float = Field(gt=0, default=2.0, description="Radial falloff exponent (gentle/broad by default).")
+    center_offset_um: tuple[float, float] = Field(
+        default=(0.0, 0.0), description="(dy, dx) offset of the bright center from FOV center, µm."
+    )
+
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minisim.steps.sensor import IlluminationProfileStep
+
+        return IlluminationProfileStep(self, acq, rng)
+
+
 class Vignette(StepSpec):
-    """Static radial illumination falloff (lumped excitation × collection)."""
+    """Static radial vignette on the emission / return path (collection light loss).
+
+    The physical return path trims light rays toward the field edges (aperture and
+    relay clipping, compounded by poorer off-axis optical performance), so corners
+    read dimmer regardless of how brightly the tissue was lit. Same multiplicative
+    radial-falloff shape as the ``IlluminationProfile`` but on the *collection* side
+    — so it does not drive bleaching — and typically a sharper edge rolloff. Also
+    fixed to the scope (does not move with the brain). Off-axis blur is a separate
+    concern, deferred to a future optical-aberration step.
+    """
 
     domain: ClassVar[str] = "sensor"
     kind: Literal["vignette"] = "vignette"
@@ -937,6 +976,7 @@ AnyStep = Annotated[
     | Vasculature
     | Bleaching
     | BrainMotion
+    | IlluminationProfile
     | Vignette
     | Leakage
     | Sensor,

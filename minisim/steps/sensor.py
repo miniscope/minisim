@@ -5,17 +5,20 @@ detector that do **not** move with the brain (unlike the tissue-frame steps in
 :mod:`minisim.steps.tissue`). They are applied after the motion
 boundary:
 
-* :class:`VignetteStep` (``vignette``) — multiplicative radial illumination
-  falloff (lumped excitation × collection efficiency).
+* :class:`IlluminationProfileStep` (``illumination_profile``) — multiplicative
+  radial excitation falloff (the LED lights the FOV unevenly).
+* :class:`VignetteStep` (``vignette``) — multiplicative radial vignette on the
+  emission / return path (collection light loss toward the edges).
 * :class:`LeakageStep` (``leakage``) — additive static baseline, the "glow"
   minian's glow-removal subtracts.
 * :class:`SensorStep` (``sensor``) — the only step that turns honest radiometric
   intensity into integer ADC counts (shot + read noise, gain, quantization).
 
-The two field steps each record their static ``(height, width)`` field to ground
-truth. The vignette field in particular is load-bearing downstream: ``finalize()``
-(Step 6) reads it at each cell's lateral position to finish the per-cell
-``detectable`` flag, since excitation falloff dims edge cells.
+The three field steps each record their static ``(height, width)`` field to ground
+truth. The illumination and vignette fields are load-bearing downstream:
+``finalize()`` (Step 6) reads their *product* at each cell's lateral position to
+finish the per-cell ``detectable`` flag, since both falloffs dim edge cells and so
+shrink the usable FOV below the physical one.
 """
 
 from __future__ import annotations
@@ -29,47 +32,93 @@ from minisim.steps.base import Step
 def radius_grid(shape: tuple[int, int], center_px: tuple[float, float]) -> np.ndarray:
     """Per-pixel Euclidean distance (in pixels) from ``center_px``, shape ``shape``.
 
-    The shared geometry behind both static fields — the vignette falloff and the
-    gaussian leakage glow are each a radial function of this distance.
+    The shared geometry behind both static fields — the radial falloff fields and
+    the gaussian leakage glow are each a radial function of this distance.
     """
     h, w = shape
     yy, xx = np.ogrid[:h, :w]
     return np.hypot(yy - center_px[0], xx - center_px[1])
 
 
-class VignetteStep(Step):
-    """Multiplicative radial illumination falloff (static, lumped excitation × collection).
+def falloff_center_px(
+    shape: tuple[int, int], acq, center_offset_um: tuple[float, float]
+) -> tuple[float, float]:
+    """Bright-center pixel: the FOV center plus ``center_offset_um`` (µm → px)."""
+    h, w = shape
+    return (
+        (h - 1) / 2.0 + acq.um_to_px(center_offset_um[0]),
+        (w - 1) / 2.0 + acq.um_to_px(center_offset_um[1]),
+    )
 
-    Multiplies every frame by the same field
-    ``V(r) = 1 − (1 − falloff)·(r / r_max)^exponent``: ``1`` at the bright center,
-    dropping to ``falloff`` at the farthest corner, with ``exponent`` shaping the
-    rolloff. The bright center sits at the FOV center plus ``center_offset_um``
-    (converted to pixels). The field is time-invariant — the same for every
-    frame — and recorded ``(height, width)`` to ground truth, where it is the
-    illumination field a normalization stage estimates and that ``finalize()``
-    reads for per-cell detectability.
+
+def radial_falloff(
+    shape: tuple[int, int], center_px: tuple[float, float], falloff: float, exponent: float
+) -> np.ndarray:
+    """Static radial falloff field ``1 − (1 − falloff)·(r / r_max)^exponent``.
+
+    ``1`` at the bright ``center_px``, dropping to ``falloff`` at the farthest
+    corner (``r_max`` is the distance to that corner, so the minimum is exactly
+    ``falloff``); ``exponent`` shapes the rolloff (>1 keeps the center bright then
+    dims sharply toward the rim). The single multiplicative-field shape shared by
+    the **illumination profile** (excitation unevenness) and the **vignette**
+    (emission/collection loss). A 1×1 FOV (``r_max == 0``) has no falloff.
+    """
+    h, w = shape
+    r_max = max(np.hypot(center_px[0] - yc, center_px[1] - xc) for yc in (0, h - 1) for xc in (0, w - 1))
+    if r_max <= 0:
+        return np.ones((h, w))
+    return 1.0 - (1.0 - falloff) * (radius_grid(shape, center_px) / r_max) ** exponent
+
+
+class IlluminationProfileStep(Step):
+    """Static excitation-illumination falloff: the LED lights the FOV unevenly.
+
+    Multiplies every frame by a :func:`radial_falloff` field — brightest at the
+    center (plus ``center_offset_um``), dimmer toward the edges — modelling the
+    single excitation LED's uneven illumination of the tissue. Like the vignette it
+    is a **sensor-frame** field (fixed to the scope, applied after the motion crop,
+    so it does *not* move with the brain) and is recorded ``(height, width)`` to
+    ground truth. Its excitation falloff also drives photobleaching faster at the
+    bright center; that coupling is wired in ``BleachingStep`` (which evaluates this
+    same field at each cell's rest position).
+    """
+
+    name = "illumination_profile"
+    domain = "sensor"
+
+    def __call__(self, scene: Scene) -> None:
+        # Grid from the scene movie: a sensor-frame step runs after the motion crop,
+        # so the movie is already the sensor FOV and the field must not extend into
+        # the motion margin.
+        shape = scene.movie.values.shape[1:]
+        center = falloff_center_px(shape, self.acq, self.spec.center_offset_um)
+        field = radial_falloff(shape, center, self.spec.falloff, self.spec.exponent)
+        scene.movie.values[:] *= field
+        scene.truth.illumination = field
+
+
+class VignetteStep(Step):
+    """Multiplicative radial vignette: emission / return-path light loss (static).
+
+    Multiplies every frame by a :func:`radial_falloff` field for the **collection**
+    side — the physical return path trims light rays toward the field edges
+    (aperture/relay clipping, plus poorer off-axis optical performance), so corners
+    read dimmer regardless of how brightly the tissue was lit. Distinct from the
+    illumination profile (excitation) but the same field shape; both are
+    sensor-frame (applied after the motion crop, fixed to the detector, so they do
+    *not* move with the brain). Recorded ``(height, width)`` to ground truth, where
+    together with the illumination field it sets per-cell detectability in
+    ``finalize()``.
     """
 
     name = "vignette"
     domain = "sensor"
 
     def __call__(self, scene: Scene) -> None:
-        spec, acq = self.spec, self.acq
-        # Grid from the scene movie. As a sensor-frame step this runs after the
-        # motion crop, so the movie is already the sensor FOV — the static field
-        # is fixed to the detector and must not extend into the motion margin.
-        h, w = scene.movie.values.shape[1:]
-        cy = (h - 1) / 2.0 + acq.um_to_px(spec.center_offset_um[0])
-        cx = (w - 1) / 2.0 + acq.um_to_px(spec.center_offset_um[1])
-        r = radius_grid((h, w), (cy, cx))
-        # Normalize by the distance to the farthest corner so V == falloff there.
-        r_max = max(
-            np.hypot(cy - yc, cx - xc) for yc in (0, h - 1) for xc in (0, w - 1)
-        )
-        if r_max <= 0:  # 1×1 FOV: no falloff to apply.
-            field = np.ones((h, w))
-        else:
-            field = 1.0 - (1.0 - spec.falloff) * (r / r_max) ** spec.exponent
+        # Grid from the scene movie (the sensor FOV post-crop); see IlluminationProfileStep.
+        shape = scene.movie.values.shape[1:]
+        center = falloff_center_px(shape, self.acq, self.spec.center_offset_um)
+        field = radial_falloff(shape, center, self.spec.falloff, self.spec.exponent)
         scene.movie.values[:] *= field
         scene.truth.vignette = field
 

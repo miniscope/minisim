@@ -44,10 +44,17 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
     rng = np.random.default_rng(spec.seed)
     scene = Scene.zeros(acq, rng, margin_px=_motion_margin_px(spec, acq))
 
+    # Excitation illumination drives bleaching faster at the bright center, so the
+    # bleaching step needs the illumination profile (a sensor-domain step that runs
+    # later). Inject it at build time; absent, bleaching keeps a uniform dose.
+    illumination = next((s for s in spec.steps if s.kind == "illumination_profile"), None)
+
     stopped = False
     stage_names: list[str] = []
     for step_spec in spec.steps:
         step = step_spec.build(acq, rng)
+        if step.name == "bleaching" and illumination is not None:
+            step.illumination = illumination
         step(scene)
         stage_names.append(step.name)
         if spec.output.save_intermediates and step.domain != "cell":

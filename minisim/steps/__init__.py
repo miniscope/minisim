@@ -37,9 +37,12 @@ from minisim.steps.motion import (
     shift_and_crop,
 )
 from minisim.steps.sensor import (
+    IlluminationProfileStep,
     LeakageStep,
     SensorStep,
     VignetteStep,
+    falloff_center_px,
+    radial_falloff,
     radius_grid,
 )
 from minisim.steps.tissue import (
@@ -59,6 +62,7 @@ __all__ = [
     "BrainMotionStep",
     "CellActivityStep",
     "CellOpticsStep",
+    "IlluminationProfileStep",
     "LeakageStep",
     "NeuropilStep",
     "PlaceNeuronsStep",
@@ -70,6 +74,7 @@ __all__ = [
     "bleaching_pool",
     "bounded_random_walk",
     "calcium_kernel",
+    "falloff_center_px",
     "degrade_footprint",
     "kernel_timing",
     "neuron_footprint",
@@ -77,6 +82,7 @@ __all__ = [
     "ou_process",
     "physical_brain_motion",
     "population_envelope",
+    "radial_falloff",
     "radius_grid",
     "resolve_focal_plane",
     "sample_neurons",

@@ -14,6 +14,7 @@ from minisim import (
     BrainMotion,
     CellActivity,
     CellOptics,
+    IlluminationProfile,
     ImageSensor,
     Leakage,
     Neuropil,
@@ -149,6 +150,33 @@ def test_simulate_physical_motion_runs_end_to_end():
     np.testing.assert_array_equal(shifts[0], [0.0, 0.0])
     assert np.hypot(shifts[:, 0], shifts[:, 1]).max() <= 3.0 + 1e-9
     assert np.abs(shifts).max() > 0.0  # the brain really moved
+
+
+def test_simulate_records_both_illumination_and_vignette_fields():
+    # Illumination profile + vignette both run as static sensor-frame fields; each is
+    # recorded separately, and detectability reflects their combined photon budget.
+    acq = _acq()
+    spec = Spec(
+        acquisition=acq,
+        seed=7,
+        steps=[
+            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)),
+            CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+            CellOptics(),
+            Render(),
+            IlluminationProfile(falloff=0.5),
+            Vignette(falloff=0.6),
+            Sensor(photons_per_unit=120.0),
+        ],
+        output=Output(),
+    )
+    rec = simulate(spec)
+    gt = rec.ground_truth
+    assert gt.illumination.shape == (64, 64)
+    assert gt.vignette.shape == (64, 64)
+    assert gt.illumination.max() == pytest.approx(1.0, abs=2e-3)  # bright center (even grid)
+    assert gt.illumination[0, 0] == pytest.approx(0.5)  # edge excitation, farthest corner
+    assert gt.vignette[0, 0] == pytest.approx(0.6)  # corner collection loss
 
 
 def test_simulate_save_intermediates_records_movie_stage_names():

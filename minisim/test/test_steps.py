@@ -20,6 +20,7 @@ from minisim import (
     BrainMotion,
     CellActivity,
     CellOptics,
+    IlluminationProfile,
     ImageSensor,
     Leakage,
     Neuropil,
@@ -36,6 +37,7 @@ from minisim.steps import (
     BrainMotionStep,
     CellActivityStep,
     CellOpticsStep,
+    IlluminationProfileStep,
     LeakageStep,
     NeuropilStep,
     PlaceNeuronsStep,
@@ -46,6 +48,7 @@ from minisim.steps import (
     bleaching_pool,
     bounded_random_walk,
     physical_brain_motion,
+    radial_falloff,
     calcium_kernel,
     degrade_footprint,
     kernel_timing,
@@ -922,6 +925,61 @@ def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
 
 
 # --- vignette (5c) ---------------------------------------------------------
+
+
+# --- illumination profile + vignette (Stage 8) -----------------------------
+
+
+def test_radial_falloff_is_one_at_center_falloff_at_corner_and_monotonic():
+    field = radial_falloff((51, 51), (25.0, 25.0), falloff=0.4, exponent=2.0)
+    assert field[25, 25] == pytest.approx(1.0)  # bright center
+    assert field[0, 0] == pytest.approx(0.4)  # farthest corner == falloff
+    # strictly dimmer moving out along a row from the center
+    row = field[25, 25:]
+    assert np.all(np.diff(row) < 0)
+
+
+def test_illumination_profile_is_radial_and_time_invariant():
+    acq = _acq(n_px=51, duration_s=1.0)  # odd -> clean center pixel at (25, 25)
+    scene = Scene.ones(acq)
+    IlluminationProfileStep(
+        IlluminationProfile(falloff=0.5, exponent=2.0), acq, np.random.default_rng(0)
+    )(scene)
+    field = scene.truth.illumination
+    assert field.shape == (51, 51)
+    assert field[25, 25] == pytest.approx(1.0)
+    assert field[0, 0] == pytest.approx(0.5)
+    np.testing.assert_allclose(scene.movie.values[0], field)  # all-ones movie == field
+    movie = scene.movie.values
+    assert (movie == movie[0]).all()  # static in time
+
+
+def test_illumination_drives_bleaching_faster_at_the_bright_center():
+    # With an illumination profile injected, a cell at the bright center receives a
+    # larger excitation dose and bleaches more (lower end B) than an *identically
+    # active* cell at a dim edge; without it (uniform dose) the two are equal. Both
+    # cells are given the same fixed trace so only the illumination dose differs.
+    acq = _acq(n_px=64, duration_s=120.0, fps=10.0)
+    px = acq.pixel_size_um
+    trace = np.full(acq.n_frames, 1.5)  # identical steady emission for both cells
+
+    def end_B(with_illum):
+        scene = Scene.zeros(acq, rng=np.random.default_rng(0))
+        scene.cells = [
+            Cell(center_um=(0.0, 32 * px, 32 * px), trace=trace.copy()),  # FOV center
+            Cell(center_um=(0.0, 2 * px, 2 * px), trace=trace.copy()),    # near a corner
+        ]
+        step = BleachingStep(Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2))
+        if with_illum:
+            step.illumination = IlluminationProfile(falloff=0.2, exponent=2.0)
+        step(scene)
+        return scene.cells[0].bleach[-1], scene.cells[1].bleach[-1]
+
+    c_on, e_on = end_B(True)
+    c_off, e_off = end_B(False)
+    assert c_on < e_on  # center bleaches more than edge when illumination present
+    assert e_on > e_off  # the dim edge bleaches less than the uniform-dose baseline
+    assert c_off == pytest.approx(e_off, rel=1e-9)  # equal without illumination (same trace)
 
 
 def test_vignette_is_radial_and_time_invariant():

@@ -308,21 +308,60 @@ class BleachingStep(Step):
     clean calcium ``C`` and ``render`` emits ``C·B``. The diffuse ``neuropil`` then
     fades with the population-average ``B``. ``finalize`` stacks the per-cell
     envelopes into ground truth ``(unit, frame)``, a scoreable confound.
+
+    If an :class:`~minisim.spec.IlluminationProfile` is present, ``simulate`` injects
+    it as ``self.illumination`` and the per-cell excitation dose is scaled by the
+    illumination at the cell's **rest** lateral position — so brightly-lit center
+    cells bleach faster than dim edge cells. (Motion's effect on a cell's dose as it
+    jiggles through the gradient is second-order and ignored.) This is the one way
+    the excitation-side illumination differs from the collection-side vignette.
     """
 
     name = "bleaching"
     domain = "cell"
 
+    def __init__(self, spec, acq, rng) -> None:
+        super().__init__(spec, acq, rng)
+        # Optional IlluminationProfile spec, injected by simulate() when present, so
+        # the excitation dose varies across the FOV. None -> spatially uniform dose.
+        self.illumination = None
+
     def __call__(self, scene: Scene) -> None:
         spec, acq = self.spec, self.acq
         q = spec.bleach_susceptibility / acq.fps  # per-second coefficient -> per-frame
         tau_frames = acq.s_to_frame(spec.turnover_tau_s)
-        for cell in scene.cells:
+        dose = self._illumination_dose(scene)
+        for cell, illum in zip(scene.cells, dose):
             if cell.trace is None:
                 continue
             cell.bleach = bleaching_pool(
-                cell.trace, q, tau_frames, spec.excitation_intensity
+                cell.trace, q, tau_frames, spec.excitation_intensity * illum
             )
+
+    def _illumination_dose(self, scene: Scene) -> np.ndarray:
+        """Per-cell excitation scale from the illumination field at each rest position.
+
+        All ones when no ``IlluminationProfile`` was injected. Otherwise the same
+        :func:`~minisim.steps.sensor.radial_falloff` field the illumination step
+        applies (sensor-FOV sized), sampled at each cell's clipped lateral pixel — so
+        the dose a cell sees matches the brightness its image gets.
+        """
+        n = len(scene.cells)
+        if self.illumination is None:
+            return np.ones(n)
+        from minisim.steps.sensor import falloff_center_px, radial_falloff
+
+        acq = self.acq
+        shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
+        center = falloff_center_px(shape, acq, self.illumination.center_offset_um)
+        field = radial_falloff(shape, center, self.illumination.falloff, self.illumination.exponent)
+        px = acq.pixel_size_um
+        dose = np.ones(n)
+        for i, cell in enumerate(scene.cells):
+            iy = int(np.clip(round(cell.center_um[1] / px), 0, shape[0] - 1))
+            ix = int(np.clip(round(cell.center_um[2] / px), 0, shape[1] - 1))
+            dose[i] = field[iy, ix]
+        return dose
 
 
 # ---------------------------------------------------------------------------

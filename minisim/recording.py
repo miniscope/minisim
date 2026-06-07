@@ -55,7 +55,7 @@ _GT_REQUIRED = (
     "centers_um", "amplitude_per_cell", "in_focus", "detectable",
 )
 _GT_OPTIONAL = (
-    "shifts", "vignette", "leakage", "bleaching",
+    "shifts", "illumination", "vignette", "leakage", "bleaching",
     "neuropil_temporal", "neuropil_spatial", "neuropil_population",
 )
 
@@ -90,6 +90,7 @@ class GroundTruth(BaseModel):
 
     # per-effect ground truth (None when that step is absent) ---------------
     shifts: NDArray[Shape["* frame, 2"], float] | None = None
+    illumination: NDArray[Shape["* height, * width"], float] | None = None
     vignette: NDArray[Shape["* height, * width"], float] | None = None
     leakage: NDArray[Shape["* height, * width"], float] | None = None
     bleaching: NDArray[Shape["* unit, * frame"], float] | None = None
@@ -131,6 +132,7 @@ class GroundTruth(BaseModel):
             detectable=self.detectable[m],
             bleaching=self.bleaching[m] if self.bleaching is not None else None,
             shifts=self.shifts,
+            illumination=self.illumination,
             vignette=self.vignette,
             leakage=self.leakage,
             neuropil_temporal=self.neuropil_temporal,
@@ -278,7 +280,11 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     n_frames = acq.n_frames
 
     sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
-    vignette = scene.truth.vignette  # FOV-sized field, or None
+    # Both falloff fields are FOV-sized (built post-motion-crop), or None. Their
+    # product is the per-pixel photon budget a cell's signal is dimmed by.
+    illumination = scene.truth.illumination
+    vignette = scene.truth.vignette
+    photon_field = _combine_fields(illumination, vignette)
 
     planted, observed, traces, spikes, bleaches = [], [], [], [], []
     centers, amplitudes, in_focus, detectable = [], [], [], []
@@ -312,7 +318,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         amplitudes.append(cell.amplitude if cell.amplitude is not None else float("nan"))
         in_focus.append(ifocus)
         detectable.append(
-            _is_detectable(cell, ifocus, y_fov_um, x_fov_um, vignette, sensor_spec, acq)
+            _is_detectable(cell, ifocus, y_fov_um, x_fov_um, photon_field, sensor_spec, acq)
         )
 
     gt = GroundTruth(
@@ -332,6 +338,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
             else None
         ),
         shifts=scene.truth.shifts,
+        illumination=illumination,
         vignette=vignette,
         leakage=scene.truth.leakage,
         neuropil_temporal=scene.truth.neuropil_temporal,
@@ -393,16 +400,28 @@ def _stack(arrays: list[np.ndarray], empty_shape: tuple[int, ...]) -> np.ndarray
     return np.stack(arrays) if arrays else np.zeros(empty_shape)
 
 
+def _combine_fields(
+    a: np.ndarray | None, b: np.ndarray | None
+) -> np.ndarray | None:
+    """Element-wise product of two optional FOV fields (each absent → identity)."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a * b
+
+
 def _illumination_at(
-    vignette: np.ndarray | None, y_fov_um: float, x_fov_um: float, pixel_size_um: float
+    field: np.ndarray | None, y_fov_um: float, x_fov_um: float, pixel_size_um: float
 ) -> float:
-    """Illumination factor at a cell's FOV position — the vignette field, or 1.0."""
-    if vignette is None:
+    """Photon-budget factor at a cell's FOV position — the combined illumination ×
+    vignette field, or 1.0 when neither is present."""
+    if field is None:
         return 1.0
-    h, w = vignette.shape
+    h, w = field.shape
     iy = int(np.clip(round(y_fov_um / pixel_size_um), 0, h - 1))
     ix = int(np.clip(round(x_fov_um / pixel_size_um), 0, w - 1))
-    return float(vignette[iy, ix])
+    return float(field[iy, ix])
 
 
 def _is_detectable(
@@ -410,7 +429,7 @@ def _is_detectable(
     in_focus: bool,
     y_fov_um: float,
     x_fov_um: float,
-    vignette: np.ndarray | None,
+    photon_field: np.ndarray | None,
     sensor_spec,
     acq: Acquisition,
 ) -> bool:
@@ -437,7 +456,7 @@ def _is_detectable(
     if not in_focus:
         return False
     brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
-    illum = _illumination_at(vignette, y_fov_um, x_fov_um, acq.pixel_size_um)
+    illum = _illumination_at(photon_field, y_fov_um, x_fov_um, acq.pixel_size_um)
     qe = acq.image_sensor.quantum_efficiency
     read_e = acq.image_sensor.read_noise_e
     gain = brightness * illum * sensor_spec.photons_per_unit * qe

@@ -88,7 +88,8 @@ class GroundTruthBuilder:
     honest signal that the effect is absent from this recording:
 
     * ``shifts`` — rigid (dy, dx) per frame, from ``brain_motion``.
-    * ``vignette`` / ``leakage`` — the static (height, width) optical fields.
+    * ``illumination`` / ``vignette`` / ``leakage`` — the static (height, width)
+      optical fields (excitation falloff, collection falloff, additive glow).
     * ``neuropil_temporal`` / ``neuropil_spatial`` — the diffuse-background
       components; ``neuropil_population`` — the (frame,) population driver that
       modulates them (``None`` when no cells were active to drive it).
@@ -98,6 +99,7 @@ class GroundTruthBuilder:
     """
 
     shifts: np.ndarray | None = None
+    illumination: np.ndarray | None = None
     vignette: np.ndarray | None = None
     leakage: np.ndarray | None = None
     neuropil_temporal: np.ndarray | None = None
