@@ -23,7 +23,9 @@ import mediapy
 import numpy as np
 from IPython.display import display
 from ipywidgets import HBox, VBox
-from matplotlib.colors import LinearSegmentedColormap, to_rgb
+from matplotlib.collections import PatchCollection
+from matplotlib.colors import LinearSegmentedColormap, Normalize, to_rgb
+from matplotlib.patches import Circle
 from scipy.ndimage import binary_dilation
 from scipy.ndimage import zoom as ndzoom
 
@@ -70,6 +72,91 @@ def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
     ax.axhline(threshold, color="k", ls="--", lw=1.0)
     ax.set(yscale="log", xlabel="distance from center (um)", ylabel="cell SNR", title=title)
     ax.legend(fontsize=7, loc="lower left", frameon=False)
+
+
+def plot_population(ax_top, ax_side, centers_um, fov_um, *, depth_max,
+                    soma_radius_um, depth_range, morph_label=""):
+    """Top-down + side scatter of placed cell bodies, coloured by depth.
+
+    ``ax_top`` looks straight down the optical axis - each cell a *true-radius* disk
+    (so crowding reads honestly) coloured by its depth ``z``; ``ax_side`` plots the
+    same lateral ``x`` against ``z`` with the placement depth band shaded, the view
+    the top-down picture hides. ``centers_um`` is the ``(n, 3)`` ``(z, y, x)`` array
+    :func:`minisim.steps.sample_neurons` (or ``GroundTruth.centers_um``) returns;
+    ``fov_um`` is ``(height, width)`` and ``depth_range`` the ``(lo, hi)`` band. The
+    natural "where are the cells" view for either a placement preview or a later
+    recovered-vs-true positions comparison.
+    """
+    centers = np.asarray(centers_um, dtype=float).reshape(-1, 3)
+    z, y, x = (centers[:, 0], centers[:, 1], centers[:, 2]) if len(centers) else ([], [], [])
+    fov_h, fov_w = fov_um
+    lo, hi = depth_range
+    ax_top.clear()
+    if len(centers):
+        pc = PatchCollection([Circle((xi, yi), soma_radius_um) for xi, yi in zip(x, y, strict=True)],
+                             cmap="viridis", norm=Normalize(0, depth_max), alpha=0.8)
+        pc.set_array(z)
+        pc.set_edgecolor("white")
+        pc.set_linewidth(0.2)
+        ax_top.add_collection(pc)
+    ax_top.set_xlim(0, fov_w)
+    ax_top.set_ylim(0, fov_h)
+    ax_top.invert_yaxis()
+    ax_top.set_aspect("equal")
+    suffix = f"  |  GCaMP: {morph_label}" if morph_label else ""
+    ax_top.set(title=f"top view: {len(centers)} neurons over the {fov_w:.0f} x {fov_h:.0f} um FOV "
+                     f"(color = depth){suffix}", ylabel="y (um)")
+    ax_top.tick_params(labelbottom=False)
+    ax_side.clear()
+    ax_side.axhspan(lo, max(hi, lo), color="0.88", zorder=0)
+    if len(centers):
+        ax_side.scatter(x, z, c=z, cmap="viridis", vmin=0, vmax=depth_max, s=9)
+    ax_side.set_xlim(0, fov_w)
+    ax_side.set_ylim(0, depth_max)
+    ax_side.invert_yaxis()
+    ax_side.set(title="side view: depth distribution", xlabel="x (um)", ylabel="depth z (um)")
+
+
+def plot_traces(ax, t, C, spikes=None, *, n=5,
+                title="calcium traces C (each scaled to its peak) + spikes S (ticks)"):
+    """Stacked, peak-normalized calcium traces for the busiest ``n`` units.
+
+    Each lane is one cell's trace scaled to its own peak (so dense bursts stay
+    legible and per-cell brightness does not dominate the axis), offset vertically;
+    when ``spikes`` is given, its event frames are drawn as ticks under each lane.
+    "Busiest" is ranked by ``spikes`` if provided, else by ``C``. ``C``/``spikes``
+    are ``(unit, frame)`` (``GroundTruth.C`` / ``.S``); ``t`` is the per-frame time
+    axis. The standard trace view - true here, estimated-vs-true in a later notebook.
+    """
+    C = np.asarray(C)
+    ax.clear()
+    if len(C):
+        rank = np.asarray(spikes) if spikes is not None else C
+        for row, u in enumerate(np.argsort(rank.sum(axis=1))[-n:]):
+            c = C[u] - C[u].min()
+            c = c / (c.max() or 1.0)  # scale to its own peak -> a clean unit-height lane
+            off = row * 1.15
+            ax.plot(t, c + off, lw=0.9)
+            if spikes is not None:
+                spk = np.where(np.asarray(spikes)[u] > 0)[0]
+                ax.plot(t[spk], np.full(spk.shape, off - 0.18), "|", color="k", ms=4)
+    ax.set(title=title, xlabel="time (s)", ylabel="cell (offset)")
+    ax.set_yticks([])
+
+
+def plot_count_histogram(ax, counts, max_count, *, title="where the counts pile up"):
+    """Log histogram of integer ADC counts, with the saturation ceiling marked.
+
+    One bin per code from 0 to ``max_count`` (``2**bit_depth - 1``); the log y-axis
+    spans the read-noise floor near 0, the body, and the saturation spike piling up
+    at the ceiling (dashed line). ``counts`` is the digitized sensor frame
+    (``Recording.observed[f]`` or a single ``photons_to_counts`` output).
+    """
+    ax.clear()
+    ax.hist(np.asarray(counts).ravel(), bins=np.arange(0, max_count + 2) - 0.5, color="#2ca02c", log=True)
+    ax.axvline(max_count, color="#d62728", ls="--", lw=1.0, label="saturation")
+    ax.set(xlabel="ADC count", ylabel="pixels (log)", title=title)
+    ax.legend(fontsize=7, loc="upper right", frameon=False)
 
 
 def _colorize_with_rings(movie, gt, picks, colors, vmax, downsample=2):
