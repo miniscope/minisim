@@ -7,6 +7,7 @@ cross-field validators (hard fails and advisory warnings).
 """
 
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -188,18 +189,25 @@ def test_unresolvable_decay_fails():
         Spec(acquisition=acq, steps=steps)
 
 
-def test_step_before_its_prerequisite_fails():
-    # cell_activity requires place_neurons; with both present but reversed, the
-    # invisible Scene data-dependency is now an explicit ordering error.
-    steps = [CellActivity(tau_decay_s=0.4), PlaceNeurons(soma_radius_um=3.0), Composite()]
-    with pytest.raises(ValidationError, match="must come after"):
-        _valid_spec(steps=steps)
+def test_steps_are_canonicalized_regardless_of_listing_order():
+    # The order steps are listed in carries no meaning: the engine runs them in the
+    # canonical pipeline order, so a shuffled list (here render and sensor placed
+    # before their producers) is silently normalized rather than rejected. The Scene
+    # data-dependencies - cell_activity needs place_neurons, composite needs both -
+    # are all satisfied once canonicalized.
+    steps = [Composite(), Sensor(), CellActivity(tau_decay_s=0.4), PlaceNeurons(soma_radius_um=3.0)]
+    spec = _valid_spec(steps=steps)
+    assert [s.kind for s in spec.steps] == ["place_neurons", "cell_activity", "composite", "sensor"]
 
 
-def test_render_before_its_producers_fails():
-    steps = [Composite(), PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.4)]
-    with pytest.raises(ValidationError, match="must come after"):
-        _valid_spec(steps=steps)
+def test_listing_order_does_not_affect_identity():
+    # Two specs differing only in how their steps were listed canonicalize to the
+    # same thing, so they compare and cache equal.
+    steps = [PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.4), Composite()]
+    a = _valid_spec(steps=steps)
+    b = _valid_spec(steps=list(reversed(steps)))
+    assert a.steps == b.steps
+    assert a.cache_key() == b.cache_key()
 
 
 def test_absent_prerequisite_is_allowed_for_partial_pipelines():
@@ -212,11 +220,39 @@ def test_absent_prerequisite_is_allowed_for_partial_pipelines():
 # --- validators: advisory warnings -----------------------------------------
 
 
-def test_out_of_order_domains_warn():
-    # sensor before render → sensor(rank3) precedes tissue(rank1)
+def test_out_of_order_domains_are_silently_canonicalized():
+    # Steps given out of cell->tissue->motion->sensor order are reordered, not warned
+    # about: a sensor listed before the render lands after it in the stored spec, and
+    # no SpecWarning is raised for the (now meaningless) listing order.
     steps = [PlaceNeurons(soma_radius_um=3.0), Sensor(), Composite()]
-    with pytest.warns(SpecWarning, match="natural"):
-        _valid_spec(steps=steps)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        spec = _valid_spec(steps=steps)
+    assert not any(isinstance(w.message, SpecWarning) for w in caught)
+    assert [s.kind for s in spec.steps] == ["place_neurons", "composite", "sensor"]
+
+
+def test_order_steps_is_idempotent_and_keeps_unknown_kinds_last():
+    from minisim.spec import order_steps
+
+    canonical = [PlaceNeurons(), CellActivity(), Bleaching(), CellOptics(), Composite(), Sensor()]
+    kinds = [s.kind for s in canonical]
+    assert [s.kind for s in order_steps(canonical)] == kinds  # already-canonical unchanged
+    assert [s.kind for s in order_steps(list(reversed(canonical)))] == kinds  # shuffled -> canonical
+
+
+def test_pipeline_order_matches_catalog_and_respects_requires():
+    # Drift guard: the canonical order must stay a permutation of the step catalog
+    # (so a newly-added kind can't be silently dropped to the end) and a topological
+    # extension of every step's declared `requires` (so canonicalizing never produces
+    # an order that _check_step_dependencies would reject).
+    from minisim.spec import _KIND_RANK, _PIPELINE_ORDER
+    from minisim.steps import STEP_FOR_KIND
+
+    assert set(_PIPELINE_ORDER) == set(STEP_FOR_KIND)
+    for spec_cls in (CellActivity, CellOptics, Composite, Neuropil, Bleaching):
+        for required_kind in spec_cls.requires:
+            assert _KIND_RANK[required_kind] < _KIND_RANK[spec_cls().kind]
 
 
 def test_focal_plane_out_of_range_warns():
