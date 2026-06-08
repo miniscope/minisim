@@ -48,6 +48,30 @@ def play(movie, fps=20, height=280, title=None):
     mediapy.show_video((arr - lo) / (hi - lo + 1e-9), fps=fps, height=height, title=title, codec="h264")
 
 
+def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
+    """Scatter per-cell transient SNR against distance from the FOV centre.
+
+    Each point is one cell: green if its realized SNR clears ``threshold`` (the
+    photon budget can recover it), red if it sinks below the shot+read floor (the
+    dashed line). The log y-axis spans the order-of-magnitude spread. ``radius_um``
+    and ``snr`` are matched per-cell arrays - compute ``snr`` with
+    :func:`minisim.detection_snr` and use :data:`minisim.DETECT_SNR_THRESHOLD` for
+    the usual floor. This is the picture of *which cells are recoverable*, the same
+    question ``finalize()`` answers with its ``detectable`` flag, so it reads the
+    same whether the knob being explored is the illumination falloff or the sensor
+    exposure (and it is the natural recovered-vs-true view for a later pipeline
+    notebook).
+    """
+    radius_um, snr = np.asarray(radius_um), np.asarray(snr)
+    ok = snr >= threshold
+    ax.clear()
+    ax.scatter(radius_um[ok], snr[ok], s=12, color="#2ca02c", label=f"detectable ({int(ok.sum())})")
+    ax.scatter(radius_um[~ok], snr[~ok], s=12, color="#d62728", label=f"below floor ({int((~ok).sum())})")
+    ax.axhline(threshold, color="k", ls="--", lw=1.0)
+    ax.set(yscale="log", xlabel="distance from center (um)", ylabel="cell SNR", title=title)
+    ax.legend(fontsize=7, loc="lower left", frameon=False)
+
+
 def _colorize_with_rings(movie, gt, picks, colors, vmax, downsample=2):
     """LUT-colourize a movie and overlay static coloured rings on the picked cells.
 
