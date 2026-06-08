@@ -1,0 +1,27 @@
+# Read the Docs build configuration. https://docs.readthedocs.io/en/stable/config-file/v2.html
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+  jobs:
+    # The package version is derived from `v*` git tags by pdm-backend's SCM
+    # source (see pyproject [tool.pdm.version]). RTD does a shallow clone with
+    # no tags, which makes version detection fail, so fetch the tags first.
+    post_checkout:
+      - git fetch --tags --unshallow || git fetch --tags
+
+sphinx:
+  configuration: docs/conf.py
+  fail_on_warning: true
+
+python:
+  install:
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs
+        # autodoc imports minisim and renders the Spec/steps; the notebook
+        # extra pulls in matplotlib etc. so the tutorials can render too.
+        - notebook

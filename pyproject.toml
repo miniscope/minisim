@@ -66,6 +66,16 @@ test = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.14",
 ]
+# The Sphinx documentation site (Read the Docs). Authored in Markdown via MyST;
+# the typed Spec/steps render from the live pydantic models via autodoc-pydantic.
+docs = [
+    "sphinx>=8.1",
+    "pydata-sphinx-theme>=0.16",
+    "myst-nb>=1.1",
+    "autodoc-pydantic>=2.2",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.6",
+]
 
 [build-system]
 requires = ["pdm-backend"]
