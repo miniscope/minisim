@@ -2,13 +2,13 @@
 
 The core guarantee -- streamed frames equal ``simulate().observed`` exactly,
 independent of chunk size -- is tested without any video dependency via the
-``_iter_count_frames`` generator. The file-writing tests need ``mediapy`` + ffmpeg
-and are skipped when ``mediapy`` is unavailable.
+``_iter_count_frames`` generator. The file-writing tests use ``cv2.VideoWriter``
+(opencv is a core dependency that bundles ffmpeg), so they need no extra and no
+system ffmpeg; frames are decoded back with ``cv2.VideoCapture``.
 """
 from __future__ import annotations
 
-import shutil
-
+import cv2
 import numpy as np
 import pytest
 
@@ -130,35 +130,43 @@ def test_default_vmax_is_adc_range_with_sensor_else_errors():
         _default_vmax(_spec(sensor=False))
 
 
-# --- file writing (needs mediapy + the ffmpeg binary) ----------------------
-# mediapy imports fine without ffmpeg but shells out to it at encode/decode time,
-# so guard on the binary too (CI installs it on Linux; other runners skip these).
-mediapy = pytest.importorskip("mediapy")
-if shutil.which("ffmpeg") is None:
-    pytest.skip("ffmpeg binary not on PATH; video file I/O tests need it",
-                allow_module_level=True)
+# --- file writing (cv2.VideoWriter; opencv is a core dep, ffmpeg bundled) --
+
+
+def _decode(path):
+    """Decode a grayscale AVI back to a ``(frame, H, W)`` uint8 array via cv2.
+
+    cv2.VideoCapture returns each frame as 3-channel BGR even for a grayscale file;
+    the planes are identical for an uncompressed write, so take one.
+    """
+    cap = cv2.VideoCapture(str(path))
+    frames = []
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        frames.append(fr[..., 0] if fr.ndim == 3 else fr)
+    cap.release()
+    return np.array(frames)
 
 
 def test_simulate_video_writes_decodable_file(tmp_path):
     spec = _spec()
     path = simulate_video(spec, tmp_path / "rec.avi", chunk_frames=8, progress=False)
     assert path.exists() and path.stat().st_size > 0
-    decoded = np.asarray(mediapy.read_video(str(path)))
-    # mjpeg decodes grayscale as RGB; frame count and frame size must match.
+    decoded = _decode(path)
     assert decoded.shape[0] == simulate(spec).observed.shape[0]
     assert decoded.shape[1:3] == (48, 48)
 
 
 def test_default_codec_roundtrips_counts_losslessly(tmp_path):
-    # The default (ffv1 + gray) must preserve the exact 8-bit counts: a re-decoded
-    # frame equals simulate().observed bit-for-bit, with no lossy DCT blocking. This
-    # is the guard against silently regressing to a lossy default like mjpeg.
+    # The default (Y800, uncompressed gray) must preserve the exact 8-bit counts: a
+    # re-decoded frame equals simulate().observed bit-for-bit, with no lossy blocking.
+    # This is the guard against silently regressing to a lossy default like MJPG.
     spec = _spec()
     observed = simulate(spec).observed  # counts are well within 8-bit (vmax=255)
     path = simulate_video(spec, tmp_path / "rec.avi", chunk_frames=8, progress=False)
-    decoded = np.asarray(mediapy.read_video(str(path)))
-    luma = decoded[..., 0] if decoded.ndim == 4 else decoded  # gray decodes as RGB
-    np.testing.assert_array_equal(luma, observed.astype(np.uint8))
+    np.testing.assert_array_equal(_decode(path), observed.astype(np.uint8))
 
 
 def test_write_video_and_simulate_video_agree(tmp_path):
@@ -167,9 +175,7 @@ def test_write_video_and_simulate_video_agree(tmp_path):
     spec = _spec()
     p_stream = simulate_video(spec, tmp_path / "stream.avi", chunk_frames=8, progress=False)
     p_mem = simulate(spec).write_video(tmp_path / "mem.avi", progress=False)
-    a = np.asarray(mediapy.read_video(str(p_stream)))
-    b = np.asarray(mediapy.read_video(str(p_mem)))
-    np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(_decode(p_stream), _decode(p_mem))
 
 
 def test_simulate_video_requires_vmax_without_sensor(tmp_path):

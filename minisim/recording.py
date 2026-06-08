@@ -371,21 +371,22 @@ class Recording(BaseModel):
         fps: float | None = None,
         vmin: float = 0.0,
         vmax: float | None = None,
-        codec: str = "rawvideo",
+        codec: str = "Y800",
         progress: bool = True,
     ) -> Path:
         """Write the in-memory ``observed`` movie to a grayscale video at ``path``.
 
         Maps counts to 8-bit gray over ``[vmin, vmax]`` (``vmax`` defaults to the
         sensor's full ADC range, ``2**bit_depth - 1``, so saturation reads as white)
-        and encodes with ``mediapy`` + ``codec`` (default ``"rawvideo"``: uncompressed
-        8-bit gray, fourcc ``Y800`` -- exact counts, no artifacts, opens in ImageJ/Fiji,
-        but large; pass ``"mjpeg"`` for a small lossy file). Use this when you already
-        hold a ``Recording``; to stream a long recording to disk **without** building
-        the whole movie in memory, use :func:`minisim.video.simulate_video` instead.
-        Requires the ``mediapy`` extra. Returns ``path``.
+        and encodes with ``cv2.VideoWriter`` + the ``codec`` fourcc (default
+        ``"Y800"``: uncompressed 8-bit gray -- exact counts, no artifacts, but large;
+        pass ``"MJPG"`` for a small lossy file). Uses opencv's bundled ffmpeg, so no
+        system ffmpeg or ``mediapy`` extra is needed. Use this when you already hold a
+        ``Recording``; to stream a long recording to disk **without** building the
+        whole movie in memory, use :func:`minisim.video.simulate_video` instead.
+        Returns ``path``.
         """
-        from minisim.video import _default_vmax, _import_mediapy, _write_gray_video
+        from minisim.video import _default_vmax, _write_gray_video
 
         n_frames = self.observed.shape[0]
         if n_frames == 0:
@@ -396,7 +397,7 @@ class Recording(BaseModel):
             vmax = _default_vmax(self.spec)
         frames = (self.observed[f] for f in range(n_frames))
         return _write_gray_video(
-            _import_mediapy(), frames, n_frames, Path(path), fov, fps, vmin, vmax, codec, progress
+            frames, n_frames, Path(path), fov, fps, vmin, vmax, codec, progress
         )
 
 

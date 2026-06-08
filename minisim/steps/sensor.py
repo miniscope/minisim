@@ -224,10 +224,10 @@ class SensorStep(Step["Sensor"]):
 
     def __call__(self, scene: Scene) -> None:
         # Digitize FRAME BY FRAME, in order, on the shared rng: each frame draws its
-        # shot then read noise before the next. The per-frame draw order is what
-        # makes a chunked stream (minisim.video.simulate_video) reproduce these
-        # counts bit-for-bit -- a single whole-array poisson-then-normal pass could
-        # not be reproduced chunk by chunk. The result is identical for any framing.
+        # combined shot+read noise (one standard_normal per frame, see
+        # ImageSensor.photons_to_counts) before the next. The per-frame draw order is
+        # what makes a chunked stream (minisim.video.simulate_video) reproduce these
+        # counts bit-for-bit. The result is identical for any framing.
         sensor, ppu, rng = self.acq.image_sensor, self.spec.photons_per_unit, self.rng
         movie = scene.movie.values
         for f in range(movie.shape[0]):

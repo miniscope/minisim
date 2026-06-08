@@ -23,6 +23,7 @@ from minisim.metrics import (
     spike_precision_recall,
     trace_pearson,
 )
+from minisim.perf import PerfTracker
 from minisim.recording import (
     DETECT_SNR_THRESHOLD,
     GroundTruth,
@@ -81,6 +82,7 @@ __all__ = [
     "Neuropil",
     "Optics",
     "Output",
+    "PerfTracker",
     "PlaceNeurons",
     "Recording",
     "Scene",

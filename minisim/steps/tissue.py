@@ -33,7 +33,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.signal import lfilter
 
-from minisim.footprint import stack_dense
+from minisim.footprint import RENDER_DTYPE, stack_dense
 from minisim.scene import Scene
 from minisim.steps.base import PipelineContext, Step
 
@@ -89,8 +89,11 @@ class CompositeStep(Step["Composite"]):
         # Footprints are stored sparse (a small patch each); rebuild the dense
         # (unit, H, W) stack transiently for the BLAS contraction against the
         # traces -- faster than a per-cell loop, and the stack is freed at once.
+        # A and C are float32 (RENDER_DTYPE) so the contraction is single-precision
+        # (half the memory traffic on the large A); the float64 movie accumulates
+        # the float32 result. The streaming writer composites identically.
         A = stack_dense(footprints, scene.canvas_shape)  # (unit, height, width)
-        C = np.stack(traces)  # (unit, frame)
+        C = np.stack(traces).astype(RENDER_DTYPE)  # (unit, frame)
         contrib = np.tensordot(C, A, axes=([0], [0]))  # (frame, height, width)
         scene.movie.values[:] += contrib
 
