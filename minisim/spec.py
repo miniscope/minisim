@@ -34,9 +34,8 @@ import hashlib
 import math
 import warnings
 from collections import Counter
-from collections.abc import Mapping
-from itertools import pairwise
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, TypeVar
 
 import numpy as np
 from pydantic import (
@@ -57,7 +56,7 @@ class SpecWarning(UserWarning):
 
     The simulator distinguishes *invalid* configs (which raise) from *unusual*
     ones (which warn but still run) - e.g. a focal plane outside the cell depth
-    range, or steps listed out of the natural physical order.
+    range, or motion larger than the configured FOV margin.
     """
 
 
@@ -501,10 +500,51 @@ class Output(_Base):
 # ---------------------------------------------------------------------------
 
 
-# Natural physical order of the pipeline. A step's domain is a class-level
-# attribute (not a serialized field); the Spec validator warns if the list
-# departs from this order.
-_DOMAIN_RANK: dict[str, int] = {"cell": 0, "tissue": 1, "motion": 2, "sensor": 3}
+# The canonical execution order of the pipeline as a total order over step kinds.
+# It follows the physical domains (cell -> tissue -> motion -> sensor) and fixes
+# the within-domain order too. This is THE order steps run in, so the order a caller
+# lists them in does not matter - :func:`order_steps` (used by both ``simulate``
+# and :class:`Spec`) sorts any list into this one. It is a topological extension
+# of every step's ``requires`` (a step always follows the kinds it consumes); the
+# test suite asserts that, and that this is a permutation of the step catalog, so
+# the order cannot silently drift as kinds are added.
+_PIPELINE_ORDER: tuple[str, ...] = (
+    "place_neurons",
+    "cell_activity",
+    "bleaching",
+    "optics",
+    "composite",
+    "neuropil",
+    "vasculature",
+    "brain_motion",
+    "illumination_profile",
+    "vignette",
+    "leakage",
+    "sensor",
+)
+_KIND_RANK: dict[str, int] = {kind: i for i, kind in enumerate(_PIPELINE_ORDER)}
+
+_StepT = TypeVar("_StepT", bound="StepSpec")
+
+
+def order_steps(steps: Iterable[_StepT]) -> list[_StepT]:
+    """Sort steps into the canonical pipeline order (:data:`_PIPELINE_ORDER`).
+
+    The pipeline is order-insensitive at assembly time: you add the steps you want
+    in whatever order is convenient, and the engine runs them in the one
+    physically-correct sequence (cells -> tissue -> motion -> sensor, with the
+    within-domain order fixed too). Both ``simulate`` and :class:`Spec` route
+    through this, so a spec's stored ``steps`` are always canonical no matter how
+    they were listed - which means you can build a pipeline incrementally, revisit
+    and retune any earlier stage, and re-run without the listing order ever
+    mattering.
+
+    A *stable* sort: steps of equal rank keep their input order, and a kind absent
+    from :data:`_PIPELINE_ORDER` (a future/unknown step) sorts to the end rather
+    than raising, so no step is ever dropped. Returns a new list; the step specs
+    themselves are not copied or mutated.
+    """
+    return sorted(steps, key=lambda s: _KIND_RANK.get(s.kind, len(_PIPELINE_ORDER)))
 
 
 class StepSpec(_Base):
@@ -1046,12 +1086,25 @@ class Spec(_Base):
         """SHA256 (first 16 hex chars) of the canonical JSON form. Stable across runs."""
         return hashlib.sha256(self.model_dump_json().encode()).hexdigest()[:16]
 
+    @field_validator("steps")
+    @classmethod
+    def _canonicalize_order(cls, steps: list[AnyStep]) -> list[AnyStep]:
+        """Store steps in canonical pipeline order, whatever order they were given.
+
+        Order is not part of the spec a caller has to get right: the pipeline runs
+        in one physically-correct sequence (:func:`order_steps`), so the listing
+        order carries no meaning and is normalized away here. Every downstream
+        consumer - ``simulate``, ``until=``, the snapshot keys, ``cache_key``,
+        sweeps - therefore sees the canonical order, and two specs that differ only
+        in how their steps were listed compare and cache as equal.
+        """
+        return order_steps(steps)
+
     @model_validator(mode="after")
     def _validate(self) -> Spec:
         self._check_unique_kinds()  # hard fail; everything below assumes unique kinds
         self._check_step_dependencies()
         by_kind = {s.kind: s for s in self.steps}
-        self._warn_domain_order()
         self._check_footprint_vs_fov(by_kind)
         self._check_sampling_vs_kinetics(by_kind)
         self._warn_focal_plane(by_kind)
@@ -1068,19 +1121,23 @@ class Spec(_Base):
             raise ValueError(f"Duplicate step kind(s) in spec: {dupes}. Each kind must be unique.")
 
     def _check_step_dependencies(self) -> None:
-        """Rule 4b: a step's declared ``requires`` kinds, when present in the spec,
-        must precede it - the data dependencies that otherwise flow invisibly
-        through the shared ``Scene``. Enforces *order*, not presence: an absent
-        prerequisite is fine (partial pipelines are first-class), a misordered one
-        is not."""
+        """Rule 4b: a step's declared ``requires`` kinds, when present, must precede
+        it - the data dependencies that otherwise flow invisibly through the shared
+        ``Scene``. Steps are already canonicalized (:meth:`_canonicalize_order`) by
+        the time this runs, and :data:`_PIPELINE_ORDER` is a topological extension
+        of ``requires``, so for known kinds this always holds: it is a defensive
+        invariant guarding against the canonical order drifting out of sync with a
+        step's declared ``requires`` (the test suite checks the same property). An
+        absent prerequisite is fine - partial pipelines are first-class."""
         present = {s.kind for s in self.steps}
         seen: set[str] = set()
         for s in self.steps:
             late = [r for r in s.requires if r in present and r not in seen]
             if late:
                 raise ValueError(
-                    f"Step {s.kind!r} must come after {late} in the steps list: it "
-                    "consumes their output through the shared Scene."
+                    f"Step {s.kind!r} resolves after {late}, which it consumes through "
+                    "the shared Scene; the canonical pipeline order is inconsistent with "
+                    f"its declared requires={s.requires!r}."
                 )
             seen.add(s.kind)
 
@@ -1111,17 +1168,6 @@ class Spec(_Base):
             )
 
     # -- advisory warnings --------------------------------------------------
-
-    def _warn_domain_order(self) -> None:
-        """Rule 5: steps out of cell→tissue→motion→sensor order are legal but unusual."""
-        ranks = [_DOMAIN_RANK[type(s).domain] for s in self.steps]
-        if any(b < a for a, b in pairwise(ranks)):
-            order = " → ".join(f"{s.kind}({type(s).domain})" for s in self.steps)
-            warnings.warn(
-                f"Steps depart from the natural cell→tissue→motion→sensor order: {order}.",
-                SpecWarning,
-                stacklevel=2,
-            )
 
     def _warn_focal_plane(self, by_kind: Mapping[str, StepSpec]) -> None:
         """Rule 6: a numeric focal depth outside the cell depth range is unusual."""

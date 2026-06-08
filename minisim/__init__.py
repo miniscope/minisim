@@ -56,6 +56,7 @@ from minisim.spec import (
     Tissue,
     Vasculature,
     Vignette,
+    order_steps,
 )
 from minisim.sweep import SweptSpec, sweep
 from minisim.video import simulate_video
@@ -100,6 +101,7 @@ __all__ = [
     "footprint_mask",
     "footprint_roi_trace",
     "hungarian_match",
+    "order_steps",
     "sample_field_at",
     "shift_rmse",
     "simulate",
