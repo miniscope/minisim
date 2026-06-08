@@ -40,6 +40,13 @@ pip install "minisim[notebook]"    # + the interactive teaching notebooks
 Requires Python >= 3.10. Core dependencies are just numpy, scipy, xarray, zarr,
 pydantic, and numpydantic.
 
+The teaching notebooks ship inside the package; copy them somewhere writable
+with the bundled command:
+
+```bash
+minisim-notebooks ./minisim-notebooks   # then: cd minisim-notebooks && jupyter lab
+```
+
 ## Quick start
 
 ```python

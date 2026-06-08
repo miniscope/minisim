@@ -43,6 +43,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 
+[project.scripts]
+# Copy the bundled teaching notebooks out to a writable directory.
+minisim-notebooks = "minisim.notebooks:main"
+
 [project.urls]
 Homepage = "https://github.com/miniscope/minisim"
 Repository = "https://github.com/miniscope/minisim"
@@ -94,9 +98,19 @@ tag_regex = 'v(?P<version>([1-9][0-9]*!)?(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|
 
 [tool.pdm.build]
 # Keep build artifacts out of the wheel/sdist when the package dir is walked.
+# pdm-backend does NOT honor .gitignore, so generated outputs that are gitignored
+# but present in a developer's working tree (e.g. a notebook's rendered movies)
+# would otherwise be swept into a locally-built wheel. minisim generates every
+# movie from code, so videos are outputs and never package inputs: exclude them
+# (and notebook checkpoints) outright so a build can never carry large binaries.
 excludes = [
     "**/__pycache__",
     "**/*.pyc",
+    "**/*.avi",
+    "**/*.mp4",
+    "**/*.mkv",
+    "**/*.mov",
+    "**/.ipynb_checkpoints",
 ]
 
 [tool.pdm.scripts]

@@ -1,0 +1,27 @@
+# Run `pre-commit install` once to enable. `pre-commit run --all-files` to sweep.
+repos:
+  # Strip outputs from notebooks before they are committed: keeps the repo and
+  # the wheel small and makes notebook diffs reviewable. minisim's notebooks are
+  # meant to be run, not read with stale outputs baked in.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout
+
+  # Guard against committing large binaries (e.g. a notebook's rendered .avi).
+  # minisim generates movies from code, so they should never enter git.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-yaml
+      - id: check-toml
+
+  # Lint with the same ruff the CI gate uses (config in pyproject; *.ipynb are
+  # excluded there). Fixes are applied in place.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: ["--fix"]
