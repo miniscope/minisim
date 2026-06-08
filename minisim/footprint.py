@@ -9,7 +9,7 @@ lives on is the whole sensor FOV (plus any motion margin). Stored as a dense
 This module stores only what is non-zero. A :class:`Footprint` is a small dense
 ``patch`` plus the ``offset`` of its top-left corner on a known ``canvas_shape``;
 the dense array is ``np.zeros(canvas_shape)`` with ``patch`` written at ``offset``,
-but is never materialized in the pipeline - :class:`~minisim.steps.tissue.RenderStep`
+but is never materialized in the pipeline - :class:`~minisim.steps.tissue.CompositeStep`
 composites each cell directly into its own canvas window, and metrics binarize each
 patch in place. A :class:`FootprintStack` is the per-recording bundle of these,
 the form ``GroundTruth.A_planted`` / ``A_observed`` take.

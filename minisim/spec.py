@@ -517,11 +517,11 @@ class StepSpec(_Base):
     :data:`minisim.steps.STEP_FOR_KIND` table.
 
     ``requires`` declares the step kinds whose output this step consumes through
-    the shared ``Scene`` (e.g. ``render`` reads the footprints ``place_neurons``
+    the shared ``Scene`` (e.g. ``composite`` reads the footprints ``place_neurons``
     makes and the traces ``cell_activity`` makes). The spec validator enforces
     *order*, not presence: a required kind that is in the list must precede this
     step, but it may be absent entirely. Partial pipelines are first-class - a
-    spec of ``[place_neurons, cell_activity, render]`` with no sensor is valid, so
+    spec of ``[place_neurons, cell_activity, composite]`` with no sensor is valid, so
     targeted test data for a downstream calcium pipeline can exercise just a few
     stages - so an absent prerequisite is allowed, while a misordered one is not.
     """
@@ -551,21 +551,19 @@ class StepSpec(_Base):
 # ---------------------------------------------------------------------------
 
 
-class PlaceNeurons(StepSpec):
-    """Place generic neurons in a 3-D µm volume, soma-only or with dendrites.
+class NeuronPopulation(_Base):
+    """One homogeneous group of neurons to place: a morphology + a 3-D distribution.
 
-    'Place' is the verb - this *positions neurons in space* (anchored at the cell
-    body); it is unrelated to hippocampal *place cells*. v1 models one generic
-    excitable cell type (an irregular soma blob) with two GCaMP targeting variants
-    via ``morphology``: ``"soma"`` (soma-targeted, body only) or ``"cytosolic"``
-    (standard GCaMP, the soma plus a few tapering proximal dendrites). There is no
-    further cell-type distinction and no spatial/behavioral tuning. Footprints are
-    2-D masks carrying a scalar depth ``z``; out-of-focus neurons that become
-    background emerge for free downstream from ``z`` + ``optics``.
+    A *population* is the unit ``place_neurons`` actually samples - one cell shape
+    (soma-only or cytosolic) at one soma size, scattered at one volumetric density
+    across one depth range. A single population is the common case; list several on
+    :attr:`PlaceNeurons.populations` to build layered anatomy - e.g. a thin
+    soma-targeted band over a deep cytosolic volume. The cell *count* is derived
+    volumetrically from ``density_per_mm3`` and the depth thickness (see
+    :func:`~minisim.steps.cell.sample_neurons`); brightness is biology and is drawn
+    later in ``cell_activity``, never here.
     """
 
-    domain: ClassVar[str] = "cell"
-    kind: Literal["place_neurons"] = "place_neurons"
     density_per_mm3: float = Field(
         gt=0,
         default=25000.0,
@@ -608,6 +606,17 @@ class PlaceNeurons(StepSpec):
     min_distance_um: float = Field(
         ge=0, default=0.0, description="3-D center-to-center minimum (Poisson-disk if > 0)."
     )
+    positions_um: list[tuple[float, float, float]] | None = Field(
+        default=None,
+        description="Explicit soma centers as (z, y, x) µm tuples - depth, row, column - "
+        "in the tissue frame (origin = canvas top-left, the same coordinates the "
+        "sampled centers and ground-truth positions use; note the depth-first order, "
+        "matching Cell.center_um rather than x,y,z). When given, these exact positions "
+        "are placed instead of density-sampling, so the distribution fields "
+        "(density_per_mm3, depth_range_um, min_distance_um) are ignored; the shape "
+        "fields (soma_radius_um, irregularity, morphology, dendrites) still apply to "
+        "each placed cell.",
+    )
 
     @field_validator("depth_range_um")
     @classmethod
@@ -618,6 +627,67 @@ class PlaceNeurons(StepSpec):
         if hi < lo:
             raise ValueError(f"depth_range_um max ({hi}) must be ≥ min ({lo}).")
         return v
+
+
+class PlaceNeurons(StepSpec, NeuronPopulation):
+    """Place generic neurons in a 3-D µm volume, soma-only or with dendrites.
+
+    'Place' is the verb - this *positions neurons in space* (anchored at the cell
+    body); it is unrelated to hippocampal *place cells*. v1 models one generic
+    excitable cell type (an irregular soma blob) with two GCaMP targeting variants
+    via ``morphology``: ``"soma"`` (soma-targeted, body only) or ``"cytosolic"``
+    (standard GCaMP, the soma plus a few tapering proximal dendrites). There is no
+    further cell-type distinction and no spatial/behavioral tuning. Footprints are
+    2-D masks carrying a scalar depth ``z``; out-of-focus neurons that become
+    background emerge for free downstream from ``z`` + ``optics``.
+
+    The step *is* a single :class:`NeuronPopulation`: its inherited fields
+    (``morphology``, ``soma_radius_um``, ``depth_range_um``, …) describe that one
+    group. To place several distinct groups together - a thin soma-targeted layer
+    over a deep cytosolic volume, say - set :attr:`populations` to a list of
+    ``NeuronPopulation`` instead; the step then samples each in turn (its own
+    step-level population fields are ignored, and mixing the two raises).
+    """
+
+    domain: ClassVar[str] = "cell"
+    kind: Literal["place_neurons"] = "place_neurons"
+    populations: list[NeuronPopulation] | None = Field(
+        default=None,
+        description="Distinct neuron populations to place together (e.g. a thin "
+        "layer + a deep volume). None (default) = the step is a single population "
+        "described by its own fields; a list = sample each entry in turn and ignore "
+        "the step-level population fields.",
+    )
+
+    @property
+    def resolved_populations(self) -> list[NeuronPopulation]:
+        """The population(s) to place: explicit ``populations`` or the step-as-one.
+
+        When ``populations`` is None the step is itself one population, so rebuild a
+        plain :class:`NeuronPopulation` from the inherited fields - that way callers
+        (the step, :func:`~minisim.steps.cell.sample_neurons`) iterate one uniform
+        list either way.
+        """
+        if self.populations is not None:
+            return self.populations
+        return [
+            NeuronPopulation(**{f: getattr(self, f) for f in NeuronPopulation.model_fields})
+        ]
+
+    @model_validator(mode="after")
+    def _check_populations(self) -> PlaceNeurons:
+        if self.populations is None:
+            return self
+        if not self.populations:
+            raise ValueError("populations must list at least one NeuronPopulation, or be None.")
+        clash = sorted(self.model_fields_set & set(NeuronPopulation.model_fields))
+        if clash:
+            raise ValueError(
+                f"place_neurons sets both populations and step-level population "
+                f"field(s) {clash}; when using populations, set those on each "
+                "NeuronPopulation entry instead (the step-level fields are ignored)."
+            )
+        return self
 
 
 class CellActivity(StepSpec):
@@ -684,7 +754,7 @@ class CellOptics(StepSpec):
     requires: ClassVar[tuple[str, ...]] = ("place_neurons",)  # degrades planted footprints
 
 
-class Render(StepSpec):
+class Composite(StepSpec):
     """Composite ``Σ_i degraded_footprint_i × trace_i`` into the movie.
 
     The built step's snapshot name is ``"cells_only"``. The planted (sharp)
@@ -692,8 +762,8 @@ class Render(StepSpec):
     """
 
     domain: ClassVar[str] = "tissue"
-    kind: Literal["render"] = "render"
-    # Composites footprint × trace. optics is an optional enhancer (render falls
+    kind: Literal["composite"] = "composite"
+    # Composites footprint × trace. optics is an optional enhancer (composite falls
     # back to the planted footprint), so it is not required.
     requires: ClassVar[tuple[str, ...]] = ("place_neurons", "cell_activity")
 
@@ -740,7 +810,7 @@ class Bleaching(StepSpec):
     Photobleaching is a per-photon hazard, so each cell loses intact fluorophore in
     proportion to how much it emits (its calcium activity × excitation intensity),
     while turnover replenishes it toward full expression. The realized envelope is a
-    *cell-domain* effect computed before render (see
+    *cell-domain* effect computed before ``composite`` (see
     :class:`~minisim.steps.tissue.BleachingStep`), not a global movie multiply: busy
     or brightly-lit cells fade faster and to a lower floor, and with the light off
     the pool recovers, so the same model spans single recordings and repeated
@@ -892,7 +962,13 @@ class Vignette(StepSpec):
 
 
 class Leakage(StepSpec):
-    """Static additive baseline - what minian's 'glow removal' subtracts."""
+    """Static additive baseline (stray excitation light on the detector).
+
+    One *additive* contributor to the smooth, low-frequency background that minian's
+    'glow removal' estimates and subtracts - not its sole target: that removal also
+    strips the *multiplicative* illumination falloff and vignette (see
+    ``IlluminationProfile`` / ``Vignette``), since all three are smooth and static
+    while the cells are sharp and moving."""
 
     domain: ClassVar[str] = "sensor"
     kind: Literal["leakage"] = "leakage"
@@ -935,7 +1011,7 @@ AnyStep = Annotated[
     PlaceNeurons
     | CellActivity
     | CellOptics
-    | Render
+    | Composite
     | Neuropil
     | Vasculature
     | Bleaching
@@ -1014,9 +1090,10 @@ class Spec(_Base):
         if not isinstance(pc, PlaceNeurons):
             return
         min_fov = min(self.acquisition.fov_um)
-        if 2 * pc.soma_radius_um > min_fov:
+        max_radius = max(p.soma_radius_um for p in pc.resolved_populations)
+        if 2 * max_radius > min_fov:
             raise ValueError(
-                f"soma_radius_um={pc.soma_radius_um} µm gives a soma diameter larger than "
+                f"soma_radius_um={max_radius} µm gives a soma diameter larger than "
                 f"the FOV ({min_fov:.3g} µm). Reduce the soma or enlarge the FOV."
             )
 

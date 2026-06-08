@@ -10,13 +10,13 @@ pip install "minisim[notebook]"    # + the interactive teaching notebooks
 ## Simulate a recording
 
 Build a {py:class}`~minisim.Spec`, then {py:func}`~minisim.simulate` it. The
-minimal forward chain is place neurons → cell activity → optics → render →
+minimal forward chain is place neurons → cell activity → optics → composite →
 sensor; defaults are filled in for everything you do not set.
 
 ```python
 from minisim import (
     Acquisition, Optics, ImageSensor,
-    PlaceNeurons, CellActivity, CellOptics, Render, Sensor,
+    PlaceNeurons, CellActivity, CellOptics, Composite, Sensor,
     Spec, simulate,
 )
 
@@ -32,7 +32,7 @@ spec = Spec(
         PlaceNeurons(),
         CellActivity(),
         CellOptics(),
-        Render(),
+        Composite(),
         Sensor(),
     ],
 )
@@ -74,15 +74,17 @@ rec = simulate_cached(spec)   # computes once, then loads on subsequent calls
 
 Pass `until` to stop the chain at a named stage, or keep every stage by setting
 `Output.save_intermediates=True` and reading them back with `Recording.stage()`.
+A stage name is usually the step's `kind`; the one exception is the `composite`
+step, whose stage is named `"cells_only"` (the cells-on-black movie it produces).
 
 ```python
 from minisim import Output
 
-partial = simulate(spec, until="render")     # stop after the render step
+partial = simulate(spec, until="cells_only")  # stop after the composite step
 
 spec_full = spec.model_copy(update={"output": Output(save_intermediates=True)})
 rec = simulate(spec_full)
-rendered = rec.stage("render")                # the movie as of the render stage
+cells_only = rec.stage("cells_only")          # the movie as of the composite stage
 ```
 
 ## Where to next

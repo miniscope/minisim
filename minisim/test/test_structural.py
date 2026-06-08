@@ -26,12 +26,12 @@ from minisim import (
     BrainMotion,
     CellActivity,
     CellOptics,
+    Composite,
     ImageSensor,
     Leakage,
     Neuropil,
     Optics,
     PlaceNeurons,
-    Render,
     Sensor,
     Spec,
     Vignette,
@@ -72,7 +72,7 @@ def test_detectability_falls_with_depth():
             CellActivity(active_rate_hz=80.0, tau_decay_s=0.4,
                          p_quiescent_to_active=0.08, brightness_cv=0.0),
             CellOptics(),
-            Render(),
+            Composite(),
             # photons ~ 200 / NA² (NA 0.45): the NA²-collection factor moved into
             # cell_optics dims the signal, and photons_per_unit (the exposure scale
             # that absorbs collection's absolute constant) compensates so the
@@ -108,7 +108,7 @@ def test_strong_vignette_concentrates_detection_centrally():
             PlaceNeurons(density_per_mm3=2.5e6, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
-            Render(),
+            Composite(),
             Vignette(falloff=0.1, exponent=2.0),  # edge at 10% brightness
             # Bright enough that a non-trivial in-focus population clears the noise
             # floor; the steep vignette then keeps the survivors near the center.
@@ -136,7 +136,7 @@ def test_bleaching_dims_later_frames():
             # the neuropil that dims with it) is unambiguous over a short 2 s clip.
             Bleaching(bleach_susceptibility=0.15, excitation_intensity=1.0),
             CellOptics(),
-            Render(),
+            Composite(),
             Neuropil(n_components=2, amplitude=0.4),  # a background floor to dim
             Sensor(photons_per_unit=140.0),
         ],
@@ -158,7 +158,7 @@ def test_static_fields_are_invariant_to_motion():
                 PlaceNeurons(density_per_mm3=400000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
                 CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
                 CellOptics(),
-                Render(),
+                Composite(),
                 BrainMotion(model="walk", walk_step_um=walk_step_um, max_shift_um=max_shift_um),
                 Vignette(falloff=0.4, exponent=2.0),
                 Leakage(profile="gaussian", level=0.12, sigma_um=80.0),

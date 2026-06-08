@@ -36,7 +36,7 @@ MOVIE_DIMS = ("frame", "height", "width")
 
 @dataclass
 class Cell:
-    """One simulated neuron - the per-cell record steps fill in, pre-render.
+    """One simulated neuron - the per-cell record steps fill in, pre-composite.
 
     The fields mirror the per-cell structural columns of the eventual
     ``GroundTruth`` output one-for-one, so ``finalize()`` can
@@ -53,14 +53,14 @@ class Cell:
       (how much fluorescence this cell emits per spike); measurement noise, and
       hence any SNR, emerges later from ``optics`` and ``sensor``, not here.
     * ``bleach`` - the intact-fluorophore envelope ``B(t)`` from the optional
-      ``bleaching`` step; ``render`` emits ``trace · bleach``, leaving ``trace``
+      ``bleaching`` step; ``composite`` emits ``trace · bleach``, leaving ``trace``
       the clean calcium. ``None`` until/unless bleaching runs.
     * ``observed_sigma_px`` / ``observed_gain`` / ``in_focus`` /
       ``optical_brightness`` - from the ``optics`` step. The observed
       (optically degraded) footprint is **not stored**: it is a deterministic
       function ``gain · (planted ⊛ Gaussian(sigma_px))`` of the planted footprint
       (see :func:`minisim.footprint.degrade_footprint`), so the optics step keeps
-      only the two scalars and ``render`` / ``GroundTruth.A_observed`` regenerate
+      only the two scalars and ``composite`` / ``GroundTruth.A_observed`` regenerate
       the footprint on demand. ``in_focus`` is the geometric in-focus flag and
       ``optical_brightness`` the depth-driven peak-brightness scalar.
     * ``detectable`` is *not* an optics-only property and so is **not** set by
@@ -93,7 +93,7 @@ class Cell:
         footprint yet. Regenerated, not stored: it is a deterministic function of
         the planted footprint (see :func:`minisim.footprint.degrade_footprint`),
         and deep cells' observed footprints are near-full-canvas, so storing them
-        would dominate memory. ``render`` and ``GroundTruth.A_observed`` call this.
+        would dominate memory. ``composite`` and ``GroundTruth.A_observed`` call this.
         """
         if (
             self.footprint_planted is None

@@ -8,13 +8,13 @@ produced it (where the cells are, when they fired). minisim runs the same chain
 already knows every answer the analysis pipeline is trying to recover.
 
 ```
-place neurons -> cell activity -> bleaching -> optics -> render -> neuropil
+place neurons -> cell activity -> bleaching -> optics -> composite -> neuropil
              -> brain motion -> illumination profile -> vignette -> leakage -> image sensor
 ```
 
 Each arrow is a small, inspectable physical model. A neuron is placed in tissue;
 its calcium activity becomes a fluorescence trace; the objective blurs and dims
-it by depth; the result is rendered to a canvas; the brain moves under the lens;
+it by depth; the result is composited onto a canvas; the brain moves under the lens;
 the illumination falls off toward the edges; and finally a sensor turns photons
 into integer counts. Run the chain and you get a movie that *looks* like
 miniscope data because it was made the way miniscope data is made.
@@ -60,14 +60,14 @@ minisim's surface is small. Almost everything you do is:
 
 `Spec.steps` is the forward chain, as a list of typed step specs
 ({py:class}`~minisim.PlaceNeurons`, {py:class}`~minisim.CellActivity`,
-{py:class}`~minisim.Render`, {py:class}`~minisim.Sensor`, ...). Each `kind`
+{py:class}`~minisim.Composite`, {py:class}`~minisim.Sensor`, ...). Each `kind`
 appears at most once, and the `Spec` validates the chain on construction:
 genuinely invalid orderings raise, while unusual-but-legal ones emit a
 {py:class}`~minisim.SpecWarning`. You can stop the chain early with
 `simulate(spec, until="<stage name>")` to inspect an intermediate stage, or set
 `Output.save_intermediates=True` to keep every stage in `Recording.snapshots`.
 
-The minimal chain to get a movie is place → activity → optics → render → sensor;
+The minimal chain to get a movie is place → activity → optics → composite → sensor;
 the remaining steps (neuropil, vasculature, bleaching, brain motion,
 illumination, vignette, leakage) layer on the physical effects that make the
 data realistic. See the {doc}`reference/spec` for every step and its parameters.

@@ -18,14 +18,15 @@ from minisim import (
     BrainMotion,
     CellActivity,
     CellOptics,
+    Composite,
     IlluminationProfile,
     ImageSensor,
     Leakage,
+    NeuronPopulation,
     Neuropil,
     Optics,
     Output,
     PlaceNeurons,
-    Render,
     Sensor,
     Spec,
     SpecWarning,
@@ -42,7 +43,7 @@ def _minimal_steps():
         PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
         CellActivity(tau_decay_s=0.4),
         CellOptics(),
-        Render(),
+        Composite(),
         Sensor(),
     ]
 
@@ -136,10 +137,10 @@ def test_union_discriminates_on_kind():
     spec = Spec.model_validate(
         {
             "acquisition": _tiny_acquisition().model_dump(),
-            "steps": [{"kind": "render"}, {"kind": "sensor"}],
+            "steps": [{"kind": "composite"}, {"kind": "sensor"}],
         }
     )
-    assert isinstance(spec.steps[0], Render)
+    assert isinstance(spec.steps[0], Composite)
     assert isinstance(spec.steps[1], Sensor)
 
 
@@ -158,7 +159,7 @@ def test_cache_key_stable_and_content_sensitive():
 
 def test_duplicate_kind_fails():
     with pytest.raises(ValidationError, match="unique"):
-        _valid_spec(steps=[Render(), Render()])
+        _valid_spec(steps=[Composite(), Composite()])
 
 
 def test_soma_larger_than_fov_fails():
@@ -167,9 +168,22 @@ def test_soma_larger_than_fov_fails():
         _valid_spec(steps=[PlaceNeurons(soma_radius_um=20.0), *_minimal_steps()[1:]])
 
 
+def test_oversized_soma_in_any_population_fails():
+    # The FOV check is over the *largest* soma across populations: a tiny first
+    # layer doesn't excuse a giant second one.
+    oversized = PlaceNeurons(
+        populations=[
+            NeuronPopulation(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
+            NeuronPopulation(soma_radius_um=20.0, depth_range_um=(0.0, 0.0)),
+        ]
+    )
+    with pytest.raises(ValidationError, match="FOV"):
+        _valid_spec(steps=[oversized, *_minimal_steps()[1:]])
+
+
 def test_unresolvable_decay_fails():
     acq = _tiny_acquisition(fps=1.0)
-    steps = [PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.5), Render()]
+    steps = [PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.5), Composite()]
     with pytest.raises(ValidationError, match="unresolvable"):
         Spec(acquisition=acq, steps=steps)
 
@@ -177,13 +191,13 @@ def test_unresolvable_decay_fails():
 def test_step_before_its_prerequisite_fails():
     # cell_activity requires place_neurons; with both present but reversed, the
     # invisible Scene data-dependency is now an explicit ordering error.
-    steps = [CellActivity(tau_decay_s=0.4), PlaceNeurons(soma_radius_um=3.0), Render()]
+    steps = [CellActivity(tau_decay_s=0.4), PlaceNeurons(soma_radius_um=3.0), Composite()]
     with pytest.raises(ValidationError, match="must come after"):
         _valid_spec(steps=steps)
 
 
 def test_render_before_its_producers_fails():
-    steps = [Render(), PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.4)]
+    steps = [Composite(), PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.4)]
     with pytest.raises(ValidationError, match="must come after"):
         _valid_spec(steps=steps)
 
@@ -192,7 +206,7 @@ def test_absent_prerequisite_is_allowed_for_partial_pipelines():
     # A partial pipeline (cells rendered, no cell_activity / motion / sensor) is
     # valid: requires enforces order-when-present, not completeness - so a few
     # stages can be run to make targeted test data. place_neurons precedes render.
-    Spec(acquisition=_tiny_acquisition(), steps=[PlaceNeurons(soma_radius_um=3.0), Render()])
+    Spec(acquisition=_tiny_acquisition(), steps=[PlaceNeurons(soma_radius_um=3.0), Composite()])
 
 
 # --- validators: advisory warnings -----------------------------------------
@@ -200,14 +214,14 @@ def test_absent_prerequisite_is_allowed_for_partial_pipelines():
 
 def test_out_of_order_domains_warn():
     # sensor before render → sensor(rank3) precedes tissue(rank1)
-    steps = [PlaceNeurons(soma_radius_um=3.0), Sensor(), Render()]
+    steps = [PlaceNeurons(soma_radius_um=3.0), Sensor(), Composite()]
     with pytest.warns(SpecWarning, match="natural"):
         _valid_spec(steps=steps)
 
 
 def test_focal_plane_out_of_range_warns():
     acq = _tiny_acquisition(focal_depth_in_tissue_um=500.0)
-    steps = [PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 200.0)), Render()]
+    steps = [PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 200.0)), Composite()]
     with pytest.warns(SpecWarning, match="focal"):
         Spec(acquisition=acq, steps=steps)
 
@@ -222,7 +236,7 @@ def test_large_motion_warns():
         PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
         CellActivity(tau_decay_s=0.4),
         CellOptics(),
-        Render(),
+        Composite(),
         BrainMotion(max_shift_um=50.0),  # ≫ 5% of the 12 µm FOV
         Sensor(),
     ]
@@ -243,7 +257,7 @@ def test_every_step_kind_builds():
         PlaceNeurons(),
         CellActivity(),
         CellOptics(),
-        Render(),
+        Composite(),
         Neuropil(),
         Vasculature(),
         Bleaching(),

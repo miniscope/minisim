@@ -6,7 +6,7 @@ place, returned by the spec's ``build()`` method. They are organized by pipeline
 domain - ``cell`` → ``tissue`` → ``motion`` → ``sensor`` - mirroring the forward
 order biology → optics → motion → sensor.
 
-The minimal runnable chain is ``place_neurons`` → ``cell_activity`` → ``render``
+The minimal runnable chain is ``place_neurons`` → ``cell_activity`` → ``composite``
 → ``sensor``; ``optics`` degrades the footprints, the field effects
 (``neuropil``/``bleaching``/``vignette``/``leakage``, plus the ``vasculature``
 no-op placeholder) layer on top, and ``brain_motion`` is the brain→sensor frame
@@ -51,8 +51,8 @@ from minisim.steps.sensor import (
 )
 from minisim.steps.tissue import (
     BleachingStep,
+    CompositeStep,
     NeuropilStep,
-    RenderStep,
     VasculatureStep,
     bleaching_pool,
     neuropil_components,
@@ -73,7 +73,7 @@ STEP_FOR_KIND: dict[str, type[Step]] = {
     "place_neurons": PlaceNeuronsStep,
     "cell_activity": CellActivityStep,
     "optics": CellOpticsStep,
-    "render": RenderStep,
+    "composite": CompositeStep,
     "neuropil": NeuropilStep,
     "vasculature": VasculatureStep,
     "bleaching": BleachingStep,
@@ -90,11 +90,11 @@ __all__ = [
     "BrainMotionStep",
     "CellActivityStep",
     "CellOpticsStep",
+    "CompositeStep",
     "IlluminationProfileStep",
     "LeakageStep",
     "NeuropilStep",
     "PlaceNeuronsStep",
-    "RenderStep",
     "SensorStep",
     "Step",
     "VasculatureStep",

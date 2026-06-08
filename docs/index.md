@@ -24,7 +24,7 @@ spike times, motion trajectory, and per-pixel optical fields.
 ```{code-block} python
 from minisim import (
     Acquisition, Optics, ImageSensor,
-    PlaceNeurons, CellActivity, CellOptics, Render, Sensor,
+    PlaceNeurons, CellActivity, CellOptics, Composite, Sensor,
     Spec, simulate,
 )
 
@@ -35,7 +35,7 @@ spec = Spec(
         image_sensor=ImageSensor(n_px_height=256, n_px_width=256, pixel_pitch_um=8.0),
     ),
     seed=0,
-    steps=[PlaceNeurons(), CellActivity(), CellOptics(), Render(), Sensor()],
+    steps=[PlaceNeurons(), CellActivity(), CellOptics(), Composite(), Sensor()],
 )
 
 rec = simulate(spec)         # -> Recording, with rec.ground_truth attached

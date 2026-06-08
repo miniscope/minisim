@@ -15,7 +15,7 @@ Instead of recovering signals from a movie, it starts from biology and optics an
 produces the movie, together with the ground truth that generated it:
 
 ```
-place neurons -> cell activity -> bleaching -> optics -> render -> neuropil
+place neurons -> cell activity -> bleaching -> optics -> composite -> neuropil
              -> brain motion -> illumination profile -> vignette -> leakage -> image sensor
 ```
 
@@ -52,7 +52,7 @@ minisim-notebooks ./minisim-notebooks   # then: cd minisim-notebooks && jupyter 
 ```python
 from minisim import (
     Acquisition, Optics, ImageSensor, PlaceNeurons, CellActivity,
-    CellOptics, Render, Sensor, Spec, simulate,
+    CellOptics, Composite, Sensor, Spec, simulate,
 )
 
 spec = Spec(
@@ -66,7 +66,7 @@ spec = Spec(
         PlaceNeurons(density_per_mm3=400000.0, soma_radius_um=4.0),
         CellActivity(),
         CellOptics(),
-        Render(),
+        Composite(),
         Sensor(),
     ],
 )
