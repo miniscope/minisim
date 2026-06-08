@@ -12,10 +12,10 @@ optics or sensor effect:
   kernel, plus a per-cell brightness gain that scales the trace.
 
 Both only fill per-cell records on the scene (``scene.cells``); nothing is drawn
-into the movie until ``render`` (:mod:`minisim.steps.tissue`). The
+into the movie until ``composite`` (:mod:`minisim.steps.tissue`). The
 optical degradation that turns the *planted* (sharp) footprint into the
 *observed* (blurred, attenuated) one is the ``optics`` step; until it has run,
-``render`` composites the planted footprint directly.
+``composite`` composites the planted footprint directly.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         Acquisition,
         CellActivity,  # noqa: F401
         CellOptics,  # noqa: F401
+        NeuronPopulation,
         Optics,
         PlaceNeurons,
     )
@@ -244,32 +245,56 @@ def sample_neurons(
     This is the half of ``place_neurons`` that decides **where cells go** - with no
     footprint stamping, so it is cheap even at a full sensor FOV (the per-cell
     :func:`neuron_footprint` paints are the expensive part). :class:`PlaceNeuronsStep`
-    calls this and then stamps a footprint per returned center; teaching code (the
-    anatomy notebook's placement widget) can call it directly to show the population
-    layout without paying for footprints.
+    samples the same centers (every population, in order) and then stamps a footprint
+    per center; teaching code (the anatomy notebook's placement widget) can call this
+    directly to show the population layout without paying for footprints.
+
+    Each of the spec's :attr:`~minisim.spec.PlaceNeurons.resolved_populations` is
+    sampled in turn and the centers concatenated - so a layered spec (a thin band
+    plus a deep volume) returns every layer's cells. Spacing (``min_distance_um``) is
+    enforced *within* a population, not across them, so distinct layers may
+    interpenetrate at their depth boundary (the physical case for adjacent layers).
 
     Placement is **purely spatial**: brightness is no longer drawn here. Per-cell
     response gain (how bright a cell is) is biology that belongs to the calcium
     response, so it is drawn in :class:`CellActivityStep` (``brightness_cv``); SNR is
     an emergent measurement property and is not an input anywhere.
 
-    The count is **volumetric**: ``round(density_per_mm3 · area_mm2 · thickness)``,
-    where the slab thickness is ``depth_range_um`` width **floored at one soma
-    diameter** (``2 · soma_radius_um``) so a thin - or strictly planar
-    (``lo == hi``) - layer still yields cells rather than zero. A thicker slab
-    therefore holds proportionally more cells, the physical behavior. Centers are
-    drawn uniformly in ``(y, x)`` across the FOV and in ``z`` across
-    ``depth_range_um``; if ``min_distance_um > 0`` they are rejection-sampled
-    (Poisson-disk style) to a 3-D center-to-center minimum.
-
     Returns ``centers``: a list of ``(z, y, x)`` µm tuples.
     """
+    centers: list[tuple[float, float, float]] = []
+    for pop in spec.resolved_populations:
+        centers.extend(_sample_population(pop, fov_h_um, fov_w_um, rng))
+    return centers
+
+
+def _sample_population(
+    pop: NeuronPopulation,
+    fov_h_um: float,
+    fov_w_um: float,
+    rng: np.random.Generator,
+) -> list[tuple[float, float, float]]:
+    """Sample one population's soma centers over the FOV: a list of ``(z, y, x)`` µm.
+
+    When the population gives explicit ``positions_um`` those exact centers are
+    returned verbatim (consuming no ``rng``), and the distribution fields are
+    ignored. Otherwise the count is **volumetric**:
+    ``round(density_per_mm3 · area_mm2 · thickness)``, where the slab thickness is
+    ``depth_range_um`` width **floored at one soma diameter** (``2 · soma_radius_um``)
+    so a thin - or strictly planar (``lo == hi``) - layer still yields cells rather
+    than zero. A thicker slab therefore holds proportionally more cells, the physical
+    behavior. Centers are drawn uniformly in ``(y, x)`` across the FOV and in ``z``
+    across ``depth_range_um``; if ``min_distance_um > 0`` they are rejection-sampled
+    (Poisson-disk style) to a 3-D center-to-center minimum within this population.
+    """
+    if pop.positions_um is not None:
+        return list(pop.positions_um)  # exact centers; no sampling, no rng draw
     area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
-    lo, hi = spec.depth_range_um
-    thickness_um = max(hi - lo, 2.0 * spec.soma_radius_um)  # floor: one soma diameter
-    count = round(spec.density_per_mm3 * area_mm2 * (thickness_um / 1000.0))
+    lo, hi = pop.depth_range_um
+    thickness_um = max(hi - lo, 2.0 * pop.soma_radius_um)  # floor: one soma diameter
+    count = round(pop.density_per_mm3 * area_mm2 * (thickness_um / 1000.0))
     return _sample_centers(
-        count, fov_h_um, fov_w_um, spec.depth_range_um, spec.min_distance_um, rng
+        count, fov_h_um, fov_w_um, pop.depth_range_um, pop.min_distance_um, rng
     )
 
 
@@ -356,12 +381,18 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
         shape = scene.canvas_shape  # (height, width) of the canvas, no movie alloc
         fov_h_um = shape[0] * acq.pixel_size_um
         fov_w_um = shape[1] * acq.pixel_size_um
-        radius_px = acq.um_to_px(spec.soma_radius_um)
-        dendrite_length_px = acq.um_to_px(spec.dendrite_length_um)
-        dendrite_width_px = acq.um_to_px(spec.dendrite_width_um)
 
-        centers = sample_neurons(spec, fov_h_um, fov_w_um, rng)
-        for (z, y, x) in centers:
+        # Sample every population's centers *first* (tagging each with its source
+        # population), then stamp - so sample_neurons() reproduces this exact
+        # placement (stamping consumes rng, so interleaving sampling with it would
+        # desync the two), and a single-population spec stays identical to the flat
+        # form.
+        planned: list[tuple[tuple[float, float, float], NeuronPopulation]] = [
+            (center, pop)
+            for pop in spec.resolved_populations
+            for center in _sample_population(pop, fov_h_um, fov_w_um, rng)
+        ]
+        for (z, y, x), pop in planned:
             # Rasterize the cell onto the canvas grid, then keep only its non-zero
             # patch: a soma + neurites cover a tiny window of a frame that may be a
             # full sensor FOV, so storing the dense canvas array would be ~98%
@@ -371,13 +402,13 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
                 neuron_footprint(
                     shape,
                     (acq.um_to_px(y), acq.um_to_px(x)),
-                    radius_px,
-                    spec.irregularity,
+                    acq.um_to_px(pop.soma_radius_um),
+                    pop.irregularity,
                     rng,
-                    morphology=spec.morphology,
-                    n_dendrites=spec.n_dendrites,
-                    dendrite_length_px=dendrite_length_px,
-                    dendrite_width_px=dendrite_width_px,
+                    morphology=pop.morphology,
+                    n_dendrites=pop.n_dendrites,
+                    dendrite_length_px=acq.um_to_px(pop.dendrite_length_um),
+                    dendrite_width_px=acq.um_to_px(pop.dendrite_width_um),
                 )
             )
             scene.cells.append(
@@ -832,7 +863,7 @@ class CellOpticsStep(Step["CellOptics"]):
       (the flat light-loss) -- as ``observed_sigma_px`` / ``observed_gain``. The
       observed footprint ``gain · (planted ⊛ Gaussian(σ_total))`` -- the blurred,
       dimmed footprint CNMF could recover -- is **not stored**: it is a pure
-      function of those scalars and the planted footprint, so ``render`` and
+      function of those scalars and the planted footprint, so ``composite`` and
       ``GroundTruth.A_observed`` regenerate it on demand (deep cells' observed
       footprints are near-full-canvas, so storing them dominated memory and disk);
     * sets ``in_focus`` geometrically (``|z − focal_eff| ≤`` the NA-derived depth

@@ -9,8 +9,9 @@ boundary:
   radial excitation falloff (the LED lights the FOV unevenly).
 * :class:`VignetteStep` (``vignette``) - multiplicative radial vignette on the
   emission / return path (collection light loss toward the edges).
-* :class:`LeakageStep` (``leakage``) - additive static baseline, the "glow"
-  minian's glow-removal subtracts.
+* :class:`LeakageStep` (``leakage``) - additive static baseline; the *additive*
+  contributor to the low-frequency background minian's glow-removal strips
+  (which also bundles in the multiplicative illumination falloff + vignette above).
 * :class:`SensorStep` (``sensor``) - the only step that turns honest radiometric
   intensity into integer ADC counts (shot + read noise, gain, quantization).
 
@@ -178,7 +179,7 @@ def leakage_field(spec, acq, shape: tuple[int, int]) -> np.ndarray:
 
 
 class LeakageStep(Step["Leakage"]):
-    """Additive static baseline - the "glow" minian's glow-removal subtracts.
+    """Additive static baseline - stray excitation light reaching the detector.
 
     Adds the same field to every frame: ``uniform`` is a flat ``level``
     everywhere; ``gaussian`` is a central glow ``level·exp(−r²/2σ²)`` peaking at
@@ -187,6 +188,12 @@ class LeakageStep(Step["Leakage"]):
     ground truth. Being a sensor-frame step it is applied after motion and is not
     scaled by ``bleaching`` (stray excitation light reaching the detector neither
     moves with the brain nor bleaches).
+
+    This is only the *additive* contributor to the smooth low-frequency
+    background that minian's "glow removal" estimates and subtracts - that removal
+    tackles the whole bundle, also including the *multiplicative* illumination
+    falloff and vignette (see :class:`IlluminationProfileStep` /
+    :class:`VignetteStep`). Leakage is one piece of what it strips, not its target.
     """
 
     name = "leakage"

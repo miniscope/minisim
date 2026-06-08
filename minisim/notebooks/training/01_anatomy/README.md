@@ -14,7 +14,7 @@ truth.
 
 > **Work in progress.** Stages built so far: **the scope** (optics + sensor),
 > **placing neurons**, and **calcium activity**. The remaining stages — optics
-> degradation, render (the first movie), background fields, motion, and the sensor
+> degradation, composite (the first movie), background fields, motion, and the sensor
 > — are being added next.
 
 ## Run it

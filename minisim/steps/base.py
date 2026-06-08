@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from minisim.spec import Acquisition, IlluminationProfile, Sensor, StepSpec
 
 #: The concrete :class:`~minisim.spec.StepSpec` subtype a step is built from.
-#: Parametrizing ``Step`` on it (``class RenderStep(Step[Render])``) makes every
+#: Parametrizing ``Step`` on it (``class CompositeStep(Step[Composite])``) makes every
 #: ``self.spec`` access resolve to the concrete spec's typed fields instead of the
 #: untyped base.
 SpecT = TypeVar("SpecT", bound="StepSpec")
@@ -63,7 +63,7 @@ class Step(Generic[SpecT]):
 
     Subclasses set the class attributes and implement :meth:`__call__`:
 
-    * ``name`` - the snapshot/stage name (usually the spec ``kind``; ``render``
+    * ``name`` - the snapshot/stage name (usually the spec ``kind``; ``composite``
       is the exception, whose stage is ``"cells_only"``).
     * ``domain`` - the pipeline domain (``cell`` -> ``tissue`` -> ``motion`` ->
       ``sensor``), the same ordering axis the spec validator checks.

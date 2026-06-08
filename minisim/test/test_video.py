@@ -18,13 +18,13 @@ from minisim import (
     BrainMotion,
     CellActivity,
     CellOptics,
+    Composite,
     IlluminationProfile,
     ImageSensor,
     Leakage,
     Neuropil,
     Optics,
     PlaceNeurons,
-    Render,
     Sensor,
     Spec,
     Vignette,
@@ -53,7 +53,7 @@ def _spec(duration_s=1.5, motion=True, sensor=True, neuropil=True, bleaching=Tru
     ]
     if bleaching:
         steps.append(Bleaching())
-    steps += [CellOptics(), Render()]
+    steps += [CellOptics(), Composite()]
     if neuropil:
         steps.append(Neuropil(n_components=2))
     if motion:
@@ -94,9 +94,9 @@ def test_iter_count_frames_raises_on_unreproduced_rng(monkeypatch):
     # is what stops a newly RNG-consuming step from silently desyncing the stream.
     # Flip render's flag (render is a deterministic non-cell step, normally handled
     # in the chunk loop) to stand in for such a step: the walk must refuse loudly.
-    from minisim.steps.tissue import RenderStep
+    from minisim.steps.tissue import CompositeStep
 
-    monkeypatch.setattr(RenderStep, "consumes_rng", True)
+    monkeypatch.setattr(CompositeStep, "consumes_rng", True)
     with pytest.raises(NotImplementedError, match="consumes RNG"):
         _stream(_spec(), chunk=8)
 

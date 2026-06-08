@@ -1,7 +1,7 @@
 """Unit tests for the executable step chain.
 
 Covers the steps that turn a blank ``Scene`` into a digitized recording - the
-minimal chain ``place_neurons`` → ``cell_activity`` → ``render`` → ``sensor``,
+minimal chain ``place_neurons`` → ``cell_activity`` → ``composite`` → ``sensor``,
 the ``optics`` degradation and planted/observed split, and the field
 effects ``neuropil`` / ``bleaching`` / ``vignette`` / ``leakage`` plus the
 ``vasculature`` no-op placeholder. Each step is exercised in isolation
@@ -20,13 +20,14 @@ from minisim import (
     BrainMotion,
     CellActivity,
     CellOptics,
+    Composite,
     IlluminationProfile,
     ImageSensor,
     Leakage,
+    NeuronPopulation,
     Neuropil,
     Optics,
     PlaceNeurons,
-    Render,
     Scene,
     Sensor,
     Vasculature,
@@ -37,10 +38,10 @@ from minisim.scene import Cell
 from minisim.steps import (
     BleachingStep,
     CellOpticsStep,
+    CompositeStep,
     IlluminationProfileStep,
     LeakageStep,
     NeuropilStep,
-    RenderStep,
     SensorStep,
     VignetteStep,
     bleaching_pool,
@@ -217,6 +218,111 @@ def test_sample_neurons_count_from_density_and_fov():
     spec = PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0))
     centers = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(0))
     assert len(centers) == 5
+
+
+def test_flat_spec_resolves_to_one_population_identically():
+    # A flat PlaceNeurons is its own single population: resolving it must reproduce
+    # the same placement as the equivalent explicit one-population spec, draw for
+    # draw (so the flat form stays a faithful shorthand, not a separate code path).
+    acq = _acq()
+    fov_h, fov_w = acq.fov_um
+    flat = PlaceNeurons(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0), soma_radius_um=6.0)
+    listed = PlaceNeurons(
+        populations=[
+            NeuronPopulation(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0), soma_radius_um=6.0)
+        ]
+    )
+    a = sample_neurons(flat, fov_h, fov_w, np.random.default_rng(7))
+    b = sample_neurons(listed, fov_h, fov_w, np.random.default_rng(7))
+    assert a == b
+
+
+def test_multiple_populations_concatenate_and_keep_per_population_shape():
+    # Two layers placed together: the cell count is the sum of the per-population
+    # volumetric counts, and each cell carries its own population's morphology
+    # (only the cytosolic layer grows dendrites, so it lights more pixels per soma).
+    acq = _acq()
+    spec = PlaceNeurons(
+        populations=[
+            NeuronPopulation(  # thin soma-only band: 50 µm FOV, depth (0,0) → 5 cells
+                morphology="soma", density_per_mm3=200000.0, soma_radius_um=5.0,
+                depth_range_um=(0.0, 0.0),
+            ),
+            NeuronPopulation(  # planar cytosolic layer at depth 30 → another 5
+                morphology="cytosolic", density_per_mm3=200000.0, soma_radius_um=5.0,
+                depth_range_um=(30.0, 30.0),
+            ),
+        ]
+    )
+    scene = Scene.zeros(acq)
+    spec.build(acq, np.random.default_rng(0))(scene)
+    assert len(scene.cells) == 10
+    shallow = [c for c in scene.cells if c.center_um[0] == 0.0]
+    deep = [c for c in scene.cells if c.center_um[0] == 30.0]
+    assert len(shallow) == 5 and len(deep) == 5
+
+
+def test_sample_neurons_matches_the_full_step_multi_population():
+    # The sample_neurons()==step contract must hold across populations too: the step
+    # samples every population *before* it stamps (footprint stamping consumes rng),
+    # so the distribution sampler reproduces the placement draw-for-draw.
+    acq = _acq()
+    fov_h, fov_w = acq.fov_um
+    spec = PlaceNeurons(
+        populations=[
+            NeuronPopulation(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0)),
+            NeuronPopulation(
+                morphology="cytosolic", density_per_mm3=30000.0, depth_range_um=(80.0, 150.0)
+            ),
+        ]
+    )
+    centers = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(3))
+    scene = Scene.zeros(acq)
+    spec.build(acq, np.random.default_rng(3))(scene)
+    assert centers == [c.center_um for c in scene.cells]
+
+
+def test_explicit_positions_are_placed_verbatim():
+    # positions_um places exactly those (z, y, x) centers, consuming no rng and
+    # ignoring the distribution fields - the same coordinates come back as centers.
+    acq = _acq()
+    fov_h, fov_w = acq.fov_um
+    pos = [(20.0, 10.0, 10.0), (60.0, 25.0, 40.0), (5.0, 49.0, 1.0)]
+    spec = PlaceNeurons(positions_um=pos, density_per_mm3=999999.0)  # density ignored
+    centers = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(0))
+    assert centers == pos
+    scene = Scene.zeros(acq)
+    spec.build(acq, np.random.default_rng(0))(scene)
+    assert [c.center_um for c in scene.cells] == pos
+
+
+def test_explicit_and_sampled_populations_mix():
+    # One density-sampled layer plus one explicit-position layer in a single spec:
+    # the explicit cells land verbatim at the tail, after the sampled ones.
+    acq = _acq()
+    explicit = [(40.0, 12.0, 12.0), (40.0, 24.0, 24.0)]
+    spec = PlaceNeurons(
+        populations=[
+            NeuronPopulation(density_per_mm3=200000.0, soma_radius_um=5.0, depth_range_um=(0.0, 0.0)),
+            NeuronPopulation(positions_um=explicit, morphology="soma"),
+        ]
+    )
+    scene = Scene.zeros(acq)
+    spec.build(acq, np.random.default_rng(0))(scene)
+    assert len(scene.cells) == 5 + 2
+    assert [c.center_um for c in scene.cells][-2:] == explicit
+
+
+def test_populations_and_step_level_fields_cannot_mix():
+    # Setting populations *and* a step-level population field is ambiguous (which
+    # wins?), so it is rejected at construction with a pointed message.
+    with pytest.raises(ValueError, match="both populations and step-level"):
+        PlaceNeurons(soma_radius_um=8.0, populations=[NeuronPopulation()])
+
+
+def test_empty_populations_list_is_rejected():
+    with pytest.raises(ValueError, match="at least one"):
+        PlaceNeurons(populations=[])
 
 
 def test_cytosolic_morphology_adds_dendrites_beyond_soma():
@@ -407,7 +513,7 @@ def test_render_is_the_footprint_trace_outer_sum():
         Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=Footprint.from_dense(fp1), trace=tr1),
         Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=Footprint.from_dense(fp2), trace=tr2),
     ]
-    RenderStep(Render(), acq, np.random.default_rng(0))(scene)
+    CompositeStep(Composite(), acq, np.random.default_rng(0))(scene)
     np.testing.assert_allclose(scene.movie.values[:, 2, 3], tr1)
     np.testing.assert_allclose(scene.movie.values[:, 5, 6], tr2)
     # Pixels with no cell stay zero.
@@ -431,7 +537,7 @@ def test_render_regenerates_observed_footprint_from_optics_scalars():
             trace=np.array([2.0]),
         )
     )
-    RenderStep(Render(), acq, np.random.default_rng(0))(scene)
+    CompositeStep(Composite(), acq, np.random.default_rng(0))(scene)
     expected = degrade_footprint(
         Footprint.from_dense(planted), 1.0, 0.5
     ).to_dense(dtype=float) * 2.0
@@ -442,7 +548,7 @@ def test_render_regenerates_observed_footprint_from_optics_scalars():
 def test_render_empty_scene_leaves_movie_untouched():
     acq = _acq(n_px=8, duration_s=0.15)
     scene = Scene.zeros(acq)
-    RenderStep(Render(), acq, np.random.default_rng(0))(scene)
+    CompositeStep(Composite(), acq, np.random.default_rng(0))(scene)
     assert (scene.movie.values == 0.0).all()
 
 
@@ -749,8 +855,8 @@ def test_field_curvature_blurs_off_axis_cells():
 
 
 def test_optics_makes_render_use_the_degraded_footprint():
-    # Render a deep cell from its planted footprint, then again after optics:
-    # the optically degraded render is dimmer (blurred + attenuated).
+    # Composite a deep cell from its planted footprint, then again after optics:
+    # the optically degraded composite is dimmer (blurred + attenuated).
     acq = _acq(n_px=40, duration_s=1.0)
     rng = np.random.default_rng(1)
     scene = Scene.zeros(acq)
@@ -759,12 +865,12 @@ def test_optics_makes_render_use_the_degraded_footprint():
     ).build(acq, rng)(scene)
     CellActivity(active_rate_hz=5.0).build(acq, rng)(scene)
 
-    RenderStep(Render(), acq, rng)(scene)  # observed still None -> uses planted
+    CompositeStep(Composite(), acq, rng)(scene)  # observed still None -> uses planted
     planted_peak = scene.movie.values.max()
 
     scene.movie.values[:] = 0.0
     CellOpticsStep(CellOptics(), acq, rng)(scene)
-    RenderStep(Render(), acq, rng)(scene)  # now regenerates the observed footprint
+    CompositeStep(Composite(), acq, rng)(scene)  # now regenerates the observed footprint
     observed_peak = scene.movie.values.max()
 
     assert all(c.observed_sigma_px is not None for c in scene.cells)
@@ -781,7 +887,7 @@ def test_optics_chain_with_sensor_runs_end_to_end():
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
-        Render(),
+        Composite(),
         Sensor(photons_per_unit=120.0),
     ]
     for sspec in steps:
@@ -805,7 +911,7 @@ def test_minimal_chain_place_activity_render_sensor():
             density_per_mm3=375000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
-        Render(),
+        Composite(),
         Sensor(photons_per_unit=100.0),
     ]
     for sspec in steps:
@@ -998,7 +1104,7 @@ def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
         assert cell.bleach is not None
         assert cell.bleach[0] == pytest.approx(1.0)
         assert cell.bleach[-1] < cell.bleach[0]  # faded by the end
-    RenderStep(Render(), acq, np.random.default_rng(4))(scene)
+    CompositeStep(Composite(), acq, np.random.default_rng(4))(scene)
     brightness = scene.movie.values.sum(axis=(1, 2))
     assert brightness[-int(acq.fps):].mean() < brightness[: int(acq.fps)].mean()
 
@@ -1202,7 +1308,7 @@ def test_field_chain_runs_end_to_end_and_records_ground_truth():
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         Bleaching(),  # cell-domain: before render, sets each cell's bleach envelope
         CellOptics(),
-        Render(),
+        Composite(),
         Neuropil(amplitude=0.3),
         Vignette(falloff=0.6),
         Leakage(profile="gaussian", level=0.1),
@@ -1414,7 +1520,7 @@ def test_full_pipeline_with_motion_runs_end_to_end():
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         Bleaching(),
         CellOptics(),
-        Render(),
+        Composite(),
         Neuropil(amplitude=0.3),
         BrainMotion(model="walk", walk_step_um=0.4, max_shift_um=max_shift_um),
         Vignette(falloff=0.6),

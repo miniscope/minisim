@@ -3,10 +3,10 @@
 The tissue domain is the brain-frame stack - everything that moves rigidly with
 the tissue under :mod:`~minisim` motion, as opposed to the
 static optics/sensor fields (:mod:`minisim.steps.sensor`). It opens
-with ``render`` (the cell→image boundary) and then layers the diffuse/global
+with ``composite`` (the cell→image boundary) and then layers the diffuse/global
 effects that ride on top of the cells:
 
-* :class:`RenderStep` (``cells_only``) - composite ``Σ footprint·trace`` into the
+* :class:`CompositeStep` (``cells_only``) - composite ``Σ footprint·trace`` into the
   movie; the first step to write ``scene.movie``.
 * :class:`NeuropilStep` (``neuropil``) - additive diffuse background, a smooth
   spatial field modulated by a slow temporal envelope.
@@ -18,10 +18,10 @@ the cells *and* these fields together (they are part of the brain frame), unlike
 the static vignette/leakage applied after motion.
 
 :class:`BleachingStep` (``bleaching``) also lives here but is a **cell-domain**
-step: photobleaching is per-cell and activity-driven, so it runs *before* render
+step: photobleaching is per-cell and activity-driven, so it runs *before* composite
 and writes each cell's intact-fluorophore envelope rather than touching the movie
-(see its docstring). It is kept in this module beside the render/neuropil code it
-coordinates with (render emits ``C·B``; neuropil fades with the population ``B``).
+(see its docstring). It is kept in this module beside the composite/neuropil code it
+coordinates with (composite emits ``C·B``; neuropil fades with the population ``B``).
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ from minisim.scene import Scene
 from minisim.steps.base import PipelineContext, Step
 
 if TYPE_CHECKING:
-    # Referenced only as string Generic bases (Step["Render"] etc.), which ruff's
+    # Referenced only as string Generic bases (Step["Composite"] etc.), which ruff's
     # F401 misses; pyright needs them in scope to resolve the forward references.
-    from minisim.spec import Bleaching, Neuropil, Render, Vasculature  # noqa: F401
+    from minisim.spec import Bleaching, Composite, Neuropil, Vasculature  # noqa: F401
 
 # Guards a divide-by-peak for a degenerate (flat) smooth field; far below any
 # physically meaningful intensity.
@@ -53,7 +53,7 @@ _EPS = 1e-12
 _NEUROPIL_FLUCT_LOG_STD = 0.4
 
 
-class RenderStep(Step["Render"]):
+class CompositeStep(Step["Composite"]):
     """Composite ``Σ_i footprint_i · trace_i`` additively into the movie.
 
     Each cell contributes its footprint scaled, frame by frame, by the light it
@@ -329,9 +329,9 @@ class BleachingStep(Step["Bleaching"]):
     :func:`bleaching_pool`, driven by its own calcium trace (its emission) scaled by
     the excitation ``intensity``: busier, brighter-lit cells bleach faster and to a
     lower floor, while turnover pulls every cell back toward 1. A **cell-domain**
-    step (it runs before ``render``, like ``cell_activity`` and ``optics``): it
+    step (it runs before ``composite``, like ``cell_activity`` and ``optics``): it
     writes ``cell.bleach`` rather than touching the movie, so the trace stays the
-    clean calcium ``C`` and ``render`` emits ``C·B``. The diffuse ``neuropil`` then
+    clean calcium ``C`` and ``composite`` emits ``C·B``. The diffuse ``neuropil`` then
     fades with the population-average ``B``. ``finalize`` stacks the per-cell
     envelopes into ground truth ``(unit, frame)``, a scoreable confound.
 

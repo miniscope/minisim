@@ -139,7 +139,7 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
     # be reproduced here in draw order (or, for the sensor, in the chunk loop below),
     # or the stream silently desyncs from simulate(). The else-branch enforces that
     # against Step.consumes_rng: a new RNG-consuming step added to the catalog without
-    # being taught here raises loudly instead of corrupting the stream. Render,
+    # being taught here raises loudly instead of corrupting the stream. Composite,
     # vasculature, illumination_profile, and vignette draw no RNG (their fields are
     # deterministic, already folded into photon_field), so they are applied in the
     # chunk loop and ignored here.
@@ -169,15 +169,15 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
                 "replay this step's RNG draws in order (and extend the bit-for-bit "
                 "test) before adding it to a streamed spec."
             )
-        # else: a deterministic non-cell step (render / vasculature /
+        # else: a deterministic non-cell step (composite / vasculature /
         # illumination_profile / vignette) -- no RNG, applied in the chunk loop.
 
     # The cells are now fully populated; rebuild the dense footprint stack (sparse
     # in storage) and per-cell emission (clean calcium dimmed by bleaching when
-    # present), exactly as RenderStep does, so the chunked render is bit-for-bit.
+    # present), exactly as CompositeStep does, so the chunked render is bit-for-bit.
     footprints, emissions = [], []
     for cell in scene.cells:
-        fp = cell.observed_footprint()  # regenerated from planted (see RenderStep)
+        fp = cell.observed_footprint()  # regenerated from planted (see CompositeStep)
         if fp is None or cell.trace is None:
             continue
         footprints.append(fp)
