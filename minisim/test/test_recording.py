@@ -29,7 +29,7 @@ from minisim import (
     Vignette,
     finalize,
 )
-from minisim.footprint import Footprint
+from minisim.footprint import Footprint, FootprintStack
 from minisim.scene import Cell
 
 
@@ -100,6 +100,34 @@ def test_observed_footprint_differs_from_planted_under_optics():
     # Deep cells: scatter + defocus make the observed footprint dimmer/broader.
     assert not np.allclose(gt.A_planted, gt.A_observed)
     assert gt.A_observed.sum() < gt.A_planted.sum()
+
+
+def test_regenerate_observed_handles_a_cell_without_optics_params():
+    # A heterogeneous stack: optics ran for the population (so observed_sigma_px is
+    # not None), but one cell carries NaN sigma (e.g. added after the optics step).
+    # That cell must fall back to its sharp planted footprint; the others degrade.
+    n_frames = 3
+    planted = FootprintStack.from_footprints(
+        [_dot((24, 24), 8, 8), _dot((24, 24), 16, 16)], (24, 24)
+    )
+    gt = GroundTruth(
+        planted=planted,
+        fov_offset=(0, 0),
+        fov_shape=(24, 24),
+        observed_sigma_px=np.array([np.nan, 2.0]),  # cell 0 has no optics params
+        observed_gain=np.array([np.nan, 0.5]),
+        C=np.zeros((2, n_frames)),
+        S=np.zeros((2, n_frames)),
+        centers_um=np.zeros((2, 3)),
+        amplitude_per_cell=np.ones(2),
+        in_focus=np.array([True, True]),
+        detectable=np.array([True, True]),
+    )
+    a_planted, a_observed = gt.A_planted, gt.A_observed
+    # Cell 0 (NaN sigma) -> sharp: observed == planted, bit for bit.
+    np.testing.assert_array_equal(a_observed[0], a_planted[0])
+    # Cell 1 (real sigma) -> degraded: blurred/scaled, no longer the sharp footprint.
+    assert not np.allclose(a_observed[1], a_planted[1])
 
 
 # --- per-effect fields -----------------------------------------------------

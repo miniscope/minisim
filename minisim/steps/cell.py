@@ -550,8 +550,8 @@ class CellActivityStep(Step["CellActivity"]):
     Per cell, a 2-state Markov gate (quiescent ↔ active) modulates the per-bin spike
     probability between ``quiescent_rate_hz`` and ``active_rate_hz`` (each ÷
     ``spike_sim_hz``). Bursting comes from a **high in-active rate** concentrated into
-    short active bouts, not from a high mean rate; :func:`bursty_spike_params` maps a
-    target mean rate + burstiness onto the gate. The gate itself is stepped at the
+    short active bouts, not from a high mean rate; :func:`spike_activity_params` maps a
+    single ``activity`` density axis onto the gate's four Markov parameters. The gate itself is stepped at the
     frame rate (bouts are ~seconds, so sub-frame onset timing is irrelevant once we
     bin); the spikes it gates are the part that runs at ``spike_sim_hz``.
 

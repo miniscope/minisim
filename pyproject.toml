@@ -196,10 +196,6 @@ addopts = [
     '-v',
     '--color=yes',
     '--cov=minisim',
-    '-m', 'not slow',
-]
-markers = [
-    "slow: heavy tests run off the per-PR path (e.g. minutes-long recordings). Run with `pytest -m slow`.",
 ]
 testpaths = [
   "minisim/test"

@@ -387,10 +387,16 @@ class BleachingStep(Step["Bleaching"]):
         center = falloff_center_px(shape, acq, self.illumination.center_offset_um)
         field = radial_falloff(shape, center, self.illumination.falloff, self.illumination.exponent)
         px = acq.pixel_size_um
+        # Cells live in canvas coords; the field is the sensor FOV, so subtract the
+        # motion-margin offset before indexing - the same canvas -> FOV mapping
+        # finalize() and _photon_budget_at() apply. Without motion the margin is 0.
+        canvas_h, canvas_w = scene.canvas_shape
+        margin_y_um = (canvas_h - shape[0]) // 2 * px
+        margin_x_um = (canvas_w - shape[1]) // 2 * px
         ys = np.array([cell.center_um[1] for cell in scene.cells])
         xs = np.array([cell.center_um[2] for cell in scene.cells])
-        iy = np.clip(np.round(ys / px), 0, shape[0] - 1).astype(int)
-        ix = np.clip(np.round(xs / px), 0, shape[1] - 1).astype(int)
+        iy = np.clip(np.round((ys - margin_y_um) / px), 0, shape[0] - 1).astype(int)
+        ix = np.clip(np.round((xs - margin_x_um) / px), 0, shape[1] - 1).astype(int)
         return field[iy, ix]
 
 

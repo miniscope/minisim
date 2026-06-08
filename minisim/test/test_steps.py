@@ -1061,6 +1061,31 @@ def test_illumination_drives_bleaching_faster_at_the_bright_center():
     assert c_off == pytest.approx(e_off, rel=1e-9)  # equal without illumination (same trace)
 
 
+def test_bleaching_illumination_dose_subtracts_the_motion_margin():
+    # Regression: the illumination field is sensor-FOV sized, but cells live in
+    # canvas coords (enlarged by the motion margin). The dose must be sampled at the
+    # canvas -> FOV mapped position, exactly as optics/finalize do. A cell sitting at
+    # the canvas position of the FOV center must therefore receive the same dose with
+    # or without a margin; the buggy version (no margin subtraction) sampled it off
+    # toward the dim edge and bleached it less.
+    acq = _acq(n_px=64, duration_s=120.0, fps=10.0)
+    px = acq.pixel_size_um
+    trace = np.full(acq.n_frames, 1.5)
+
+    def center_end_B(margin_px):
+        scene = Scene.zeros(acq, rng=np.random.default_rng(0), margin_px=margin_px)
+        # Canvas position of the FOV center shifts by the margin.
+        c = (margin_px + 32) * px
+        scene.cells = [Cell(center_um=(0.0, c, c), trace=trace.copy())]
+        step = BleachingStep(Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2))
+        step.illumination = IlluminationProfile(falloff=0.2, exponent=2.0)
+        step(scene)
+        return scene.cells[0].bleach[-1]
+
+    # Same physical FOV position -> same dose -> same end-B regardless of margin.
+    assert center_end_B(0) == pytest.approx(center_end_B(12), rel=1e-9)
+
+
 def test_vignette_is_radial_and_time_invariant():
     acq = _acq(n_px=51, duration_s=1.0)  # odd -> a clean center pixel at (25, 25)
     scene = Scene.ones(acq)
