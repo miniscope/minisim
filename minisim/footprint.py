@@ -35,6 +35,17 @@ from scipy.ndimage import gaussian_filter
 # change (e.g. to float16) is a one-line edit with a single place to validate.
 PATCH_DTYPE = np.float32
 
+# The dtype the dense footprint stack (and the trace matrix it contracts against)
+# is built in for the render's `tensordot(C, A)` composite. float32 halves the
+# stack's size (the dense `A` is the render's largest transient: unit x H x W) and
+# roughly doubles the contraction throughput, which is memory-bandwidth bound on
+# re-reading `A` once per frame-chunk. The movie accumulator stays float64, so only
+# this one contraction runs at single precision; with shot+read noise and 8-bit
+# quantization downstream, the ~1e-6 relative change is far below the sensor's
+# least-significant count. Both execution paths (CompositeStep and the streaming
+# writer) use this same dtype, so they stay bit-identical to each other.
+RENDER_DTYPE = np.float32
+
 # scipy gaussian_filter's default truncation: the kernel is exactly 0 beyond this
 # many sigma, so growing a footprint's window by ceil(_GAUSS_TRUNCATE·sigma) before
 # blurring yields a result bit-identical to filtering the whole canvas.
@@ -206,7 +217,7 @@ def degrade_footprint(planted: Footprint, sigma_px: float, gain: float) -> Footp
 def stack_dense(
     footprints: list[Footprint],
     canvas_shape: tuple[int, int],
-    dtype: np.dtype | type = float,
+    dtype: np.dtype | type = RENDER_DTYPE,
 ) -> np.ndarray:
     """Materialize a list of footprints into a dense ``(n, H, W)`` stack.
 
@@ -219,6 +230,9 @@ def stack_dense(
     (``Cell`` footprints, ``GroundTruth.A_*``) stays sparse. Each patch is written
     into its own window via :meth:`Footprint.add_into`, so no per-cell full-canvas
     temporary is allocated.
+
+    Defaults to :data:`RENDER_DTYPE` (float32), the render's contraction precision;
+    pass ``dtype=float`` for a float64 stack when full precision is wanted.
     """
     a = np.zeros((len(footprints), int(canvas_shape[0]), int(canvas_shape[1])), dtype=dtype)
     for i, fp in enumerate(footprints):

@@ -243,24 +243,39 @@ class ImageSensor(_Base):
 
         The only place fluorescence becomes integer counts::
 
-            e⁻     = Poisson(photons · quantum_efficiency)   # shot noise
-            e⁻    += Normal(0, read_noise_e)                 # read noise, electrons
+            λ      = photons · quantum_efficiency            # expected detected e⁻
+            e⁻     = Normal(λ, √(λ + read_noise_e²))         # shot + read noise
             adu    = e⁻ · gain_adu_per_e
             counts = clip(floor(adu), 0, 2**bit_depth − 1)
 
-        Shot noise is Poisson on the *detected* electrons: photon arrival is
-        Poisson and detection thins it by QE, which stays Poisson. Read noise is
-        additive Gaussian in electrons. Quantization is ``floor`` (an ADC
-        truncates), and counts are clipped to the converter's representable
-        range. ``photons`` is the per-pixel expected photon count - the
-        ``Sensor`` step produces it from scene intensity × its
+        The two physical noise sources are combined into a **single Gaussian**. Shot
+        noise is Poisson on the detected electrons (variance ``λ``); read noise is
+        additive Gaussian in electrons (variance ``read_noise_e²``). Because the two
+        are independent their variances add, and Poisson(λ) ≈ Normal(λ, λ) to high
+        accuracy once ``λ`` is more than ~10 - which holds across essentially every
+        pixel of a 1-photon recording, where a substantial background (out-of-focus
+        fluorescence, neuropil, leakage glow) keeps ``λ`` well above that floor. So
+        the electron count is drawn as ``Normal(λ, √(λ + read_noise_e²))``: one
+        ``standard_normal`` draw that carries *both* the signal-dependent shot term
+        (the ``√λ``, so brighter pixels are noisier) and the constant read term. This
+        is the standard sensor-noise model, and it is far cheaper than sampling a
+        large-λ Poisson; the only thing dropped is the discrete-Poisson shape at
+        near-zero λ, the regime a 1p recording's background keeps it out of. Read
+        noise dominates anyway in the dim, high-analog-gain corner.
+
+        Quantization is ``floor`` (an ADC truncates), and counts are clipped to the
+        converter's representable range. ``photons`` is the per-pixel expected photon
+        count - the ``Sensor`` step produces it from scene intensity × its
         ``photons_per_unit`` exposure scale. Returns a float array holding
-        integer-valued counts (the float container is set by
-        ``Output.store_dtype``).
+        integer-valued counts (the float container is set by ``Output.store_dtype``).
         """
         photons = np.asarray(photons, dtype=float)
-        electrons = rng.poisson(photons * self.quantum_efficiency).astype(float)
-        electrons += rng.normal(0.0, self.read_noise_e, size=electrons.shape)
+        lam = photons * self.quantum_efficiency  # expected detected electrons
+        # Shot (variance λ) + read (variance read_noise_e²) as one Gaussian: a single
+        # standard_normal draw scaled by the combined std. One draw per call keeps the
+        # streaming writer's per-frame replay in lock-step with simulate().
+        std = np.sqrt(lam + self.read_noise_e**2)
+        electrons = lam + std * rng.standard_normal(photons.shape)
         counts = np.floor(electrons * self.gain_adu_per_e)
         return np.clip(counts, 0.0, 2**self.bit_depth - 1)
 

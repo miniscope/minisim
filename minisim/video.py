@@ -15,6 +15,11 @@ same RNG draws are consumed in the same order (the cell-domain steps run exactly
 their steps call), and the sensor digitizes frame-by-frame so a chunk boundary can
 never shift a draw. :func:`_iter_count_frames` is the shared generator; the public
 :func:`simulate_video` only adds uint8 encoding, the video writer, and a progress bar.
+
+The file is written with ``cv2.VideoWriter`` (opencv is a core dependency, bundling
+its own ffmpeg), so writing a video needs neither the ``mediapy`` extra nor a system
+ffmpeg. ``mediapy`` remains only for in-notebook *display* (the training notebooks),
+not for writing.
 """
 
 from __future__ import annotations
@@ -22,9 +27,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
-from minisim.footprint import stack_dense
+from minisim.footprint import RENDER_DTYPE, stack_dense
+from minisim.perf import PerfTracker, measure
 from minisim.scene import Scene
 from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
@@ -33,10 +40,12 @@ from minisim.steps.motion import brain_motion_shifts, shift_and_crop
 from minisim.steps.sensor import leakage_field
 from minisim.steps.tissue import neuropil_components
 
-# Frames rendered+digitized per chunk. ~64 at 608x608 float64 is ~150 MB of working
-# movie - small versus a full recording, large enough that per-chunk overhead is
-# negligible. Bigger trades memory for slightly less Python overhead.
-_DEFAULT_CHUNK_FRAMES = 64
+# Frames rendered+digitized per chunk. The dense footprint stack `A` is re-read by
+# the composite contraction once per chunk, so fewer/larger chunks cut that memory
+# traffic; 128 at 608x608 float64 is ~285 MB of working movie - still small versus a
+# full recording, and it halves the A re-reads versus the old default of 64. Bigger
+# keeps trading peak memory for less per-chunk overhead with diminishing returns.
+_DEFAULT_CHUNK_FRAMES = 128
 
 
 def simulate_video(
@@ -47,13 +56,14 @@ def simulate_video(
     fps: float | None = None,
     vmin: float = 0.0,
     vmax: float | None = None,
-    codec: str = "rawvideo",
+    codec: str = "Y800",
     progress: bool = True,
+    perf: PerfTracker | None = None,
 ) -> Path:
     """Simulate ``spec`` straight to a grayscale video at ``path``, streaming to disk.
 
     Renders and digitizes the recording in frame chunks and writes each to an
-    incrementally-opened ``mediapy`` video, so the whole movie is never held in
+    incrementally-opened ``cv2.VideoWriter``, so the whole movie is never held in
     memory (unlike ``simulate(spec).observed``, which is). The produced counts match
     ``simulate(spec).observed`` exactly.
 
@@ -61,14 +71,17 @@ def simulate_video(
     sensor's full ADC range (``2**bit_depth - 1``) when the spec has a ``sensor``
     step, so the file faithfully shows the true ADC utilization (a dim, honest
     frame). For a sensorless (continuous-intensity) spec there is no natural scale,
-    so ``vmax`` must be given. ``codec`` defaults to ``"rawvideo"``: uncompressed
-    8-bit grayscale (fourcc ``Y800``), so the file carries the exact counts with no
-    compression artifacts and opens directly in ImageJ/Fiji. It is therefore large
-    (uncompressed: ~``n_frames * H * W`` bytes). For a small file pass ``"mjpeg"``
-    (lossy, but Fiji-readable); ``"png"``/``"ffv1"`` are smaller and lossless but
-    ffmpeg tags them ``MPNG``/``FFV1``, which Fiji's built-in AVI reader rejects.
-    Requires the ``mediapy`` extra (``pip install 'minisim[notebook]'``). Returns
-    ``path``.
+    so ``vmax`` must be given. ``codec`` is a 4-character opencv fourcc; it defaults
+    to ``"Y800"``: uncompressed 8-bit grayscale, so the file carries the exact counts
+    with no compression artifacts (large: ~``n_frames * H * W`` bytes). For a small
+    lossy file pass ``"MJPG"``. Writing uses opencv's bundled ffmpeg, so no system
+    ffmpeg or ``mediapy`` extra is needed. Returns ``path``.
+
+    Pass a :class:`~minisim.perf.PerfTracker` as ``perf`` to record where the
+    streamed write spends its time: the one-off ``setup`` (cell steps + footprint
+    build), each per-chunk render sub-phase (``composite``, ``neuropil``,
+    ``motion_crop``, ``photon_field``, ``leakage``, ``digitize``), and the
+    ``encode+write`` tail. It is a no-op when ``None`` (the default).
     """
     acq = spec.acquisition
     fps = float(fps if fps is not None else acq.fps)
@@ -76,35 +89,37 @@ def simulate_video(
     chunk = int(chunk_frames or _DEFAULT_CHUNK_FRAMES)
     if vmax is None:
         vmax = _default_vmax(spec)
-    media = _import_mediapy()
     path = Path(path)
 
-    frames = (frame for _, frame in _iter_count_frames(spec, chunk))
+    frames = (frame for _, frame in _iter_count_frames(spec, chunk, perf=perf))
     return _write_gray_video(
-        media, frames, acq.n_frames, path, fov, fps, vmin, vmax, codec, progress
+        frames, acq.n_frames, path, fov, fps, vmin, vmax, codec, progress, perf
     )
 
 
-def _write_gray_video(media, frames, total, path, fov, fps, vmin, vmax, codec, progress):
+def _write_gray_video(frames, total, path, fov, fps, vmin, vmax, codec, progress, perf=None):
     """Encode an iterable of float ``(H, W)`` frames to a grayscale video at ``path``.
 
     The shared write tail behind both :func:`simulate_video` (streaming the
     chunked generator) and :meth:`minisim.recording.Recording.write_video`
-    (replaying an in-memory movie): open the single-plane writer, map each frame
-    to uint8 over ``[vmin, vmax]``, and drive a progress bar over ``total`` frames.
+    (replaying an in-memory movie): open a single-plane ``cv2.VideoWriter``
+    (``isColor=False``), map each frame to uint8 over ``[vmin, vmax]``, and drive a
+    progress bar over ``total`` frames.
     """
+    writer = _open_gray_writer(path, fov, fps, codec)
     bar = _ProgressBar(total, progress, f"writing {path.name}")
     try:
-        with _open_gray_writer(media, path, fov, fps, codec) as writer:
-            for frame in frames:
-                writer.add_image(_to_uint8(frame, vmin, vmax))
-                bar.update()
+        for frame in frames:
+            with measure(perf, "encode+write"):
+                writer.write(_to_uint8(frame, vmin, vmax))
+            bar.update()
     finally:
+        writer.release()
         bar.close()
     return path
 
 
-def _iter_count_frames(spec: Spec, chunk_frames: int):
+def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | None = None):
     """Yield ``(frame_index, frame)`` count arrays, frame-for-frame equal to
     ``simulate(spec).observed`` - without ever materializing the full movie.
 
@@ -149,14 +164,17 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
         if step_spec.domain == "cell":
             step = step_spec.build(acq, rng)
             step.prepare(context)
-            step(scene)
+            with measure(perf, step.name, domain="cell"):
+                step(scene)
         elif step_spec.kind == "neuropil":
-            spatial, temporal, _ = neuropil_components(
-                step_spec, acq, scene.cells, canvas_shape, n_frames, rng
-            )
+            with measure(perf, "neuropil_setup"):
+                spatial, temporal, _ = neuropil_components(
+                    step_spec, acq, scene.cells, canvas_shape, n_frames, rng
+                )
             neuropil = (step_spec.amplitude, spatial, temporal)
         elif step_spec.kind == "brain_motion":
-            shifts = brain_motion_shifts(step_spec, acq, n_frames, rng)
+            with measure(perf, "motion_setup"):
+                shifts = brain_motion_shifts(step_spec, acq, n_frames, rng)
         elif step_spec.kind == "leakage":
             leak = leakage_field(step_spec, acq, fov)
         elif step_spec.kind == "sensor":
@@ -175,58 +193,78 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
     # The cells are now fully populated; rebuild the dense footprint stack (sparse
     # in storage) and per-cell emission (clean calcium dimmed by bleaching when
     # present), exactly as CompositeStep does, so the chunked render is bit-for-bit.
-    footprints, emissions = [], []
-    for cell in scene.cells:
-        fp = cell.observed_footprint()  # regenerated from planted (see CompositeStep)
-        if fp is None or cell.trace is None:
-            continue
-        footprints.append(fp)
-        emissions.append(cell.trace if cell.bleach is None else cell.trace * cell.bleach)
-    A = stack_dense(footprints, canvas_shape) if footprints else None  # (unit, Hc, Wc)
-    CB = np.stack(emissions) if emissions else None  # (unit, frame)
+    with measure(perf, "footprint_build"):
+        footprints, emissions = [], []
+        for cell in scene.cells:
+            fp = cell.observed_footprint()  # regenerated from planted (see CompositeStep)
+            if fp is None or cell.trace is None:
+                continue
+            footprints.append(fp)
+            emissions.append(cell.trace if cell.bleach is None else cell.trace * cell.bleach)
+        # A and CB are float32 (RENDER_DTYPE), matching CompositeStep, so the
+        # per-chunk contraction is single-precision and bit-identical to simulate().
+        A = stack_dense(footprints, canvas_shape) if footprints else None  # (unit, Hc, Wc)
+        CB = np.stack(emissions).astype(RENDER_DTYPE) if emissions else None  # (unit, frame)
     ppu = sensor_spec.photons_per_unit if sensor_spec is not None else None
 
     for t0 in range(0, n_frames, chunk_frames):
         t1 = min(t0 + chunk_frames, n_frames)
-        canvas = np.zeros((t1 - t0, canvas_shape[0], canvas_shape[1]))
-        if A is not None and CB is not None:
-            canvas += np.tensordot(CB[:, t0:t1], A, axes=([0], [0]))
+        with measure(perf, "composite"):
+            canvas = np.zeros((t1 - t0, canvas_shape[0], canvas_shape[1]))
+            if A is not None and CB is not None:
+                canvas += np.tensordot(CB[:, t0:t1], A, axes=([0], [0]))
         if neuropil is not None:
-            amp, spatial, temporal = neuropil
-            canvas += amp * np.tensordot(
-                temporal[:, t0:t1], spatial, axes=([0], [0])
-            ) / spatial.shape[0]
+            with measure(perf, "neuropil"):
+                amp, spatial, temporal = neuropil
+                canvas += amp * np.tensordot(
+                    temporal[:, t0:t1], spatial, axes=([0], [0])
+                ) / spatial.shape[0]
         # Motion crop (shift_and_crop) when there is motion; otherwise the canvas is
         # already the sensor FOV (no margin), so it passes through unchanged.
-        frames = shift_and_crop(canvas, shifts[t0:t1], fov) if shifts is not None else canvas
+        if shifts is not None:
+            with measure(perf, "motion_crop"):
+                frames = shift_and_crop(canvas, shifts[t0:t1], fov)
+        else:
+            frames = canvas
         if photon_field is not None:
-            frames = frames * photon_field
+            with measure(perf, "photon_field"):
+                frames = frames * photon_field
         if leak is not None:
-            frames = frames + leak
+            with measure(perf, "leakage"):
+                frames = frames + leak
         if ppu is not None:
             # Per-frame digitization on the shared rng -- identical to SensorStep, and
             # independent of the chunk boundaries (each frame draws its own noise).
-            for i in range(frames.shape[0]):
-                frames[i] = sensor_hw.photons_to_counts(
-                    np.clip(frames[i] * ppu, 0.0, None), rng
-                )
+            with measure(perf, "digitize"):
+                for i in range(frames.shape[0]):
+                    frames[i] = sensor_hw.photons_to_counts(
+                        np.clip(frames[i] * ppu, 0.0, None), rng
+                    )
         for i in range(t1 - t0):
             yield t0 + i, frames[i]
 
 
-def _open_gray_writer(media, path, shape, fps, codec):
-    """A single-plane grayscale ``mediapy`` writer.
+def _open_gray_writer(path, fov, fps, codec):
+    """A single-plane grayscale ``cv2.VideoWriter`` for the ``fov = (H, W)`` movie.
 
-    Feeds the ``(H, W)`` uint8 frames as one luma plane and encodes a single plane
-    (``encoded_format="gray"`` -- no RGB promotion, no chroma subsampling), so an
-    8-bit count survives a lossless codec (``ffv1``) bit-for-bit. The earlier default
-    (RGB roundtrip + ``mjpeg``) both quantized the data and added a small rounding
-    error of its own.
+    Opened with ``isColor=False`` so each ``(H, W)`` uint8 frame is written as one
+    grayscale plane (no RGB promotion / chroma subsampling), and with the ``codec``
+    fourcc - the ``"Y800"`` default is uncompressed, so an 8-bit count survives
+    bit-for-bit. ``VideoWriter`` reports failure by *not opening* rather than raising,
+    so check ``isOpened`` and surface a clear error (a missing codec, an unwritable
+    path) instead of silently producing an empty file.
     """
-    return media.VideoWriter(
-        str(path), shape=shape, fps=fps, codec=codec,
-        input_format="gray", encoded_format="gray",
+    h, w = fov
+    writer = cv2.VideoWriter(
+        str(path), cv2.VideoWriter.fourcc(*codec), fps, (w, h), isColor=False
     )
+    if not writer.isOpened():
+        raise RuntimeError(
+            f"cv2.VideoWriter could not open {path!s} with fourcc {codec!r} at "
+            f"{w}x{h}. The codec may be unavailable in this opencv build, or the "
+            "path unwritable."
+        )
+    return writer
 
 
 def _default_vmax(spec: Spec) -> float:
@@ -249,18 +287,6 @@ def _to_uint8(frame: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
     span = (vmax - vmin) or 1.0
     scaled = np.clip((frame - vmin) / span, 0.0, 1.0)
     return (scaled * 255.0 + 0.5).astype(np.uint8)
-
-
-def _import_mediapy():
-    try:
-        import mediapy
-
-        return mediapy
-    except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise ImportError(
-            "writing video requires the 'mediapy' package (and ffmpeg on PATH); "
-            "install the notebook extra: pip install 'minisim[notebook]'."
-        ) from exc
 
 
 class _ProgressBar:

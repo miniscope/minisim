@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import cv2
 import numpy as np
 import xarray as xr
-from scipy.ndimage import shift as ndimage_shift
 from scipy.signal import lfilter
 
 from minisim.scene import MOVIE_DIMS, Scene
@@ -229,22 +229,35 @@ def shift_and_crop(
     """Shift each canvas frame by its ``(dy, dx)`` and crop the centered FOV.
 
     ``canvas`` is ``(frame, H, W)``; each frame is translated by ``shifts_px[f]``
-    with bilinear interpolation (``order=1`` - sub-pixel, no overshoot) and the
-    centered ``fov_shape`` window is cropped out. Positive ``dy``/``dx`` move
-    content toward higher indices (down/right). The ``constant`` fill is never
-    seen in the output: the margin ``(H − fov) / 2`` is ≥ the maximum shift, so
-    the vacated edge strip always lies outside the crop window.
+    with bilinear interpolation (sub-pixel, no overshoot) and the centered
+    ``fov_shape`` window is cropped out. Positive ``dy``/``dx`` move content toward
+    higher indices (down/right). No edge fill is ever seen in the output: the margin
+    ``(H − fov) / 2`` is ≥ the maximum shift, so the vacated strip always lies
+    outside the crop window.
+
+    The warp is ``cv2.warpAffine`` with a pure-translation matrix - ~4x faster than
+    ``scipy.ndimage.shift`` for this bilinear shift (the same swap minian's
+    motion-correction path made, in the inverse direction). The centered FOV crop is
+    folded into the affine translation, so ``warpAffine`` emits the shifted FOV
+    directly: ``dst(j, i) = canvas(left + j − dx, top + i − dy)``. cv2 warps in
+    float32; the ~1e-2-scale interpolation difference from the old spline path is far
+    below the sensor's per-pixel noise and quantization (the recording is
+    noise-dominated), and it is applied identically by ``simulate`` and the streaming
+    writer, so the two stay in lock-step.
     """
     n_frames, canvas_h, canvas_w = canvas.shape
     fov_h, fov_w = fov_shape
     top = (canvas_h - fov_h) // 2
     left = (canvas_w - fov_w) // 2
+    frames32 = canvas.astype(np.float32, copy=False)
     out = np.empty((n_frames, fov_h, fov_w))
     for f in range(n_frames):
-        shifted = ndimage_shift(
-            canvas[f], shifts_px[f], order=1, mode="constant", cval=0.0
+        dy, dx = float(shifts_px[f, 0]), float(shifts_px[f, 1])
+        warp = np.array([[1.0, 0.0, dx - left], [0.0, 1.0, dy - top]], dtype=np.float32)
+        out[f] = cv2.warpAffine(
+            frames32[f], warp, (fov_w, fov_h),
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0,
         )
-        out[f] = shifted[top : top + fov_h, left : left + fov_w]
     return out
 
 

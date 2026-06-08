@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from minisim.perf import PerfTracker, measure
 from minisim.recording import Recording, finalize
 from minisim.scene import Scene
 from minisim.spec import Acquisition, Spec
@@ -32,7 +33,9 @@ from minisim.steps.base import PipelineContext
 from minisim.steps.sensor import combined_falloff_field
 
 
-def simulate(spec: Spec, *, until: str | None = None) -> Recording:
+def simulate(
+    spec: Spec, *, until: str | None = None, perf: PerfTracker | None = None
+) -> Recording:
     """Run a full recording specification and return the typed ``Recording``.
 
     Seeds the RNG from ``spec.seed`` (so a spec + seed fully determines the
@@ -42,6 +45,10 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
     snapshots each movie stage, and finalizes. ``until`` stops after the named
     stage (a ``step.name``, e.g. ``"vignette"``); an ``until`` that matches no
     step raises rather than silently running the whole pipeline.
+
+    Pass a :class:`~minisim.perf.PerfTracker` as ``perf`` to record per-step (and
+    ``finalize``) wall time; it is a no-op when ``None`` (the default), so an
+    un-profiled run pays nothing for the instrumentation.
     """
     acq = spec.acquisition
     rng = np.random.default_rng(spec.seed)
@@ -53,7 +60,8 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
     for step_spec in spec.steps:
         step = step_spec.build(acq, rng)
         step.prepare(context)
-        step(scene)
+        with measure(perf, step.name, domain=step.domain):
+            step(scene)
         stage_names.append(step.name)
         if spec.output.save_intermediates and step.domain != "cell":
             scene.snapshots[step.name] = scene.movie.copy()
@@ -65,7 +73,8 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
         raise ValueError(
             f"until={until!r} matched no step in this spec; stage names are {stage_names}."
         )
-    return finalize(scene, spec)
+    with measure(perf, "finalize"):
+        return finalize(scene, spec)
 
 
 def build_context(spec: Spec, acq: Acquisition) -> PipelineContext:
