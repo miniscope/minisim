@@ -530,19 +530,11 @@ _StepT = TypeVar("_StepT", bound="StepSpec")
 def order_steps(steps: Iterable[_StepT]) -> list[_StepT]:
     """Sort steps into the canonical pipeline order (:data:`_PIPELINE_ORDER`).
 
-    The pipeline is order-insensitive at assembly time: you add the steps you want
-    in whatever order is convenient, and the engine runs them in the one
-    physically-correct sequence (cells -> tissue -> motion -> sensor, with the
-    within-domain order fixed too). Both ``simulate`` and :class:`Spec` route
-    through this, so a spec's stored ``steps`` are always canonical no matter how
-    they were listed - which means you can build a pipeline incrementally, revisit
-    and retune any earlier stage, and re-run without the listing order ever
-    mattering.
-
-    A *stable* sort: steps of equal rank keep their input order, and a kind absent
-    from :data:`_PIPELINE_ORDER` (a future/unknown step) sorts to the end rather
-    than raising, so no step is ever dropped. Returns a new list; the step specs
-    themselves are not copied or mutated.
+    :class:`Spec` runs every step list through this, so the order steps are listed
+    in never matters. A *stable* sort: steps of equal rank keep their input order,
+    and a kind absent from :data:`_PIPELINE_ORDER` (a future/unknown step) sorts to
+    the end rather than raising, so no step is dropped. Returns a new list; the step
+    specs themselves are not copied or mutated.
     """
     return sorted(steps, key=lambda s: _KIND_RANK.get(s.kind, len(_PIPELINE_ORDER)))
 
@@ -551,19 +543,18 @@ class StepSpec(_Base):
     """Base class for a single pipeline step's configuration.
 
     A concrete step spec carries its physical parameters and a literal ``kind``
-    discriminator, and declares its ``domain`` (a class attribute used for
-    ordering checks). ``build()`` turns the spec into the executable step that
-    mutates a ``Scene``, resolving ``kind`` through the
-    :data:`minisim.steps.STEP_FOR_KIND` table.
+    discriminator, and declares its ``domain`` (a class attribute). ``build()``
+    turns the spec into the executable step that mutates a ``Scene``, resolving
+    ``kind`` through the :data:`minisim.steps.STEP_FOR_KIND` table.
 
     ``requires`` declares the step kinds whose output this step consumes through
     the shared ``Scene`` (e.g. ``composite`` reads the footprints ``place_neurons``
-    makes and the traces ``cell_activity`` makes). The spec validator enforces
-    *order*, not presence: a required kind that is in the list must precede this
-    step, but it may be absent entirely. Partial pipelines are first-class - a
-    spec of ``[place_neurons, cell_activity, composite]`` with no sensor is valid, so
-    targeted test data for a downstream calcium pipeline can exercise just a few
-    stages - so an absent prerequisite is allowed, while a misordered one is not.
+    makes and the traces ``cell_activity`` makes). It is about *presence-order*, not
+    completeness: a present requirement is placed before this step by the canonical
+    ordering (:data:`_PIPELINE_ORDER`), but it may be absent entirely. Partial
+    pipelines are first-class - a spec of ``[place_neurons, cell_activity,
+    composite]`` with no sensor is valid, so targeted test data for a downstream
+    calcium pipeline can exercise just a few stages.
     """
 
     domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
@@ -1089,14 +1080,10 @@ class Spec(_Base):
     @field_validator("steps")
     @classmethod
     def _canonicalize_order(cls, steps: list[AnyStep]) -> list[AnyStep]:
-        """Store steps in canonical pipeline order, whatever order they were given.
-
-        Order is not part of the spec a caller has to get right: the pipeline runs
-        in one physically-correct sequence (:func:`order_steps`), so the listing
-        order carries no meaning and is normalized away here. Every downstream
-        consumer - ``simulate``, ``until=``, the snapshot keys, ``cache_key``,
-        sweeps - therefore sees the canonical order, and two specs that differ only
-        in how their steps were listed compare and cache as equal.
+        """Store steps in canonical order (:func:`order_steps`), whatever order they
+        were given, so every downstream consumer - ``simulate``, ``until=``, the
+        snapshot keys, ``cache_key``, sweeps - sees the same sequence and two specs
+        that differ only in listing order compare and cache as equal.
         """
         return order_steps(steps)
 
@@ -1121,14 +1108,10 @@ class Spec(_Base):
             raise ValueError(f"Duplicate step kind(s) in spec: {dupes}. Each kind must be unique.")
 
     def _check_step_dependencies(self) -> None:
-        """Rule 4b: a step's declared ``requires`` kinds, when present, must precede
-        it - the data dependencies that otherwise flow invisibly through the shared
-        ``Scene``. Steps are already canonicalized (:meth:`_canonicalize_order`) by
-        the time this runs, and :data:`_PIPELINE_ORDER` is a topological extension
-        of ``requires``, so for known kinds this always holds: it is a defensive
-        invariant guarding against the canonical order drifting out of sync with a
-        step's declared ``requires`` (the test suite checks the same property). An
-        absent prerequisite is fine - partial pipelines are first-class."""
+        """Rule 4b: a step's present ``requires`` kinds must precede it. Steps are
+        already canonicalized and :data:`_PIPELINE_ORDER` is a topological extension
+        of ``requires``, so this is a drift guard (an assertion that the two stay in
+        sync) rather than a reachable error for known kinds."""
         present = {s.kind for s in self.steps}
         seen: set[str] = set()
         for s in self.steps:

@@ -36,7 +36,9 @@ def simulate(spec: Spec, *, until: str | None = None) -> Recording:
     """Run a full recording specification and return the typed ``Recording``.
 
     Seeds the RNG from ``spec.seed`` (so a spec + seed fully determines the
-    output), sizes the motion margin, runs the steps in list order, optionally
+    output), sizes the motion margin, runs the steps in ``spec.steps`` order -
+    already the canonical pipeline order, since ``Spec`` sorts the list on
+    construction, so the order a caller listed them in is irrelevant - optionally
     snapshots each movie stage, and finalizes. ``until`` stops after the named
     stage (a ``step.name``, e.g. ``"vignette"``); an ``until`` that matches no
     step raises rather than silently running the whole pipeline.
