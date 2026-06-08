@@ -563,16 +563,24 @@ def _combine_fields(
     return a * b
 
 
-def _illumination_at(
-    field: np.ndarray | None, y_fov_um: float, x_fov_um: float, pixel_size_um: float
+def sample_field_at(
+    field: np.ndarray | None, y_um: float, x_um: float, pixel_size_um: float
 ) -> float:
-    """Photon-budget factor at a cell's FOV position - the combined illumination ×
-    vignette field, or 1.0 when neither is present."""
+    """Value of a static FOV field at a µm position, with edge-clamped indexing.
+
+    Converts a ``(y_um, x_um)`` FOV-frame position to the nearest pixel (rounded
+    and clipped to the field bounds) and returns ``field`` there. ``field`` is a
+    sensor-FOV-sized array such as the combined illumination × vignette photon
+    budget; an absent field (``None``) returns ``1.0``, the multiplicative
+    identity, so callers can treat "no field" and "uniform field" alike. The one
+    sampler shared by detectability (:func:`_is_detectable`) and the teaching
+    notebook's per-cell SNR panels, so both read the field the same way.
+    """
     if field is None:
         return 1.0
     h, w = field.shape
-    iy = int(np.clip(round(y_fov_um / pixel_size_um), 0, h - 1))
-    ix = int(np.clip(round(x_fov_um / pixel_size_um), 0, w - 1))
+    iy = int(np.clip(round(y_um / pixel_size_um), 0, h - 1))
+    ix = int(np.clip(round(x_um / pixel_size_um), 0, w - 1))
     return float(field[iy, ix])
 
 
@@ -626,7 +634,7 @@ def _is_detectable(
     if not in_focus:
         return False
     brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
-    illum = _illumination_at(photon_field, y_fov_um, x_fov_um, acq.pixel_size_um)
+    illum = sample_field_at(photon_field, y_fov_um, x_fov_um, acq.pixel_size_um)
     gain = brightness * illum * sensor_spec.photons_per_unit * acq.image_sensor.quantum_efficiency
     peak_dF = float(cell.trace.max() - cell.trace.min())
     baseline = float(cell.trace.min())

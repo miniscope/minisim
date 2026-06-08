@@ -322,6 +322,44 @@ def bleaching_pool(
     return out
 
 
+def bleaching_floor(q: float, intensity: float, emission: float, tau_turn: float) -> float:
+    """Steady-state intact fraction ``B*`` under constant illumination and emission.
+
+    The fixed point of the :func:`bleaching_pool` ODE for a constant drive:
+    bleaching at rate ``q·intensity·emission`` balances turnover at rate
+    ``k_turn = 1/tau_turn``, giving
+
+        ``B* = k_turn / (k_turn + q·intensity·emission)``
+
+    the continuous-imaging floor a brightly-lit or busy emitter settles toward.
+    A ratio of rates, so ``q`` and ``tau_turn`` need only share a time unit (both
+    per-frame or both per-second). With the light off (``intensity`` or
+    ``emission`` 0) the floor is 1 (turnover wins); ``tau_turn → ∞`` (no turnover)
+    drives it to 0.
+    """
+    k_turn = 1.0 / tau_turn if tau_turn > 0 else 0.0
+    drive = q * intensity * emission
+    denom = k_turn + drive
+    return k_turn / denom if denom > 0 else 1.0
+
+
+def dark_recovery(b0: float, t, tau_turn: float):
+    """Intact fraction recovering toward 1 over a dark gap of duration ``t``.
+
+    The zero-input response of the :func:`bleaching_pool` ODE: with the light off
+    (no emission), bleaching stops and turnover relaxes the pool back toward full
+    expression with time constant ``tau_turn``,
+
+        ``B(t) = 1 − (1 − b0)·exp(−t / tau_turn)``
+
+    starting from ``b0`` at ``t = 0``. ``t`` may be a scalar or an array (same time
+    unit as ``tau_turn``), so a whole recovery curve comes out at once. This is what
+    chains imaging sessions: a long gap (``t ≫ tau_turn``) restores the signal, a
+    short one lets the baseline ratchet down session to session.
+    """
+    return 1.0 - (1.0 - b0) * np.exp(-np.asarray(t, dtype=float) / tau_turn)
+
+
 class BleachingStep(Step["Bleaching"]):
     """Per-cell, activity-driven fluorophore decay - bleaching fought by turnover.
 

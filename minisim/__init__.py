@@ -16,12 +16,21 @@ from minisim.metrics import (
     Match,
     SpikeScore,
     field_pearson,
+    footprint_mask,
+    footprint_roi_trace,
     hungarian_match,
     shift_rmse,
     spike_precision_recall,
     trace_pearson,
 )
-from minisim.recording import GroundTruth, Recording, finalize
+from minisim.recording import (
+    DETECT_SNR_THRESHOLD,
+    GroundTruth,
+    Recording,
+    detection_snr,
+    finalize,
+    sample_field_at,
+)
 from minisim.scene import Cell, GroundTruthBuilder, Scene
 from minisim.simulate import simulate
 from minisim.spec import (
@@ -52,6 +61,7 @@ from minisim.sweep import SweptSpec, sweep
 from minisim.video import simulate_video
 
 __all__ = [
+    "DETECT_SNR_THRESHOLD",
     "Acquisition",
     "AnyStep",
     "Bleaching",
@@ -84,9 +94,13 @@ __all__ = [
     "Vignette",
     "cache_dir",
     "cache_path",
+    "detection_snr",
     "field_pearson",
     "finalize",
+    "footprint_mask",
+    "footprint_roi_trace",
     "hungarian_match",
+    "sample_field_at",
     "shift_rmse",
     "simulate",
     "simulate_cached",

@@ -44,10 +44,12 @@ from minisim.steps import (
     NeuropilStep,
     SensorStep,
     VignetteStep,
+    bleaching_floor,
     bleaching_pool,
     bounded_random_walk,
     calcium_kernel,
     combined_falloff_field,
+    dark_recovery,
     degrade_footprint,
     kernel_timing,
     neuron_footprint,
@@ -1084,6 +1086,29 @@ def test_bleaching_pool_more_emission_or_brighter_bleaches_more():
     settled = bleaching_pool(np.full(2000, 1.0), q=0.01, tau_turn_frames=100.0, intensity=1.0)
     k = 1.0 / 100.0
     assert settled[-1] == pytest.approx(k / (k + 0.01 * 1.0 * 1.0), rel=0.02)
+
+
+def test_bleaching_floor_is_the_pool_fixed_point():
+    # bleaching_floor must equal the value the integrator settles at under a long
+    # constant drive (the steady state it documents), so the notebook's planning
+    # curves agree with the engine.
+    q, tau, intensity, emission = 0.01, 100.0, 1.0, 1.0
+    settled = bleaching_pool(np.full(4000, emission), q=q, tau_turn_frames=tau, intensity=intensity)
+    assert bleaching_floor(q, intensity, emission, tau) == pytest.approx(settled[-1], rel=1e-3)
+    # Light off (or no turnover) are the two limits: turnover wins -> 1; no turnover -> 0.
+    assert bleaching_floor(q, intensity=0.0, emission=emission, tau_turn=tau) == pytest.approx(1.0)
+    assert bleaching_floor(q, intensity, emission, tau_turn=float("inf")) == pytest.approx(0.0)
+
+
+def test_dark_recovery_is_the_pool_zero_input_response():
+    # dark_recovery must trace the integrator with the light off (no emission),
+    # frame for frame, starting from b0.
+    n, tau, b0 = 200, 50.0, 0.3
+    pool = bleaching_pool(np.zeros(n), q=0.02, tau_turn_frames=tau, intensity=1.0, b0=b0)
+    closed = dark_recovery(b0, np.arange(n), tau)
+    np.testing.assert_allclose(closed, pool, atol=1e-9)
+    assert dark_recovery(b0, 0.0, tau) == pytest.approx(b0)  # starts at b0
+    assert dark_recovery(b0, 1e9, tau) == pytest.approx(1.0)  # fully recovered after long dark
 
 
 def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():

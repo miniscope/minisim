@@ -12,10 +12,11 @@ what the analysis pipeline has to recover. Notebook 2 (`02_pipeline_vs_truth`,
 planned) then runs real minian on a recording like this and scores it against that
 truth.
 
-> **Work in progress.** Stages built so far: **the scope** (optics + sensor),
-> **placing neurons**, and **calcium activity**. The remaining stages — optics
-> degradation, composite (the first movie), background fields, motion, and the sensor
-> — are being added next.
+> **The full forward pipeline is built.** All stages are in place, in physical
+> order: place neurons, calcium activity, photobleaching, optics (depth blur +
+> dimming), composite (the first movie), neuropil background, brain motion,
+> illumination profile, vignette, leakage, and the image sensor (noisy integer
+> counts). The notebook ends by streaming the complete recording to a grayscale AVI.
 
 ## Run it
 

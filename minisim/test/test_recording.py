@@ -27,7 +27,9 @@ from minisim import (
     Sensor,
     Spec,
     Vignette,
+    detection_snr,
     finalize,
+    sample_field_at,
 )
 from minisim.footprint import Footprint, FootprintStack
 from minisim.scene import Cell
@@ -273,3 +275,29 @@ def test_stage_raises_for_absent_snapshot():
     assert rec.snapshots == {}  # save_intermediates defaulted off
     with pytest.raises(KeyError, match="save_intermediates"):
         rec.stage("observed")
+
+
+# --- shared detectability primitives ---------------------------------------
+
+
+def test_detection_snr_formula_and_edges():
+    # SNR = peak*gain / sqrt(max(baseline,0)*gain + read^2). With read noise only
+    # (zero baseline) it is just peak*gain/read.
+    assert detection_snr(2.0, 0.0, 3.0, 6.0) == pytest.approx(2.0 * 3.0 / 6.0)
+    # shot noise on the baseline adds in quadrature under the root.
+    snr = detection_snr(1.0, 4.0, 2.0, 1.0)
+    assert snr == pytest.approx((1.0 * 2.0) / np.sqrt(4.0 * 2.0 + 1.0))
+    # vectorizes; a zero noise floor with signal is inf, with no signal is 0.
+    out = detection_snr(np.array([1.0, 0.0]), 0.0, np.array([1.0, 1.0]), 0.0)
+    assert out[0] == np.inf and out[1] == 0.0
+
+
+def test_sample_field_at_clamps_and_handles_none():
+    field = np.arange(12.0).reshape(3, 4)  # value == 4*row + col at 1 um/px
+    assert sample_field_at(field, 1.0, 2.0, 1.0) == field[1, 2]
+    # positions past the edge clamp to the nearest pixel rather than wrapping/erroring.
+    assert sample_field_at(field, 99.0, 99.0, 1.0) == field[2, 3]
+    assert sample_field_at(field, -5.0, -5.0, 1.0) == field[0, 0]
+    # a non-unit pixel size scales the position; an absent field is the identity 1.0.
+    assert sample_field_at(field, 2.0, 2.0, 2.0) == field[1, 1]
+    assert sample_field_at(None, 0.0, 0.0, 1.0) == 1.0
