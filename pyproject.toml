@@ -175,6 +175,14 @@ exclude = [
     # Tests exercise dynamic xarray/numpy indexing heavily; type-gating them is
     # high-noise, low-value, so they are out of scope.
     "minisim/test",
+    # The training-notebook presentation helpers are matplotlib / ipywidgets /
+    # mediapy plotting code, not part of minisim's forward-model contract and
+    # gated behind the [notebook] extra. Pyright on it is the same high-noise,
+    # low-value story as the tests: loose matplotlib stubs (header_visible,
+    # add_axes rect, plt.Circle), numpy .shape / Optional narrowing the checker
+    # cannot follow through stored lists, and heterogeneous-dict inference. The
+    # load-bearing physics lives in the gated library modules these call into.
+    "minisim/notebooks",
     # numpydantic's Shape["..."] DSL is not statically parseable, so pyright
     # mis-infers GroundTruth's array fields and the error cascades through the
     # whole module. Excluded *pending* a numpydantic static-typing story (a stub

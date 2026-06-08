@@ -31,6 +31,14 @@ from scipy.optimize import linear_sum_assignment
 # bright core and discards the low-intensity skirt that blur/scatter spread out.
 DEFAULT_ENERGY_FRAC = 0.9
 
+# Default intensity-relative threshold for a *naive analyst* footprint ROI
+# (:func:`footprint_mask`): the visible bright extent, pixels above this fraction
+# of the footprint peak. This is deliberately distinct from DEFAULT_ENERGY_FRAC -
+# energy masks are for IoU *scoring* (the smallest core holding 90% of the
+# energy), whereas this is the rough region of interest a person would draw by eye
+# to read out a trace, the un-demixed baseline the demixing comparison is against.
+DEFAULT_ROI_REL_THRESHOLD = 0.18
+
 
 @dataclass(frozen=True)
 class Match:
@@ -193,6 +201,44 @@ def field_pearson(est, true) -> float:
     if a.std() == 0 or b.std() == 0:
         return float("nan")
     return float(np.corrcoef(a, b)[0, 1])
+
+
+# ---------------------------------------------------------------------------
+# naive footprint ROI - the un-demixed baseline the demixing comparison beats
+# ---------------------------------------------------------------------------
+
+
+def footprint_mask(a, rel: float = DEFAULT_ROI_REL_THRESHOLD) -> np.ndarray:
+    """Boolean mask of a footprint's bright extent: pixels above ``rel × peak``.
+
+    The rough region of interest a person would draw around a cell by eye - an
+    intensity-relative threshold on a single footprint ``(height, width)``, not the
+    energy-fraction core :func:`hungarian_match` uses for scoring (see
+    :data:`DEFAULT_ROI_REL_THRESHOLD` for why the two differ). An all-zero (or
+    all-negative) footprint yields an all-False mask.
+    """
+    a = np.asarray(a, dtype=float)
+    peak = float(a.max()) if a.size else 0.0
+    if peak <= 0:
+        return np.zeros(a.shape, dtype=bool)
+    return a > rel * peak
+
+
+def footprint_roi_trace(movie, a, rel: float = DEFAULT_ROI_REL_THRESHOLD) -> np.ndarray:
+    """Naive footprint-ROI trace: the movie averaged over a cell's footprint mask.
+
+    Mean of ``movie`` ``(frame, height, width)`` over the pixels in
+    :func:`footprint_mask` of ``a``, frame by frame - exactly what reading out a
+    hand-drawn ROI gives, with **no unmixing**. It is *not* the true calcium ``C``:
+    the mask also collects neighbour light the optics blur and the tissue scatter
+    in, plus any additive background (neuropil, leakage), so it is the contaminated
+    baseline that motivates demixing. An empty mask yields all zeros.
+    """
+    movie = np.asarray(movie, dtype=float)
+    mask = footprint_mask(a, rel)
+    if not mask.any():
+        return np.zeros(movie.shape[0])
+    return movie[:, mask].mean(axis=1)
 
 
 # ---------------------------------------------------------------------------

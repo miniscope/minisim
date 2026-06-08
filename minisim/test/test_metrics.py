@@ -13,6 +13,8 @@ import xarray as xr
 
 from minisim import (
     field_pearson,
+    footprint_mask,
+    footprint_roi_trace,
     hungarian_match,
     shift_rmse,
     spike_precision_recall,
@@ -160,3 +162,38 @@ def test_field_pearson_scale_invariant():
 
 def test_field_pearson_constant_is_nan():
     assert np.isnan(field_pearson(np.ones((8, 8)), np.arange(64.0).reshape(8, 8)))
+
+
+# --- naive footprint ROI ---------------------------------------------------
+
+
+def test_footprint_mask_thresholds_relative_to_peak():
+    a = _disk(20, 20, 10, 10, 4) * 10.0  # uniform disk at intensity 10
+    a[10, 10] = 100.0  # a hot center pixel
+    mask = footprint_mask(a, rel=0.18)
+    # every disk pixel (10) clears 0.18*100=18? no -> only the hot pixel does.
+    assert mask[10, 10]
+    assert mask.sum() == 1
+    # a gentler threshold keeps the whole disk; an all-zero footprint masks nothing.
+    assert footprint_mask(a, rel=0.05).sum() == int((a > 0).sum())
+    assert not footprint_mask(np.zeros((8, 8))).any()
+    # all-negative is a distinct peak<=0 path (peak = max < 0): still all-False, same shape.
+    neg = footprint_mask(-np.ones((5, 5)))
+    assert not neg.any() and neg.shape == (5, 5)
+
+
+def test_footprint_roi_trace_averages_over_the_mask():
+    a = _disk(16, 16, 8, 8, 3)
+    mask = footprint_mask(a)
+    # a movie that is a constant value per frame -> ROI mean equals that value.
+    vals = np.array([1.0, 5.0, 2.0])
+    movie = vals[:, None, None] * np.ones((3, 16, 16))
+    np.testing.assert_allclose(footprint_roi_trace(movie, a), vals)
+    # the ROI is exactly the mask mean, frame by frame, on an arbitrary movie.
+    rng = np.random.default_rng(0)
+    movie = rng.random((4, 16, 16))
+    np.testing.assert_allclose(
+        footprint_roi_trace(movie, a), movie[:, mask].mean(axis=1)
+    )
+    # an empty footprint yields zeros, not a divide-by-zero.
+    np.testing.assert_array_equal(footprint_roi_trace(movie, np.zeros((16, 16))), np.zeros(4))
