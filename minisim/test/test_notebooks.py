@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from minisim.notebooks import bundles_dir, copy, main, notebooks
+from minisim.notebooks import (
+    _description,
+    _print_table,
+    bundles_dir,
+    copy,
+    main,
+    notebooks,
+)
 
 
 def test_bundles_dir_ships_the_anatomy_notebook():
@@ -38,6 +45,21 @@ def test_copy_unknown_notebook_raises_keyerror(tmp_path):
         copy("does_not_exist", tmp_path)
 
 
+def test_description_falls_back_when_bundle_has_no_readme(tmp_path):
+    """A bundle with no README still gets a (placeholder) description."""
+    assert _description(tmp_path) == "(no description)"
+
+
+def test_description_reads_the_readme_title(tmp_path):
+    (tmp_path / "README.md").write_text("# My Title\n\nbody\n", encoding="utf-8")
+    assert _description(tmp_path) == "My Title"
+
+
+def test_print_table_handles_no_rows(capsys):
+    _print_table([])
+    assert capsys.readouterr().out == ""
+
+
 def test_copy_refuses_existing_dir_without_force(tmp_path):
     copy("01_anatomy", tmp_path)
     with pytest.raises(FileExistsError):
@@ -49,6 +71,13 @@ def test_copy_refuses_existing_dir_without_force(tmp_path):
 def test_cli_list_reports_a_notebook(capsys):
     assert main(["list"]) == 0
     assert "01_anatomy" in capsys.readouterr().out
+
+
+def test_cli_list_on_empty_install_fails_cleanly(capsys, monkeypatch):
+    """With no bundles discoverable, `list` reports and exits non-zero."""
+    monkeypatch.setattr("minisim.notebooks.notebooks", dict)
+    assert main(["list"]) == 1
+    assert "No notebooks" in capsys.readouterr().err
 
 
 def test_cli_copy_by_name_returns_zero_and_reports(tmp_path, capsys):
@@ -68,6 +97,23 @@ def test_cli_copy_without_name_fails_cleanly(tmp_path, capsys):
     assert "name or --all" in capsys.readouterr().err
 
 
+def test_cli_copy_unknown_notebook_fails_cleanly(tmp_path, capsys):
+    assert main(["copy", "does_not_exist", "-o", str(tmp_path)]) == 1
+    assert "unknown notebook" in capsys.readouterr().err
+
+
 def test_cli_copy_existing_dir_fails_without_force(tmp_path):
     assert main(["copy", "01_anatomy", "-o", str(tmp_path)]) == 0
     assert main(["copy", "01_anatomy", "-o", str(tmp_path)]) == 1  # no --force
+
+
+def test_cli_copy_force_overwrites_existing(tmp_path):
+    assert main(["copy", "01_anatomy", "-o", str(tmp_path)]) == 0
+    assert main(["copy", "01_anatomy", "-o", str(tmp_path), "--force"]) == 0
+
+
+def test_cli_requires_a_subcommand():
+    """Bare `minisim-notebooks` exits non-zero rather than doing nothing."""
+    with pytest.raises(SystemExit) as exc:
+        main([])
+    assert exc.value.code != 0
