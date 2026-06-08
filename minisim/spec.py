@@ -3,28 +3,28 @@
 This module defines the *contract* the simulator consumes: a tree of pydantic
 v2 models describing the acquisition (a real, physical interface), an ordered
 list of pipeline steps, and output formatting. It is the inverse of the minian
-analysis pipeline expressed as data — the same ``Spec`` object a training
+analysis pipeline expressed as data - the same ``Spec`` object a training
 notebook walks through, a test parametrizes over, and a cache keys on.
 
-Two layers, by design (see ``proposals/simulation-spec.md`` §2):
+Two layers, by design:
 
-* **Layer 1 — what you read off a datasheet.** ``Optics.na``,
+* **Layer 1 - what you read off a datasheet.** ``Optics.na``,
   ``Optics.magnification``, ``Tissue.scatter_mfp_emission_um`` and friends. Every knob a
   user touches here is a real, measurable property of a real scope or sample.
-* **Layer 2 — what a step consumes.** Pixel size, PSF sigma, attenuation, noise
-  variance — *derived* from Layer 1 by small, documented, individually-testable
+* **Layer 2 - what a step consumes.** Pixel size, PSF sigma, attenuation, noise
+  variance - *derived* from Layer 1 by small, documented, individually-testable
   helpers.
 
 This file defines the full Layer-1 surface, the unit conversions, the static
-``AnyStep`` union (migration Step 2), and the Layer-2 physics helpers —
+``AnyStep`` union, and the Layer-2 physics helpers -
 ``Optics.diffraction_sigma_um``/``defocus_sigma_um``, ``Tissue.attenuation``/
 ``scatter_sigma_um``, the combined ``Acquisition.cell_optics``, and the
-``ImageSensor.photons_to_counts`` sensor model (Step 3). ``StepSpec.build()``
+``ImageSensor.photons_to_counts`` sensor model. ``StepSpec.build()``
 turns a spec into its executable step by looking its ``kind`` up in the
 declarative :data:`minisim.steps.STEP_FOR_KIND` table; the step bodies
 themselves live in :mod:`minisim.steps`.
 
-Units convention: **everything physical is in seconds and µm/mm — never frames
+Units convention: **everything physical is in seconds and µm/mm - never frames
 or pixels.** ``Acquisition`` owns every conversion to pixels/frames.
 """
 
@@ -35,6 +35,7 @@ import math
 import warnings
 from collections import Counter
 from collections.abc import Mapping
+from itertools import pairwise
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 import numpy as np
@@ -55,7 +56,7 @@ class SpecWarning(UserWarning):
     """Advisory warning for unusual-but-legal spec configurations.
 
     The simulator distinguishes *invalid* configs (which raise) from *unusual*
-    ones (which warn but still run) — e.g. a focal plane outside the cell depth
+    ones (which warn but still run) - e.g. a focal plane outside the cell depth
     range, or steps listed out of the natural physical order.
     """
 
@@ -73,7 +74,7 @@ class _Base(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Physical interface — Acquisition / Optics / Tissue (Layer 1 + unit conversions)
+# Physical interface - Acquisition / Optics / Tissue (Layer 1 + unit conversions)
 # ---------------------------------------------------------------------------
 
 
@@ -83,10 +84,10 @@ _DOF_IMMERSION_N = 1.33
 
 
 class Optics(_Base):
-    """Objective optics — the measurable lens properties of a 1-photon scope.
+    """Objective optics - the measurable lens properties of a 1-photon scope.
 
     Layer-2 phenomenological quantities (diffraction sigma, defocus blur) are
-    *derived* from these fields; their math arrives in migration Step 3. Pixel
+    *derived* from these fields by the helper methods below. Pixel
     size is a joint optics×sensor quantity (sensor pitch / magnification) and so
     lives on ``Acquisition``, not here.
 
@@ -100,7 +101,7 @@ class Optics(_Base):
     depth_of_field_um: float | Literal["auto"] = Field(
         default="auto",
         description="±in-focus half-depth around the focal plane, µm. 'auto' (default) "
-        "derives it from NA as ≈ n·λ/NA² (the diffraction depth of field — the physical "
+        "derives it from NA as ≈ n·λ/NA² (the diffraction depth of field - the physical "
         "behavior, since DOF is set by the optics, not chosen); a number overrides it.",
     )
     field_curvature_radius_um: float | None = Field(
@@ -148,22 +149,22 @@ class Optics(_Base):
 
         A Gaussian stand-in for the Airy disk: the diffraction FWHM is
         ``≈ 0.51·λ/NA`` and ``σ = FWHM / 2.355 ≈ 0.21·λ/NA``. Ignores
-        aberrations and the finite Airy tails — adequate for showing how NA and
+        aberrations and the finite Airy tails - adequate for showing how NA and
         emission wavelength set the resolution floor. Smaller NA ⇒ larger σ
         (blurrier). At NA 0.45, λ ≈ 525 nm this is σ ≈ 0.24 µm.
 
-        Note — pixel-limited, not diffraction-limited. Across realistic 1-photon
+        Note - pixel-limited, not diffraction-limited. Across realistic 1-photon
         miniscope NAs (~0.1–0.6) and green emission this σ is only ~0.2–1.1 µm,
         i.e. at or below the *object-space pixel size* (sensor pitch ÷
         magnification, typically 1–2 µm). So lateral resolution is set by the
-        pixel sampling, not by diffraction — the diffraction PSF is real but
+        pixel sampling, not by diffraction - the diffraction PSF is real but
         rarely the limiting blur (defocus and scatter usually dominate it too).
         A practical consequence: a cell's intrinsic shape can be generated on a
         fine, sub-pixel grid *independent of the sensor*, then resampled to
         whatever pixel size the sensor implies, because the optics never resolve
         anything finer than the pixel grid anyway. (The teaching notebook relies
         on exactly this so that changing magnification/pitch only rescales a cell
-        rather than re-rasterizing — and re-randomizing — its shape.)
+        rather than re-rasterizing - and re-randomizing - its shape.)
         """
         return 0.21 * (self.emission_nm / 1000.0) / self.na
 
@@ -184,11 +185,11 @@ class Optics(_Base):
 
     @property
     def collection_efficiency(self) -> float:
-        """Fraction of a cell's emitted light the objective collects — ``∝ NA²``.
+        """Fraction of a cell's emitted light the objective collects - ``∝ NA²``.
 
         A lens gathers light over a collection cone whose solid angle grows with
         ``NA²`` (small-angle ``Ω ∝ sin²θ = NA²``), so a low-NA miniscope objective
-        is *fundamentally* dimmer than a high-NA one — independently of focus or
+        is *fundamentally* dimmer than a high-NA one - independently of focus or
         depth. This is a flat multiplicative light-loss applied alongside scatter
         :meth:`Tissue.attenuation`; the absolute proportionality constant
         (``1/4n²`` etc.) is absorbed into the ``sensor`` step's
@@ -199,7 +200,7 @@ class Optics(_Base):
     def focal_curvature_shift_um(self, r_um: float) -> float:
         """Field-curvature focal shift at field radius ``r_um`` from the axis, µm.
 
-        Without a field flattener — which a miniscope has no room for — off-axis
+        Without a field flattener - which a miniscope has no room for - off-axis
         points focus on a curved (≈spherical) surface, not a plane. A point at
         radius ``r`` from the optical axis comes into best focus *shallower*
         (nearer the objective) than the on-axis focal plane, by the spherical
@@ -207,7 +208,7 @@ class Optics(_Base):
         be *subtracted* from the central focal depth (the in-focus surface bows
         toward the objective at the edges, always, for miniscope/standard optics).
         Zero when :attr:`field_curvature_radius_um` is ``None`` (an ideal flat
-        field). Typical radii are 2–3 mm — large vs a soma, so a cell can be
+        field). Typical radii are 2–3 mm - large vs a soma, so a cell can be
         evaluated at its center rather than warping the footprint across the field.
         """
         radius = self.field_curvature_radius_um
@@ -241,7 +242,7 @@ class ImageSensor(_Base):
     def photons_to_counts(self, photons: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         """Forward sensor model: incident photons → digitized ADC counts.
 
-        The only place fluorescence becomes integer counts (spec §6)::
+        The only place fluorescence becomes integer counts::
 
             e⁻     = Poisson(photons · quantum_efficiency)   # shot noise
             e⁻    += Normal(0, read_noise_e)                 # read noise, electrons
@@ -252,7 +253,7 @@ class ImageSensor(_Base):
         Poisson and detection thins it by QE, which stays Poisson. Read noise is
         additive Gaussian in electrons. Quantization is ``floor`` (an ADC
         truncates), and counts are clipped to the converter's representable
-        range. ``photons`` is the per-pixel expected photon count — the
+        range. ``photons`` is the per-pixel expected photon count - the
         ``Sensor`` step produces it from scene intensity × its
         ``photons_per_unit`` exposure scale. Returns a float array holding
         integer-valued counts (the float container is set by
@@ -283,7 +284,7 @@ class Tissue(_Base):
       penetrates far (transport length ≈ 800 µm) and its fluence actually peaks a
       few hundred µm deep before falling (Ma et al. 2020, Neurophotonics
       7:031208), so over the depths a 1-photon scope images, excitation barely
-      dims cells — a *long* effective MFP (``scatter_mfp_excitation_um``).
+      dims cells - a *long* effective MFP (``scatter_mfp_excitation_um``).
     * **Emission out (≈525 nm)** is the *image-forming* sharp signal, which
       decays at roughly the scattering MFP (``scatter_mfp_emission_um``). This leg
       dominates the depth-dimming.
@@ -298,7 +299,7 @@ class Tissue(_Base):
     515 nm (Azimipour et al. 2014, Biomed. Opt. Express). That ballistic length is
     what sets the *blur* rate. The light an objective actually *collects* decays
     more slowly, because the strong forward scattering (g ≈ 0.88) is largely
-    recollected — so the emission leg uses the *high end* of the scattering-MFP
+    recollected - so the emission leg uses the *high end* of the scattering-MFP
     literature (~100 µm), and the diffuse excitation leg is longer still; their
     round trip gives an effective ≈ 85 µm (see :attr:`scatter_mfp_um`).
     """
@@ -306,12 +307,12 @@ class Tissue(_Base):
     scatter_mfp_excitation_um: float = Field(
         gt=0,
         default=600.0,
-        description="Effective attenuation MFP for the excitation leg (≈470 nm, in) — long, diffuse fluence, µm.",
+        description="Effective attenuation MFP for the excitation leg (≈470 nm, in) - long, diffuse fluence, µm.",
     )
     scatter_mfp_emission_um: float = Field(
         gt=0,
         default=100.0,
-        description="Effective attenuation MFP for the emission leg (≈525 nm, out) — the image-forming scattering MFP, µm.",
+        description="Effective attenuation MFP for the emission leg (≈525 nm, out) - the image-forming scattering MFP, µm.",
     )
     scatter_blur_per_um: float = Field(
         ge=0,
@@ -328,21 +329,21 @@ class Tissue(_Base):
         The two exponential legs multiply, ``exp(−z/mfp_ex)·exp(−z/mfp_em) =
         exp(−z/mfp_eff)``, so the combined length is the harmonic-style
         reciprocal sum ``1/mfp_eff = 1/mfp_ex + 1/mfp_em``. With the defaults
-        (excitation 600 µm, emission 100 µm) this is ≈ 85.7 µm — dominated by the
+        (excitation 600 µm, emission 100 µm) this is ≈ 85.7 µm - dominated by the
         emission leg, since the diffuse excitation leg attenuates little over
         imaging depths (see the class docstring for why the legs are asymmetric).
         """
         return 1.0 / (1.0 / self.scatter_mfp_excitation_um + 1.0 / self.scatter_mfp_emission_um)
 
     def attenuation(self, z_um: float) -> float:
-        """Fraction of light surviving the round-trip scatter from depth ``z_um`` — in (0, 1].
+        """Fraction of light surviving the round-trip scatter from depth ``z_um`` - in (0, 1].
 
         Beer–Lambert decay applied on *both* legs the signal travels: excitation
         in (≈470 nm) then emission out (≈525 nm). The product collapses to a
         single exponential over the effective MFP, ``exp(−z / scatter_mfp_um)``
         (see :attr:`scatter_mfp_um`). Monotonically decreasing in depth and equal
-        to 1 at the surface (``z = 0``). Genuinely *removes* light — unlike
-        defocus — so a deep cell is irreversibly dimmer, the irreducible limit
+        to 1 at the surface (``z = 0``). Genuinely *removes* light - unlike
+        defocus - so a deep cell is irreversibly dimmer, the irreducible limit
         the module teaches.
         """
         return math.exp(-z_um / self.scatter_mfp_um)
@@ -353,7 +354,7 @@ class Tissue(_Base):
         Linear phenomenological model ``σ = scatter_blur_per_um · z``: deeper
         cells scatter more and so appear both larger and dimmer (see
         :meth:`attenuation`). Monotonically increasing in depth and zero at the
-        surface. Unlike defocus this is not intensity-conserving — it co-occurs
+        surface. Unlike defocus this is not intensity-conserving - it co-occurs
         with attenuation. The rate is set by the ballistic scattering MFP
         (~40–50 µm at blue/green; Al-Juboori et al. 2013): with the default 0.05,
         a cell at 100 µm picks up σ ≈ 5 µm (FWHM ≈ 12 µm, about a soma diameter),
@@ -368,7 +369,7 @@ class Acquisition(_Base):
     Owns *all* unit conversions between the physical world (µm, seconds) and the
     sampled world (pixels, frames). Pixel size is the joint optics×sensor
     quantity ``image_sensor.pixel_pitch_um / optics.magnification``; FOV is then
-    derived from the sensor's pixel count — any two of {FOV, pixel size, pixel
+    derived from the sensor's pixel count - any two of {FOV, pixel size, pixel
     count} fix the third.
     """
 
@@ -385,7 +386,7 @@ class Acquisition(_Base):
     )
     front_working_distance_um: float | None = Field(
         default=None,
-        description="Front working distance (lens front → focal point), µm — Miniscope V4 ≈ "
+        description="Front working distance (lens front → focal point), µm - Miniscope V4 ≈ "
         "700. Informational only: it does NOT affect the simulation (the optics math uses "
         "focal_depth_in_tissue_um), but it's a physically relevant number for surgery/implant "
         "planning, so it's recorded here.",
@@ -417,7 +418,7 @@ class Acquisition(_Base):
 
     @property
     def fov_um(self) -> tuple[float, float]:
-        """Field of view (height, width) in µm — derived from pixels × pixel size."""
+        """Field of view (height, width) in µm - derived from pixels × pixel size."""
         return (
             self.image_sensor.n_px_height * self.pixel_size_um,
             self.image_sensor.n_px_width * self.pixel_size_um,
@@ -435,8 +436,8 @@ class Acquisition(_Base):
         """Combined per-cell optical degradation: ``(sigma_px, brightness)``.
 
         Folds the three Layer-2 effects into the two numbers the optics step
-        applies to a footprint — a blur width (pixels) and a brightness scale.
-        Blurs add in quadrature; brightness factors multiply (spec §2)::
+        applies to a footprint - a blur width (pixels) and a brightness scale.
+        Blurs add in quadrature; brightness factors multiply::
 
             σ_0   = hypot(diffraction_sigma_um, scatter_sigma_um(z))   # all but defocus
             σ_tot = hypot(σ_0, defocus_sigma_um(z, focal))
@@ -449,14 +450,14 @@ class Acquisition(_Base):
         ``attenuation(z)`` (depth) and ``collection_efficiency`` (``∝ NA²``, the
         objective's light-gathering power). Both are independent of the focal
         plane, so ``sigma_px² · brightness`` remains independent of the focal
-        plane — the invariant the conservation test asserts. ``focal_um`` is the
+        plane - the invariant the conservation test asserts. ``focal_um`` is the
         resolved (numeric) focal depth; ``diffraction_sigma_um > 0`` always, so
         ``σ_tot`` is never zero.
 
-        Two distinct quantities come out, consumed separately by the optics step
-        (5b): ``sigma_px`` is the PSF width the footprint is *convolved* with,
+        Two distinct quantities come out, consumed separately by the optics
+        step: ``sigma_px`` is the PSF width the footprint is *convolved* with,
         and the footprint's brightness then scales by ``attenuation(z)`` **alone**
-        — the convolution itself produces the defocus peak drop, so applying
+        - the convolution itself produces the defocus peak drop, so applying
         ``brightness`` to the footprint too would double-count it. The returned
         ``brightness`` is instead the *point-source peak* scalar: how far a
         cell's peak signal sits above the noise, i.e. the per-cell effective
@@ -480,7 +481,7 @@ class Acquisition(_Base):
 
 
 class Output(_Base):
-    """Final-array formatting — formatting only, never rescaling (honest radiometry)."""
+    """Final-array formatting - formatting only, never rescaling (honest radiometry)."""
 
     save_intermediates: bool = Field(
         default=False,
@@ -496,7 +497,7 @@ class Output(_Base):
 
 
 # ---------------------------------------------------------------------------
-# Step framework — StepSpec base + registry + the static AnyStep union
+# Step framework - StepSpec base + registry + the static AnyStep union
 # ---------------------------------------------------------------------------
 
 
@@ -519,10 +520,10 @@ class StepSpec(_Base):
     the shared ``Scene`` (e.g. ``render`` reads the footprints ``place_neurons``
     makes and the traces ``cell_activity`` makes). The spec validator enforces
     *order*, not presence: a required kind that is in the list must precede this
-    step, but it may be absent entirely. Partial pipelines are first-class — a
+    step, but it may be absent entirely. Partial pipelines are first-class - a
     spec of ``[place_neurons, cell_activity, render]`` with no sensor is valid, so
     targeted test data for a downstream calcium pipeline can exercise just a few
-    stages — so an absent prerequisite is allowed, while a misordered one is not.
+    stages - so an absent prerequisite is allowed, while a misordered one is not.
     """
 
     domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
@@ -545,15 +546,15 @@ class StepSpec(_Base):
 
 # ---------------------------------------------------------------------------
 # Step catalog (cell → tissue → motion → sensor). Fields define the v1 surface;
-# `build()` bodies and the no-op placeholder steps (vasculature, fancier motion)
-# arrive in Step 5.
+# the executable `build()` bodies (and the no-op placeholder steps like
+# vasculature) live in `minisim.steps`.
 # ---------------------------------------------------------------------------
 
 
 class PlaceNeurons(StepSpec):
     """Place generic neurons in a 3-D µm volume, soma-only or with dendrites.
 
-    'Place' is the verb — this *positions neurons in space* (anchored at the cell
+    'Place' is the verb - this *positions neurons in space* (anchored at the cell
     body); it is unrelated to hippocampal *place cells*. v1 models one generic
     excitable cell type (an irregular soma blob) with two GCaMP targeting variants
     via ``morphology``: ``"soma"`` (soma-targeted, body only) or ``"cytosolic"``
@@ -627,7 +628,7 @@ class CellActivity(StepSpec):
     ``k(t) = exp(-t/τ_d) − exp(-t/τ_r)`` at that rate, then bin-averaged down to the
     camera frame rate (exposure integration). One spike per fine bin respects the
     ~3 ms refractory period. The ground-truth ``S`` is the per-frame spike *count*
-    (the fine train is binned away — nothing recovers spikes faster than the frame
+    (the fine train is binned away - nothing recovers spikes faster than the frame
     rate). Indicator saturation and per-cell τ jitter are deferred to v1.1.
 
     Amplitude is biology and lives here as a single per-cell gain: ``brightness_cv``
@@ -635,7 +636,7 @@ class CellActivity(StepSpec):
     each cell's *whole* trace (baseline and transients together). The emitted trace
     is the **clean ground truth** ``C``; measurement noise is deliberately *not*
     added here. Photon shot noise and read noise enter at the ``sensor``, background
-    fluctuations at ``neuropil`` — so any SNR is an emergent property of the physical
+    fluctuations at ``neuropil`` - so any SNR is an emergent property of the physical
     chain, computable downstream, never an input.
     """
 
@@ -673,9 +674,9 @@ class CellOptics(StepSpec):
     ``z`` plus the physical ``Optics``/``Tissue`` constants on ``Acquisition``.
     Writes the observed (degraded) footprint alongside the planted (sharp) one,
     sets the geometric ``in_focus`` flag, and stores the per-cell
-    ``optical_brightness`` peak scalar. ``detectable`` is *not* set here — it is
+    ``optical_brightness`` peak scalar. ``detectable`` is *not* set here - it is
     a whole-pipeline flag (optics × illumination vs the sensor noise floor)
-    assembled in ``finalize()`` (Step 6).
+    assembled in ``finalize()``.
     """
 
     domain: ClassVar[str] = "cell"
@@ -707,7 +708,7 @@ class Neuropil(StepSpec):
     integration (``population_tau_s``, short). Each component's envelope mixes
     that population driver with an independent slow drift (the unmodeled
     out-of-FOV/out-of-plane tissue, ``temporal_tau_s``, slow) at
-    ``population_coupling``. This is the modeled diffuse mesh only — out-of-focus
+    ``population_coupling``. This is the modeled diffuse mesh only - out-of-focus
     somata are a *separate* background that emerges for free from
     ``place_neurons`` + ``optics``.
     """
@@ -764,13 +765,13 @@ class Bleaching(StepSpec):
     excitation_intensity: float = Field(
         ge=0, default=1.0,
         description="Excitation level, dimensionless (1 = a typical continuous miniscope "
-        "level). Deliberately unitless — absolute irradiance depends on the rig, depth, and "
+        "level). Deliberately unitless - absolute irradiance depends on the rig, depth, and "
         "optics. Scales the bleach rate linearly: the brighter-but-faster-fading trade-off.",
     )
 
 
 class BrainMotion(StepSpec):
-    """Rigid x,y translation of the whole tissue frame — the tissue→sensor boundary.
+    """Rigid x,y translation of the whole tissue frame - the tissue→sensor boundary.
 
     The built step shifts the brain-frame canvas per frame and crops the sensor
     FOV from its center; it therefore requires a scene whose tissue canvas carries
@@ -843,12 +844,12 @@ class BrainMotion(StepSpec):
 
 
 class IlluminationProfile(StepSpec):
-    """Static excitation-illumination falloff — the LED lights the FOV unevenly.
+    """Static excitation-illumination falloff - the LED lights the FOV unevenly.
 
     A single excitation LED illuminates the tissue brightest at the center and
     dimmer toward the edges, so peripheral cells fluoresce less to begin with.
     Modeled as a multiplicative radial falloff (``1`` at the bright center, dropping
-    to ``falloff`` at the farthest corner, ``exponent`` shaping the rolloff) — fixed
+    to ``falloff`` at the farthest corner, ``exponent`` shaping the rolloff) - fixed
     to the scope, so it does **not** move with the brain. Typically a gentle, broad
     rolloff (vs the sharper emission ``Vignette``). Being on the *excitation* side,
     this falloff also drives photobleaching faster at the bright center: that
@@ -874,7 +875,7 @@ class Vignette(StepSpec):
     relay clipping, compounded by poorer off-axis optical performance), so corners
     read dimmer regardless of how brightly the tissue was lit. Same multiplicative
     radial-falloff shape as the ``IlluminationProfile`` but on the *collection* side
-    — so it does not drive bleaching — and typically a sharper edge rolloff. Also
+    - so it does not drive bleaching - and typically a sharper edge rolloff. Also
     fixed to the scope (does not move with the brain). Off-axis blur is a separate
     concern, deferred to a future optical-aberration step.
     """
@@ -891,7 +892,7 @@ class Vignette(StepSpec):
 
 
 class Leakage(StepSpec):
-    """Static additive baseline — what minian's 'glow removal' subtracts."""
+    """Static additive baseline - what minian's 'glow removal' subtracts."""
 
     domain: ClassVar[str] = "sensor"
     kind: Literal["leakage"] = "leakage"
@@ -910,7 +911,7 @@ class Sensor(StepSpec):
     The only step that produces integer-valued counts. The sensor *hardware*
     (QE, read noise, gain, bit depth, pixel pitch) lives on
     ``Acquisition.image_sensor`` and is read from there. The single field below
-    is the exposure/flux scale — a scene property, not sensor hardware — which is
+    is the exposure/flux scale - a scene property, not sensor hardware - which is
     why it stays on the step rather than the image-sensor spec.
     """
 
@@ -926,7 +927,7 @@ class Sensor(StepSpec):
 
 # The v1 catalog is closed and known, so AnyStep is a hand-written static union:
 # native pydantic, trivially debuggable, no import-order hazards. It is the
-# single source of truth for the step catalog — adding a component means
+# single source of truth for the step catalog - adding a component means
 # defining its StepSpec subclass and adding it here. Pydantic's Discriminator
 # handles kind→class dispatch for deserialization, so no separate registry is
 # needed; if later tooling wants an explicit map, derive it from this union.
@@ -948,7 +949,7 @@ AnyStep = Annotated[
 
 
 # ---------------------------------------------------------------------------
-# Top-level Spec + cross-field validation (spec §11)
+# Top-level Spec + cross-field validation
 # ---------------------------------------------------------------------------
 
 
@@ -984,7 +985,7 @@ class Spec(_Base):
     # -- hard fails ---------------------------------------------------------
 
     def _check_unique_kinds(self) -> None:
-        """Rule 4: each ``kind`` appears at most once — lets sweeps address a step
+        """Rule 4: each ``kind`` appears at most once - lets sweeps address a step
         by kind and keeps the snapshot dict (keyed by step name) collision-free."""
         dupes = sorted(k for k, n in Counter(s.kind for s in self.steps).items() if n > 1)
         if dupes:
@@ -992,7 +993,7 @@ class Spec(_Base):
 
     def _check_step_dependencies(self) -> None:
         """Rule 4b: a step's declared ``requires`` kinds, when present in the spec,
-        must precede it — the data dependencies that otherwise flow invisibly
+        must precede it - the data dependencies that otherwise flow invisibly
         through the shared ``Scene``. Enforces *order*, not presence: an absent
         prerequisite is fine (partial pipelines are first-class), a misordered one
         is not."""
@@ -1037,7 +1038,7 @@ class Spec(_Base):
     def _warn_domain_order(self) -> None:
         """Rule 5: steps out of cell→tissue→motion→sensor order are legal but unusual."""
         ranks = [_DOMAIN_RANK[type(s).domain] for s in self.steps]
-        if any(b < a for a, b in zip(ranks, ranks[1:])):
+        if any(b < a for a, b in pairwise(ranks)):
             order = " → ".join(f"{s.kind}({type(s).domain})" for s in self.steps)
             warnings.warn(
                 f"Steps depart from the natural cell→tissue→motion→sensor order: {order}.",

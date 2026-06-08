@@ -1,4 +1,4 @@
-"""Motion-domain step: rigid x,y brain motion — the tissue→sensor boundary.
+"""Motion-domain step: rigid x,y brain motion - the tissue→sensor boundary.
 
 ``brain_motion`` is the single step in the motion domain and the hinge of the
 whole reference-frame design. Everything before it (cells, neuropil, bleaching)
@@ -10,7 +10,7 @@ To keep the motion honest, the upstream tissue steps render on a canvas **larger
 than the sensor** (``Scene.zeros(acq, margin_px=…)``): real, simulated tissue
 sits just off the sensor FOV. This step shifts that canvas per frame and crops
 the centered sensor FOV back out, so the content that moves in at the edges is
-genuine tissue, never a fabricated fill — and because the FOV crop never reaches
+genuine tissue, never a fabricated fill - and because the FOV crop never reaches
 the canvas edge (the margin is ≥ the maximum shift), no edge fill ever enters the
 result. The per-frame displacement is recorded to ground truth as the motion a
 correction stage must estimate.
@@ -29,7 +29,9 @@ from minisim.scene import MOVIE_DIMS, Scene
 from minisim.steps.base import Step
 
 if TYPE_CHECKING:
-    from minisim.spec import BrainMotion
+    # Referenced only as the string Generic base Step["BrainMotion"], which ruff's
+    # F401 misses; pyright needs it in scope to resolve the forward reference.
+    from minisim.spec import BrainMotion  # noqa: F401
 
 # High-res integration rate for the physical oscillator, Hz. The trajectory is
 # integrated this finely then bin-averaged down to the frame rate (the same
@@ -68,7 +70,7 @@ def bounded_random_walk(
     the boundary. Returns an ``(n_frames, 2)`` array in pixels. The bound keeps
     motion within the tissue margin so the FOV crop always lands on real content.
     Sequential by construction (each position depends on the previous), so an
-    explicit loop — cheap at the recording lengths the simulator targets.
+    explicit loop - cheap at the recording lengths the simulator targets.
     """
     pos = np.zeros((n_frames, 2))
     for f in range(1, n_frames):
@@ -143,7 +145,6 @@ def physical_brain_motion(
 
     # Locomotion acceleration: a sinusoid whose instantaneous frequency drifts slowly
     # about locomotion_freq_hz (near-periodic gait, not a metronome).
-    t = np.arange(n_hr) * dt
     freq = locomotion_freq_hz * (
         1.0 + _LOCOMOTION_FREQ_CV * _lowpass(rng.standard_normal(n_hr), _LOCOMOTION_FREQ_TAU_S, dt)
     )
@@ -187,7 +188,7 @@ def brain_motion_shifts(
     The shift-generation half of :class:`BrainMotionStep`, factored out so the step
     *and* the streaming video writer (which renders frame-chunks without ever
     materializing a full movie) produce the **identical** trajectory from the same
-    RNG draws — the property the streamer relies on to match ``simulate()``
+    RNG draws - the property the streamer relies on to match ``simulate()``
     bit-for-bit. An explicit ``trajectory_um`` (µm→px) takes precedence, else the
     ``model``-selected generator (:func:`physical_brain_motion` or
     :func:`bounded_random_walk`).
@@ -228,7 +229,7 @@ def shift_and_crop(
     """Shift each canvas frame by its ``(dy, dx)`` and crop the centered FOV.
 
     ``canvas`` is ``(frame, H, W)``; each frame is translated by ``shifts_px[f]``
-    with bilinear interpolation (``order=1`` — sub-pixel, no overshoot) and the
+    with bilinear interpolation (``order=1`` - sub-pixel, no overshoot) and the
     centered ``fov_shape`` window is cropped out. Positive ``dy``/``dx`` move
     content toward higher indices (down/right). The ``constant`` fill is never
     seen in the output: the margin ``(H − fov) / 2`` is ≥ the maximum shift, so
@@ -250,24 +251,25 @@ def shift_and_crop(
 class BrainMotionStep(Step["BrainMotion"]):
     """Rigidly translate the brain-frame canvas per frame, then crop the sensor FOV.
 
-    Resolves the per-frame ``(dy, dx)`` displacement — an explicit
+    Resolves the per-frame ``(dy, dx)`` displacement - an explicit
     ``trajectory_um`` (converted µm→px) if given, else the ``model``-selected
     generator: :func:`physical_brain_motion` (the default driven damped oscillator)
-    or :func:`bounded_random_walk` — then :func:`shift_and_crop`s the canvas down to
+    or :func:`bounded_random_walk` - then :func:`shift_and_crop`s the canvas down to
     the sensor FOV. The canvas must carry a tissue margin
     (``Scene.zeros(acq, margin_px=…)``) at least as large as the maximum shift;
     otherwise the crop would expose the canvas edge and this step raises (rather
-    than silently filling with fabricated tissue). ``simulate()`` (Step 6) sizes
+    than silently filling with fabricated tissue). ``simulate()`` sizes
     the margin automatically from this spec.
 
     Writes ``shifts`` ``(n_frames, 2)`` to ground truth: the applied content
     displacement ``(dy, dx)`` in **pixels**, matching minian's ``shift_dim``
-    order. A motion-correction stage estimates the *correction* — the negation of
-    this — so the Step 10 RMSE test compares against ``−shifts``.
+    order. A motion-correction stage estimates the *correction* - the negation of
+    this - so a motion-correction RMSE test compares against ``−shifts``.
     """
 
     name = "brain_motion"
     domain = "motion"
+    consumes_rng = True  # trajectory generators draw noise (unless trajectory_um is given)
 
     def __call__(self, scene: Scene) -> None:
         acq = self.acq

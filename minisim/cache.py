@@ -1,15 +1,15 @@
 """Spec-hash → zarr caching, kept as a thin library concern over :func:`simulate`.
 
-A realistic spec takes tens of seconds to simulate, and the Step 9–10 parameter
+A realistic spec takes tens of seconds to simulate, and parameter
 sweeps re-request the same recordings many times. :func:`simulate_cached` keys a
 recording by its :attr:`~minisim.spec.Spec.cache_key` (a hash of the
 canonical spec JSON): a cache hit is loaded from disk, a miss simulates once and
-saves the result. ``simulate()`` itself stays pure — it has no I/O and no disk
-side effects — so caching composes on top rather than being baked in.
+saves the result. ``simulate()`` itself stays pure - it has no I/O and no disk
+side effects - so caching composes on top rather than being baked in.
 
 The cache directory defaults to ``~/.cache/minisim`` and is overridable with
 the ``MINISIM_CACHE`` environment variable. Because ``output.save_intermediates``
-(and every other knob) is part of the spec, it folds into the cache key — a
+(and every other knob) is part of the spec, it folds into the cache key - a
 recording cached without snapshots can never falsely satisfy a request that wants
 them; the keys simply differ.
 """
@@ -30,7 +30,7 @@ DEFAULT_CACHE_DIR = "~/.cache/minisim"
 def cache_dir() -> Path:
     """The resolved cache root: ``$MINISIM_CACHE`` if set, else :data:`DEFAULT_CACHE_DIR`.
 
-    The returned path is user-expanded (``~``) but not created — :func:`simulate_cached`
+    The returned path is user-expanded (``~``) but not created - :func:`simulate_cached`
     makes it on first write.
     """
     return Path(os.environ.get("MINISIM_CACHE", DEFAULT_CACHE_DIR)).expanduser()

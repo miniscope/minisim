@@ -1,4 +1,4 @@
-"""Unit tests for the parameter-sweep generator (migration Step 9).
+"""Unit tests for the parameter-sweep generator.
 
 Covers the Cartesian product and axis bookkeeping, the three dotted-path forms
 (nested model, step-by-kind, top-level), immutability of the base spec, fail-fast
@@ -8,6 +8,7 @@ spec is a genuine, runnable Spec.
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from minisim import (
     Acquisition,
@@ -19,7 +20,6 @@ from minisim import (
     Render,
     Sensor,
     Spec,
-    SweptSpec,
     simulate,
     sweep,
 )
@@ -122,7 +122,7 @@ def test_cache_key_parity_axes_excluded():
 
 def test_invalid_axis_value_fails_validation():
     # NA must be > 0; an out-of-range sweep value is caught when the spec re-validates
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         list(sweep(_base(), {"acquisition.optics.na": [-1.0]}))
 
 
@@ -142,7 +142,7 @@ def test_scalar_descent_raises():
 
 
 def test_malformed_steps_path_raises():
-    with pytest.raises(ValueError, match="steps.<kind>.<field>"):
+    with pytest.raises(ValueError, match=r"steps\.<kind>\.<field>"):
         list(sweep(_base(), {"steps": [1]}))
 
 

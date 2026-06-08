@@ -1,22 +1,22 @@
 """Mutable runtime state for the ``minisim`` pipeline.
 
 Where :mod:`minisim.spec` is the *immutable* description of a
-recording, this module is its *mutable* counterpart — the working state the
+recording, this module is its *mutable* counterpart - the working state the
 executable steps read and write as they run. The split mirrors the rest of the
 design: a ``Spec`` is a frozen pydantic tree you can serialize and hash; a
 ``Scene`` is a plain dataclass the steps mutate in place.
 
-A step (migration Step 5) is a small callable ``step(scene) -> None`` that
+A step is a small callable ``step(scene) -> None`` that
 either fills the per-cell records in :attr:`Scene.cells`, composites into
 :attr:`Scene.movie`, or records its ground-truth contribution on
-:attr:`Scene.truth`. Tests construct a ``Scene`` directly — usually with
-:meth:`Scene.zeros` or :meth:`Scene.ones` — and run a single step against it;
+:attr:`Scene.truth`. Tests construct a ``Scene`` directly - usually with
+:meth:`Scene.zeros` or :meth:`Scene.ones` - and run a single step against it;
 that, not the full ``simulate()`` loop, is the primary unit-test substrate.
 
-This file (migration Step 4) provides the empty, correctly-shaped substrate and
-its constructors only. The step bodies that populate it land in Step 5; the
+This file provides the empty, correctly-shaped substrate and its constructors
+only. The step bodies that populate it live in :mod:`minisim.steps`; the
 ``finalize()`` that turns an exhausted ``Scene`` into a ``Recording`` (and its
-numpydantic ``GroundTruth``) lands with ``simulate()`` in Step 6.
+numpydantic ``GroundTruth``) lives in :mod:`minisim.recording`.
 """
 
 from __future__ import annotations
@@ -36,27 +36,27 @@ MOVIE_DIMS = ("frame", "height", "width")
 
 @dataclass
 class Cell:
-    """One simulated neuron — the per-cell record steps fill in, pre-render.
+    """One simulated neuron - the per-cell record steps fill in, pre-render.
 
     The fields mirror the per-cell structural columns of the eventual
-    ``GroundTruth`` output (spec §8) one-for-one, so ``finalize()`` (Step 6) can
+    ``GroundTruth`` output one-for-one, so ``finalize()`` can
     stack them with no remapping. Each is populated by the step that owns it and
     is ``None`` until then:
 
-    * ``center_um`` — set by ``place_neurons`` (the cell exists once it has a
+    * ``center_um`` - set by ``place_neurons`` (the cell exists once it has a
       location). Placement is now purely spatial; brightness is not set here.
-    * ``footprint_planted`` — the sharp, peak-normalized soma mask, also from
+    * ``footprint_planted`` - the sharp, peak-normalized soma mask, also from
       ``place_neurons``; the ideal CNMF target.
-    * ``trace`` / ``spikes`` / ``amplitude`` — the noise-free calcium trace
+    * ``trace`` / ``spikes`` / ``amplitude`` - the noise-free calcium trace
       ``C``, spike train ``S``, and the per-cell brightness/expression gain that
       scales the whole trace, all from ``cell_activity``. The gain is biology
       (how much fluorescence this cell emits per spike); measurement noise, and
       hence any SNR, emerges later from ``optics`` and ``sensor``, not here.
-    * ``bleach`` — the intact-fluorophore envelope ``B(t)`` from the optional
+    * ``bleach`` - the intact-fluorophore envelope ``B(t)`` from the optional
       ``bleaching`` step; ``render`` emits ``trace · bleach``, leaving ``trace``
       the clean calcium. ``None`` until/unless bleaching runs.
     * ``observed_sigma_px`` / ``observed_gain`` / ``in_focus`` /
-      ``optical_brightness`` — from the ``optics`` step (5b). The observed
+      ``optical_brightness`` - from the ``optics`` step. The observed
       (optically degraded) footprint is **not stored**: it is a deterministic
       function ``gain · (planted ⊛ Gaussian(sigma_px))`` of the planted footprint
       (see :func:`minisim.footprint.degrade_footprint`), so the optics step keeps
@@ -66,7 +66,7 @@ class Cell:
     * ``detectable`` is *not* an optics-only property and so is **not** set by
       the optics step: it is a whole-pipeline flag (optical brightness ×
       illumination falloff, judged against the sensor noise floor) assembled in
-      ``finalize()`` (Step 6), per spec §8.
+      ``finalize()``.
 
     ``center_um`` is ``(z, y, x)`` in µm (depth first); pixel coordinates are a
     conversion away via ``acq.um_to_px`` and are not stored, to avoid drift.
@@ -108,22 +108,22 @@ class Cell:
 
 @dataclass
 class GroundTruthBuilder:
-    """Per-effect ground-truth side channel — each non-cell step writes its own.
+    """Per-effect ground-truth side channel - each non-cell step writes its own.
 
     The per-*cell* truth lives on :attr:`Scene.cells`; this accumulator holds the
-    per-*effect* fields that have no natural per-cell home (spec §8). Each is
+    per-*effect* fields that have no natural per-cell home. Each is
     ``None`` until the step that produces it runs, so a ``None`` value is the
     honest signal that the effect is absent from this recording:
 
-    * ``shifts`` — rigid (dy, dx) per frame, from ``brain_motion``.
-    * ``illumination`` / ``vignette`` / ``leakage`` — the static (height, width)
+    * ``shifts`` - rigid (dy, dx) per frame, from ``brain_motion``.
+    * ``illumination`` / ``vignette`` / ``leakage`` - the static (height, width)
       optical fields (excitation falloff, collection falloff, additive glow).
-    * ``neuropil_temporal`` / ``neuropil_spatial`` — the diffuse-background
-      components; ``neuropil_population`` — the (frame,) population driver that
+    * ``neuropil_temporal`` / ``neuropil_spatial`` - the diffuse-background
+      components; ``neuropil_population`` - the (frame,) population driver that
       modulates them (``None`` when no cells were active to drive it).
 
-    Step 4 defines the slots; the steps that fill them arrive in Step 5, and
-    ``finalize()`` reads them into the frozen ``GroundTruth`` in Step 6.
+    The steps that fill these slots live in :mod:`minisim.steps`, and
+    ``finalize()`` reads them into the frozen ``GroundTruth``.
     """
 
     shifts: np.ndarray | None = None
@@ -145,13 +145,13 @@ class Scene:
     Holds the acquisition (which owns every µm↔px / s↔frame conversion), the RNG
     every stochastic step draws from, the movie being built, the per-cell
     records, the per-effect ground-truth side channel, and the optional
-    per-stage snapshots. Unlike a ``Spec`` it is *not* frozen — mutation is the
+    per-stage snapshots. Unlike a ``Spec`` it is *not* frozen - mutation is the
     point.
 
     The working ``movie`` is held in **float64**: effects accumulate additively
     and multiplicatively across ~10 steps in honest radiometric units, and only
     the final ``sensor`` step quantizes to integer counts. The downcast to
-    ``Output.store_dtype`` happens in ``finalize()`` (Step 6), not here.
+    ``Output.store_dtype`` happens in ``finalize()``, not here.
     """
 
     acq: Acquisition
@@ -161,7 +161,7 @@ class Scene:
     snapshots: dict[str, xr.DataArray] = field(default_factory=dict)
     # The working movie is allocated **lazily**: a partial build that runs only
     # cell-domain steps (e.g. ``until="optics"``) never writes a pixel, so it must
-    # never pay for the ``(n_frames, H, W)`` buffer — at long durations that buffer
+    # never pay for the ``(n_frames, H, W)`` buffer - at long durations that buffer
     # dominates both memory and time. ``_fill``/``_margin_px`` remember how to build
     # it on first access; ``_movie`` stays ``None`` until a movie-writing step (or
     # any ``.movie`` read) materializes it.
@@ -182,7 +182,7 @@ class Scene:
 
     @property
     def has_movie(self) -> bool:
-        """Whether a movie buffer exists yet — ``True`` once a pixel step (or a
+        """Whether a movie buffer exists yet - ``True`` once a pixel step (or a
         ``.movie`` read) has materialized it. ``finalize`` uses this to skip the
         observed-movie cast for a cell-domain-only partial build."""
         return self._movie is not None
@@ -227,7 +227,7 @@ class Scene:
         rng: np.random.Generator | None = None,
         margin_px: int = 0,
     ) -> Scene:
-        """A blank scene whose movie is all zeros — the base for additive builds."""
+        """A blank scene whose movie is all zeros - the base for additive builds."""
         return cls._blank(acq, 0.0, rng, margin_px)
 
     @classmethod
@@ -237,7 +237,7 @@ class Scene:
         rng: np.random.Generator | None = None,
         margin_px: int = 0,
     ) -> Scene:
-        """A scene whose movie is all ones — the substrate for multiplicative-field tests.
+        """A scene whose movie is all ones - the substrate for multiplicative-field tests.
 
         A ``vignette`` or ``leakage`` step applied to an all-ones movie yields the
         bare field, which is exactly what a single-step test inspects.
@@ -256,10 +256,10 @@ class Scene:
         # beyond the sensor FOV, so that under motion real, simulated tissue moves
         # into view at the edges (rather than a fabricated fill). The ``brain_motion``
         # step shifts this canvas and crops the centered sensor FOV back out; the
-        # margin must be ≥ the maximum shift. ``simulate()`` (Step 6) sizes it from
+        # margin must be ≥ the maximum shift. ``simulate()`` sizes it from
         # the motion spec; tests pass it explicitly. ``margin_px=0`` is the plain
         # sensor-sized scene the non-motion steps use. The movie itself is not
-        # allocated here — it is built lazily on first access (see the fields), so
+        # allocated here - it is built lazily on first access (see the fields), so
         # ``fill``/``margin_px`` are just remembered.
         if rng is None:
             rng = np.random.default_rng()

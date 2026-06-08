@@ -1,8 +1,8 @@
-"""Structural metrics — the shared oracle comparing estimates to ground truth.
+"""Structural metrics - the shared oracle comparing estimates to ground truth.
 
 Standalone and dependency-light: the unit tests, the parameter-matrix tests, and
 both training notebooks all score CNMF output against a :class:`GroundTruth`
-through this one module. It knows nothing about tests or thresholds — callers
+through this one module. It knows nothing about tests or thresholds - callers
 supply those (and the fair recall denominator, ``GroundTruth.detectable_subset``).
 
 Every function takes unit-first arrays whose dim order matches *both* sides of the
@@ -42,7 +42,7 @@ class Match:
     :meth:`precision`) count only pairs whose IoU clears ``iou_threshold``.
 
     Empty denominators (no estimated or no true cells, no matched pairs) report
-    ``0.0`` rather than ``nan`` — convenient for ``assert metric >= bound`` tests.
+    ``0.0`` rather than ``nan`` - convenient for ``assert metric >= bound`` tests.
     """
 
     iou_matrix: np.ndarray  # (n_est, n_true) pairwise Jaccard of binarized footprints
@@ -115,7 +115,7 @@ def hungarian_match(
     iou = _iou_matrix(masks_est, masks_true)
 
     rows, cols = linear_sum_assignment(iou, maximize=True)
-    pairing = tuple((int(i), int(j)) for i, j in zip(rows, cols) if iou[i, j] > 0)
+    pairing = tuple((int(i), int(j)) for i, j in zip(rows, cols, strict=True) if iou[i, j] > 0)
     return Match(iou_matrix=iou, pairing=pairing)
 
 
@@ -173,7 +173,7 @@ def spike_precision_recall(
 def shift_rmse(shifts_est, shifts_true) -> float:
     """Root-mean-square error (pixels) between two ``(frame, 2)`` shift trajectories.
 
-    Pure RMSE over all frames and both axes — the caller must put both arrays in
+    Pure RMSE over all frames and both axes - the caller must put both arrays in
     the **same sign convention**. A motion-*correction* estimate is the negation
     of the applied ``GroundTruth.shifts``, so negate one before comparing.
     """

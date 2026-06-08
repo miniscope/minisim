@@ -1,4 +1,4 @@
-"""Parameter sweeps — a thin Cartesian-product generator over ``Spec`` overrides.
+"""Parameter sweeps - a thin Cartesian-product generator over ``Spec`` overrides.
 
 :func:`sweep` takes a base ``Spec`` and a dict of *dotted-path → list-of-values*
 axes and yields one validated spec per point in their Cartesian product. It is the
@@ -9,7 +9,7 @@ core :func:`~minisim.simulate.simulate` never depends on this module.
 
 Because the physical interface makes the axes physically meaningful (depth µm,
 density cells/mm², NA, exposure), a sweep traces a scientifically interpretable
-surface — e.g. "recall vs depth at NA 0.45". Each yielded spec carries an
+surface - e.g. "recall vs depth at NA 0.45". Each yielded spec carries an
 ``axes`` dict (the chosen value per path) for those benchmark rows.
 """
 
@@ -29,7 +29,7 @@ class SweptSpec(Spec):
     A genuine ``Spec`` subclass, so it drops into ``simulate()`` and ``Recording``
     unchanged. ``axes`` is excluded from serialization, so it never reaches
     ``model_dump_json`` and therefore leaves :meth:`Spec.cache_key` identical to
-    the equivalent plain spec — sweeping does not perturb cache dedup, and the tag
+    the equivalent plain spec - sweeping does not perturb cache dedup, and the tag
     simply vanishes when a recording is persisted.
     """
 
@@ -51,16 +51,16 @@ def sweep(base: Spec, axes: dict[str, list]) -> Iterator[SweptSpec]:
         Maps a dotted override path to the list of values to sweep it over. Path
         forms:
 
-        * ``"acquisition.optics.na"`` — walk nested models;
-        * ``"steps.<kind>.<field>"`` — address the step with that (unique) ``kind``,
+        * ``"acquisition.optics.na"`` - walk nested models;
+        * ``"steps.<kind>.<field>"`` - address the step with that (unique) ``kind``,
           e.g. ``"steps.place_neurons.density_per_mm3"``;
-        * ``"seed"`` — a top-level field.
+        * ``"seed"`` - a top-level field.
 
     Yields
     ------
     SweptSpec
         The base with this combination of overrides applied and **all cross-field
-        validators re-run** — an axis value that yields an invalid combination
+        validators re-run** - an axis value that yields an invalid combination
         (``na=-1``, a soma larger than the FOV, …) raises here. An empty ``axes``
         yields the base once with ``axes={}``.
 
@@ -72,12 +72,12 @@ def sweep(base: Spec, axes: dict[str, list]) -> Iterator[SweptSpec]:
     """
     paths = list(axes)
     for combo in product(*(axes[p] for p in paths)):
-        chosen = dict(zip(paths, combo))
+        chosen = dict(zip(paths, combo, strict=True))
         overridden = base
         for path, value in chosen.items():
             overridden = _set_path(overridden, path.split("."), path, value)
         # Re-validate from the canonical dump: rebuilds the discriminated `steps`
-        # union and re-runs every §11 validator, so a bad axis fails fast here.
+        # union and re-runs every Spec validator, so a bad axis fails fast here.
         yield SweptSpec.model_validate({**overridden.model_dump(), "axes": chosen})
 
 
@@ -95,8 +95,11 @@ def _set_path(model: BaseModel, parts: list[str], full_path: str, value) -> Base
         kind, *field_parts = rest
         idx = _step_index(model, kind, full_path)
         # `steps` lives on Spec, not the BaseModel this recursive setter is typed
-        # for; the "steps" path only ever fires at the top-level Spec.
-        new_steps = list(getattr(model, "steps"))
+        # for; the "steps" path only ever fires at the top-level Spec. getattr (not
+        # model.steps) is deliberate: it returns Any, so reading .steps off the
+        # BaseModel type-checks AND the list stays untyped enough that assigning the
+        # rebuilt step back below does too. noqa keeps ruff's B009 off that idiom.
+        new_steps = list(getattr(model, "steps"))  # noqa: B009
         new_steps[idx] = _set_path(new_steps[idx], field_parts, full_path, value)
         return model.model_copy(update={"steps": new_steps})
 
@@ -113,8 +116,9 @@ def _set_path(model: BaseModel, parts: list[str], full_path: str, value) -> Base
 
 def _step_index(model: BaseModel, kind: str, full_path: str) -> int:
     """Index in ``model.steps`` of the step whose ``kind`` matches (kinds are unique)."""
-    # `steps` lives on Spec, not the BaseModel this helper is typed for.
-    steps = getattr(model, "steps")
+    # `steps` lives on Spec, not the BaseModel this helper is typed for; getattr
+    # returns Any so the access type-checks (see _set_path). noqa: ruff's B009.
+    steps = getattr(model, "steps")  # noqa: B009
     for i, step in enumerate(steps):
         if step.kind == kind:
             return i

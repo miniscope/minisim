@@ -1,6 +1,6 @@
 """Cell-domain steps: place neurons, then give them calcium activity.
 
-These are the first two steps of the forward pipeline — pure biology, before any
+These are the first two steps of the forward pipeline - pure biology, before any
 optics or sensor effect:
 
 * :class:`PlaceNeuronsStep` positions neurons in a 3-D µm volume and stamps
@@ -14,8 +14,8 @@ optics or sensor effect:
 Both only fill per-cell records on the scene (``scene.cells``); nothing is drawn
 into the movie until ``render`` (:mod:`minisim.steps.tissue`). The
 optical degradation that turns the *planted* (sharp) footprint into the
-*observed* (blurred, attenuated) one is the next step, ``optics`` (migration
-Step 5b); until it lands, ``render`` composites the planted footprint directly.
+*observed* (blurred, attenuated) one is the ``optics`` step; until it has run,
+``render`` composites the planted footprint directly.
 """
 
 from __future__ import annotations
@@ -33,10 +33,13 @@ from minisim.scene import Cell, Scene
 from minisim.steps.base import PipelineContext, Step
 
 if TYPE_CHECKING:
+    # CellActivity / CellOptics are referenced only as string Generic bases
+    # (Step["CellActivity"]), which ruff's F401 does not count as a use; pyright
+    # needs them in scope to resolve those forward references.
     from minisim.spec import (
         Acquisition,
-        CellActivity,
-        CellOptics,
+        CellActivity,  # noqa: F401
+        CellOptics,  # noqa: F401
         Optics,
         PlaceNeurons,
     )
@@ -53,7 +56,7 @@ _EPS = 1e-12
 
 # Proximal-dendrite rendering constants (cytosolic morphology only). Dendrites
 # are graded dimmer than the soma and taper to a thread, so blur, defocus, and
-# the sensor noise floor erase them first — the "we lose thin features fast"
+# the sensor noise floor erase them first - the "we lose thin features fast"
 # lesson falls out of the physics for free.
 _DENDRITE_BASE_INTENSITY = 0.6  # planted weight where a dendrite leaves the soma
 _DENDRITE_TIP_INTENSITY = 0.15  # ...tapering to this at the distal tip
@@ -74,21 +77,21 @@ def neuron_footprint(
     dendrite_length_px: float = 0.0,
     dendrite_width_px: float = 0.0,
 ) -> np.ndarray:
-    """A sharp, peak-normalized neuron footprint — the *planted* spatial weight A.
+    """A sharp, peak-normalized neuron footprint - the *planted* spatial weight A.
 
     Models the cell's true (pre-optics) fluorophore support, with **no optical
-    blur** — diffraction/defocus/scatter are applied later by the ``optics`` step.
+    blur** - diffraction/defocus/scatter are applied later by the ``optics`` step.
     It is peak-normalized (``max == 1`` at the soma) so a cell's brightness is
     carried entirely by its calcium trace, not baked into the footprint.
 
     Two GCaMP targeting variants are supported via ``morphology``:
 
-    * ``"soma"`` — soma-targeted GCaMP (e.g. SomaGCaMP / riboGCaMP): a single
+    * ``"soma"`` - soma-targeted GCaMP (e.g. SomaGCaMP / riboGCaMP): a single
       filled, possibly lumpy disk, the soma body only.
-    * ``"cytosolic"`` — standard cytosolic GCaMP (GCaMP6/7/8…): the same soma
+    * ``"cytosolic"`` - standard cytosolic GCaMP (GCaMP6/7/8…): the same soma
       disk plus ``n_dendrites`` tapering proximal dendrites. The dendrites are
       *graded* (dimmer than the soma) and *thin*, so they are exactly what
-      diffraction, defocus, scatter, and the sensor noise floor erase first — a
+      diffraction, defocus, scatter, and the sensor noise floor erase first - a
       faithful demonstration of how quickly fine neurites become unresolvable.
 
     The soma is **identical** in both variants; ``"cytosolic"`` only *adds*
@@ -101,7 +104,7 @@ def neuron_footprint(
     that is more soma-like than a perfect circle while staying coarser than the
     optics will later blur away. Typical cortical somata are ~5–10 µm radius.
 
-    Note — the shape is *physical*, the grid is *sampling*. This routine
+    Note - the shape is *physical*, the grid is *sampling*. This routine
     rasterizes a continuous µm-space shape onto whatever pixel grid the caller
     passes (via ``shape`` and the ``*_px`` arguments). The cell's true geometry is
     intrinsic and independent of pixel size; only how finely it is sampled depends
@@ -109,7 +112,7 @@ def neuron_footprint(
     at the sensor's own scale, which is fine because the result is then blurred by
     the (coarser) optics. But a caller that needs the *same* cell across multiple
     pixel sizes should generate it once on a fixed fine grid and resample, rather
-    than re-rasterizing per grid — re-rasterizing re-draws the ``rng`` noise field
+    than re-rasterizing per grid - re-rasterizing re-draws the ``rng`` noise field
     at the new size and so changes the lumpy outline. This costs nothing in
     fidelity: a 1-photon miniscope is pixel-limited, never diffraction-limited
     (see :meth:`Optics.diffraction_sigma_um`), so a sub-pixel reference grid holds
@@ -121,7 +124,7 @@ def neuron_footprint(
     # The soma is local: it reaches at most radius_px·(1 + irregularity) from the
     # center (the +irregularity headroom covers the lumpy-boundary wobble). Compute
     # the hypot/threshold/noise only inside that bounding box and write it into the
-    # full canvas — bit-for-bit the same as filling the whole grid wherever the soma
+    # full canvas - bit-for-bit the same as filling the whole grid wherever the soma
     # is, just far cheaper than touching every pixel for a cell that occupies a tiny
     # patch. Dendrites are stamped afterwards and self-window (see :func:`_stamp_disk`).
     reach = radius_px * (1.0 + max(irregularity, 0.0)) + 1.0
@@ -146,7 +149,7 @@ def neuron_footprint(
         # A 0/1 membership mask is already peak-normalized (max == 1) by construction.
         footprint[y0:y1, x0:x1] = (dist <= r_eff).astype(float)
     # Cytosolic GCaMP fills the proximal dendrites too. Stamp them *after* the
-    # soma so the soma's RNG draw above is untouched — "soma" stays bit-identical.
+    # soma so the soma's RNG draw above is untouched - "soma" stays bit-identical.
     if morphology == "cytosolic" and n_dendrites > 0 and dendrite_length_px > 0:
         _stamp_dendrites(
             footprint,
@@ -238,7 +241,7 @@ def sample_neurons(
 ) -> list[tuple[float, float, float]]:
     """Sample the soma *distribution* for a ``PlaceNeurons`` spec over a FOV.
 
-    This is the half of ``place_neurons`` that decides **where cells go** — with no
+    This is the half of ``place_neurons`` that decides **where cells go** - with no
     footprint stamping, so it is cheap even at a full sensor FOV (the per-cell
     :func:`neuron_footprint` paints are the expensive part). :class:`PlaceNeuronsStep`
     calls this and then stamps a footprint per returned center; teaching code (the
@@ -252,8 +255,8 @@ def sample_neurons(
 
     The count is **volumetric**: ``round(density_per_mm3 · area_mm2 · thickness)``,
     where the slab thickness is ``depth_range_um`` width **floored at one soma
-    diameter** (``2 · soma_radius_um``) so a thin — or strictly planar
-    (``lo == hi``) — layer still yields cells rather than zero. A thicker slab
+    diameter** (``2 · soma_radius_um``) so a thin - or strictly planar
+    (``lo == hi``) - layer still yields cells rather than zero. A thicker slab
     therefore holds proportionally more cells, the physical behavior. Centers are
     drawn uniformly in ``(y, x)`` across the FOV and in ``z`` across
     ``depth_range_um``; if ``min_distance_um > 0`` they are rejection-sampled
@@ -324,31 +327,32 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
     """Position neurons in a 3-D µm volume and stamp a planted footprint each.
 
     Placement (*where cells go*) is delegated to :func:`sample_neurons`; this step
-    adds the part that function omits — stamping a peak-normalized planted footprint
+    adds the part that function omits - stamping a peak-normalized planted footprint
     (:func:`neuron_footprint`, soma-only or soma + proximal dendrites per
     ``spec.morphology``) at each sampled center. Placement is purely spatial now:
     per-cell brightness is drawn later in ``cell_activity``, not here.
 
-    The cell count is volumetric — ``round(density_per_mm3 · canvas_area_mm2 ·
+    The cell count is volumetric - ``round(density_per_mm3 · canvas_area_mm2 ·
     thickness)`` over the **canvas** area (the scene movie's grid, which a motion
     margin may enlarge beyond the sensor FOV) and the ``depth_range_um`` thickness
     (floored at one soma diameter); see :func:`sample_neurons`. The per-cell depth
-    is consumed later by the ``optics`` step (5b) for the ``in_focus`` /
+    is consumed later by the ``optics`` step for the ``in_focus`` /
     ``detectable`` flags.
     """
 
     name = "place_neurons"
     domain = "cell"
+    consumes_rng = True  # samples cell positions and the irregular footprint noise
 
     def __call__(self, scene: Scene) -> None:
         spec = self.spec
         acq, rng = self.acq, self.rng
         # Fill whatever canvas the scene movie defines, not the bare sensor: a
-        # motion margin (Step 5d) enlarges the canvas beyond the sensor FOV so
+        # motion margin enlarges the canvas beyond the sensor FOV so
         # that real, simulated tissue moves into view at the edges. At margin 0
         # the canvas equals the sensor FOV. Cell positions are in canvas/tissue
         # coordinates (origin = canvas top-left); the FOV crop offset is applied
-        # at finalize (Step 6).
+        # at finalize.
         shape = scene.canvas_shape  # (height, width) of the canvas, no movie alloc
         fov_h_um = shape[0] * acq.pixel_size_um
         fov_w_um = shape[1] * acq.pixel_size_um
@@ -389,7 +393,7 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
 def calcium_kernel(tau_rise_s: float, tau_decay_s: float, fps: float) -> np.ndarray:
     """Double-exponential calcium-indicator kernel, sampled at the frame rate.
 
-    ``k(t) = exp(-t/τ_decay) − exp(-t/τ_rise)`` — the canonical CaLab-style
+    ``k(t) = exp(-t/τ_decay) − exp(-t/τ_rise)`` - the canonical CaLab-style
     impulse response of a fluorescent calcium indicator: a fast rise (``τ_rise``)
     onto a slow decay (``τ_decay``). Sampled at ``1/fps`` intervals out to
     ``5·τ_decay`` (where the response has decayed to <1%) and peak-normalized, so
@@ -526,7 +530,7 @@ def spike_activity_params(activity: float) -> tuple[float, float, float, float]:
     else:
         t, lo, hi = (a - 0.5) / 0.5, _ACTIVITY_MODERATE, _ACTIVITY_DENSE
     p_q2a, p_a2q, active_rate_hz, quiescent_rate_hz = (
-        l + t * (h - l) for l, h in zip(lo, hi)
+        lo_i + t * (hi_i - lo_i) for lo_i, hi_i in zip(lo, hi, strict=True)
     )
     return p_q2a, p_a2q, active_rate_hz, quiescent_rate_hz
 
@@ -553,19 +557,20 @@ class CellActivityStep(Step["CellActivity"]):
 
     Amplitude is biology and enters as a single **per-cell** expression/response gain
     (lognormal spread ``brightness_cv``, mean 1) that scales each cell's *whole* trace
-    — baseline and transients together, so a bright cell is brighter everywhere. No
+    - baseline and transients together, so a bright cell is brighter everywhere. No
     measurement noise is added here: the trace is the clean ground-truth ``C``;
     shot/read noise enter at the ``sensor`` and background at ``neuropil``, so SNR is
     emergent, never set here.
 
     Writes ``cell.trace`` (the calcium trace ``C``), ``cell.spikes`` (the per-frame
-    spike *count* train ``S`` — the fine 300 Hz train is binned away, since nothing
+    spike *count* train ``S`` - the fine 300 Hz train is binned away, since nothing
     downstream recovers spikes faster than the frame rate), and ``cell.amplitude``
     (the per-cell gain); these are the ideal deconvolution targets in ground truth.
     """
 
     name = "cell_activity"
     domain = "cell"
+    consumes_rng = True  # Markov gate, spike draws, per-cell brightness
 
     def __call__(self, scene: Scene) -> None:
         spec = self.spec
@@ -588,7 +593,7 @@ class CellActivityStep(Step["CellActivity"]):
         # batching them would trade back the memory we just stopped wasting on the
         # movie for little speed.
         states = self._gate_states(spec, len(scene.cells), n_total, self.rng)
-        for cell, gain, state in zip(scene.cells, gains, states):
+        for cell, gain, state in zip(scene.cells, gains, states, strict=True):
             fine = self._fine_spikes(state, bins, hr_fps, spec, self.rng)
             # Short kernel vs a long fine train -> overlap-add convolution (O(n log k))
             # beats a full-length FFT (fftconvolve, O(n log n)) and allocates less.
@@ -651,7 +656,7 @@ class CellActivityStep(Step["CellActivity"]):
 
 
 # Candidate focal planes scanned by the yield-maximizing "auto" focus. Over a
-# realistic ~200 µm imaging slab this is ~2 µm spacing — well under the depth of
+# realistic ~200 µm imaging slab this is ~2 µm spacing - well under the depth of
 # field (≈ 8 µm at NA 0.3), so the optimum is sampled finely enough.
 _FOCUS_SCAN_N = 96
 
@@ -670,8 +675,8 @@ def resolve_focal_plane(
     """Resolve ``Acquisition.focal_depth_in_tissue_um`` to a concrete focal depth, µm.
 
     A numeric value is the focal depth below the surface as-is. ``"auto"`` chooses
-    the plane that maximizes **recoverable-cell yield** — the count of cells whose
-    realized transient clears the sensor detection floor — which is what an
+    the plane that maximizes **recoverable-cell yield** - the count of cells whose
+    realized transient clears the sensor detection floor - which is what an
     experimenter actually focuses for, not the sharpest *average* cell.
 
     Each cell at field radius ``r`` focuses at ``focal_eff = focal − shift(r)``
@@ -683,7 +688,7 @@ def resolve_focal_plane(
     same :func:`~minisim.recording.detection_snr` ``finalize`` uses). The scan
     picks the focal with the most detectable cells, ties broken by total in-focus
     signal. Because scatter dims deep cells and the falloff fields dim edge cells,
-    this lands shallower / re-centered versus a naive blur optimum — and shifts
+    this lands shallower / re-centered versus a naive blur optimum - and shifts
     once you account for vignetting, which is the point.
 
     The yield scan needs both ``acq`` (for the optics/sensor physics) and a
@@ -798,7 +803,7 @@ def _photon_budget_at(
 
     All ones when no field was supplied. The cells live in canvas coordinates; the
     field is the sensor FOV, so subtract the motion-margin ``fov_offset_um`` before
-    indexing — the same canvas → FOV mapping ``finalize`` applies.
+    indexing - the same canvas → FOV mapping ``finalize`` applies.
     """
     if photon_field is None:
         return np.ones(len(scored))
@@ -819,7 +824,7 @@ class CellOpticsStep(Step["CellOptics"]):
     """Degrade each planted footprint by diffraction + defocus(|z−focal|) + scatter(z).
 
     Reads each cell's depth ``z`` and the physical ``Optics``/``Tissue``
-    constants (via :meth:`Acquisition.cell_optics`) — there are no tunable
+    constants (via :meth:`Acquisition.cell_optics`) - there are no tunable
     fields. For every cell it:
 
     * stores the two scalars that define the observed footprint -- ``sigma_px``
@@ -832,14 +837,13 @@ class CellOpticsStep(Step["CellOptics"]):
       footprints are near-full-canvas, so storing them dominated memory and disk);
     * sets ``in_focus`` geometrically (``|z − focal_eff| ≤`` the NA-derived depth
       of field), where ``focal_eff`` includes the field-curvature shift;
-    * stores ``optical_brightness`` — the per-cell *peak* scalar from
+    * stores ``optical_brightness`` - the per-cell *peak* scalar from
       ``cell_optics`` (defocus drops the peak as ``σ₀²/σ_total²``; scatter
       ``attenuation(z)`` and ``collection_efficiency ∝ NA²`` dim it). Footprint
       *integral* scales with that same ``gain``, but a cell's *detectability*
-      turns on its peak, which defocus also lowers — hence two distinct
-      quantities. ``detectable`` itself is left for ``finalize()``
-      (Step 6), where this peak combines with the illumination field and the
-      sensor noise floor.
+      turns on its peak, which defocus also lowers - hence two distinct
+      quantities. ``detectable`` itself is left for ``finalize()``, where this
+      peak combines with the illumination field and the sensor noise floor.
 
     The *central* focal plane is resolved once for the whole scene from
     ``Acquisition.focal_depth_in_tissue_um`` (``"auto"`` → the focus that minimizes
@@ -847,7 +851,7 @@ class CellOpticsStep(Step["CellOptics"]):
     :func:`resolve_focal_plane`). When ``Optics.field_curvature_radius_um`` is set,
     each cell's effective focal depth is that plane minus the field-curvature
     sagitta at its distance from the optical axis (canvas center), so off-axis cells
-    focus shallower and blur out toward the edges — the sharp-center/soft-edge look
+    focus shallower and blur out toward the edges - the sharp-center/soft-edge look
     of an un-flattened miniscope. Cells without a planted footprint are skipped.
     """
 

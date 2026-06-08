@@ -1,12 +1,12 @@
-"""Unit tests for the executable step chain (migration Steps 5a–5c).
+"""Unit tests for the executable step chain.
 
-Covers the steps that turn a blank ``Scene`` into a digitized recording — the
-minimal chain ``place_neurons`` → ``cell_activity`` → ``render`` → ``sensor``
-(5a), the ``optics`` degradation and planted/observed split (5b), and the field
+Covers the steps that turn a blank ``Scene`` into a digitized recording - the
+minimal chain ``place_neurons`` → ``cell_activity`` → ``render`` → ``sensor``,
+the ``optics`` degradation and planted/observed split, and the field
 effects ``neuropil`` / ``bleaching`` / ``vignette`` / ``leakage`` plus the
-``vasculature`` no-op placeholder (5c). Each step is exercised in isolation
+``vasculature`` no-op placeholder. Each step is exercised in isolation
 against a hand-built scene (the primary test substrate) as well as in the
-end-to-end chain. ``brain_motion`` (5d) is out of scope here.
+end-to-end chain, with ``brain_motion`` covered in its own section below.
 """
 
 import numpy as np
@@ -32,38 +32,34 @@ from minisim import (
     Vasculature,
     Vignette,
 )
+from minisim.footprint import Footprint
+from minisim.scene import Cell
 from minisim.steps import (
     BleachingStep,
-    BrainMotionStep,
-    CellActivityStep,
     CellOpticsStep,
     IlluminationProfileStep,
     LeakageStep,
     NeuropilStep,
-    PlaceNeuronsStep,
     RenderStep,
     SensorStep,
-    VasculatureStep,
     VignetteStep,
     bleaching_pool,
     bounded_random_walk,
-    combined_falloff_field,
-    physical_brain_motion,
-    radial_falloff,
     calcium_kernel,
+    combined_falloff_field,
     degrade_footprint,
     kernel_timing,
-    spike_activity_params,
     neuron_footprint,
     ou_process,
+    physical_brain_motion,
     population_envelope,
+    radial_falloff,
     resolve_focal_plane,
     sample_neurons,
     shift_and_crop,
+    spike_activity_params,
     tau_from_kernel_timing,
 )
-from minisim.footprint import Footprint
-from minisim.scene import Cell
 
 
 def _acq(n_px=50, fps=20.0, duration_s=2.0, bit_depth=8, **kw):
@@ -198,7 +194,7 @@ def test_place_neurons_is_reproducible():
 
 def test_sample_neurons_matches_the_full_step():
     # The extracted distribution sampler must reproduce, draw-for-draw, the
-    # centers the fused PlaceNeuronsStep would have placed — same spec, same FOV,
+    # centers the fused PlaceNeuronsStep would have placed - same spec, same FOV,
     # same seeded rng. (This is the contract the notebook relies on: visualizing
     # sample_neurons() shows the *real* placement, not an approximation.)
     acq = _acq()
@@ -486,7 +482,7 @@ def test_sensor_is_reproducible():
     np.testing.assert_array_equal(outs[0], outs[1])
 
 
-# --- optics (5b) -----------------------------------------------------------
+# --- optics -----------------------------------------------------------
 
 
 def _cell_with_footprint(acq, z, radius_um=4.0):
@@ -646,7 +642,7 @@ def test_optics_in_focus_surface_cell_is_barely_degraded():
     assert cell.observed_footprint().patch.sum() == pytest.approx(
         cell.footprint_planted.patch.sum() * collection, rel=1e-2
     )
-    assert cell.detectable is None  # deferred to finalize (Step 6)
+    assert cell.detectable is None  # deferred to finalize
 
 
 def test_optics_deeper_cell_is_broader_and_dimmer():
@@ -824,7 +820,7 @@ def test_minimal_chain_place_activity_render_sensor():
     assert movie.var() > 0.0  # spatial/temporal structure, not a flat field
 
 
-# --- neuropil (5c) ---------------------------------------------------------
+# --- neuropil ---------------------------------------------------------
 
 
 def test_ou_process_is_stationary_and_correlated():
@@ -861,7 +857,7 @@ def test_neuropil_records_smooth_spatial_and_temporal_ground_truth():
     assert spatial.shape == (4, 40, 40)
     assert temporal.shape == (4, acq.n_frames)
     # Spatial fields are non-negative, peak-normalized, and smooth (adjacent-pixel
-    # variation well below the field's overall spread — unlike white noise).
+    # variation well below the field's overall spread - unlike white noise).
     field = spatial[0]
     assert field.min() >= 0.0 and field.max() == pytest.approx(1.0)
     assert np.abs(np.diff(field, axis=0)).mean() < field.std()
@@ -1007,7 +1003,7 @@ def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
     assert brightness[-int(acq.fps):].mean() < brightness[: int(acq.fps)].mean()
 
 
-# --- vignette (5c) ---------------------------------------------------------
+# --- vignette ---------------------------------------------------------
 
 
 # --- illumination profile + vignette (Stage 8) -----------------------------
@@ -1094,7 +1090,7 @@ def test_vignette_center_offset_moves_the_bright_spot():
     assert peak_col == pytest.approx(25, abs=1)  # unshifted in x
 
 
-# --- leakage (5c) ----------------------------------------------------------
+# --- leakage ----------------------------------------------------------
 
 
 def test_leakage_uniform_adds_level_everywhere():
@@ -1124,7 +1120,7 @@ def test_leakage_gaussian_peaks_at_center():
     assert (movie == movie[0]).all()  # static in time: every frame identical
 
 
-# --- vasculature placeholder (5c) ------------------------------------------
+# --- vasculature placeholder ------------------------------------------
 
 
 def test_vasculature_is_an_honest_noop():
@@ -1135,12 +1131,12 @@ def test_vasculature_is_an_honest_noop():
     assert scene.truth.neuropil_spatial is None  # no ground-truth contribution
 
 
-# --- scene-grid plumbing (5d-1 refactor) -----------------------------------
+# --- scene-grid plumbing -----------------------------------
 
 
 def _oversized_scene(acq, canvas):
-    """A scene whose movie canvas is larger than the sensor — the shape a motion
-    margin (5d-2) will produce. Built by hand here, before Scene grows margin
+    """A scene whose movie canvas is larger than the sensor - the shape a motion
+    margin will produce. Built by hand here, before Scene grows margin
     support, to prove the steps read their grid from the scene, not the sensor."""
     movie = xr.DataArray(
         np.zeros((acq.n_frames, canvas, canvas)),
@@ -1201,7 +1197,7 @@ def test_field_chain_runs_end_to_end_and_records_ground_truth():
     assert scene.truth.leakage is not None
 
 
-# --- brain_motion (5d) -----------------------------------------------------
+# --- brain_motion -----------------------------------------------------
 
 
 def test_bounded_random_walk_starts_at_zero_and_stays_bounded():
@@ -1321,7 +1317,7 @@ def test_explicit_trajectory_moves_content_by_the_given_shift():
 
 def test_motion_brings_offscreen_tissue_into_view():
     # A bright spot in the top margin (outside the FOV) is cropped away at rest
-    # and brought into view by a downward shift — real tissue, not a fill.
+    # and brought into view by a downward shift - real tissue, not a fill.
     acq = _acq(n_px=20, duration_s=0.1)  # 2 frames
     margin = 6
     scene = Scene.zeros(acq, margin_px=margin)

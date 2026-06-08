@@ -1,10 +1,10 @@
-"""The ``simulate()`` orchestrator — compose a ``Spec`` into a ``Recording``.
+"""The ``simulate()`` orchestrator - compose a ``Spec`` into a ``Recording``.
 
 This is the package's headline entry point: it walks ``spec.steps`` in order,
 building and running each against a shared ``Scene``, then hands the exhausted
 scene to :func:`~minisim.recording.finalize`. The loop itself is
-deliberately tiny — the same readable ``for step in spec.steps`` a learner
-follows — with two responsibilities beyond running the steps:
+deliberately tiny - the same readable ``for step in spec.steps`` a learner
+follows - with two responsibilities beyond running the steps:
 
 * **Motion margin sizing.** If the spec contains a ``brain_motion`` step, the
   tissue canvas must be padded by ≥ the maximum shift so real off-FOV tissue
@@ -13,12 +13,11 @@ follows — with two responsibilities beyond running the steps:
   so callers never hand-size it.
 * **Per-stage snapshots.** With ``Output.save_intermediates`` set, the working
   movie is captured after each *movie-affecting* (non-``cell``-domain) step,
-  keyed by the step's stage ``name`` (``cells_only``, ``neuropil``, …, ``sensor``
-  — see ``simulation-spec.md`` §7). Cell-domain steps fill per-cell records, not
-  the movie, so snapshotting them would only duplicate the prior (often blank)
-  frame.
+  keyed by the step's stage ``name`` (``cells_only``, ``neuropil``, …,
+  ``sensor``). Cell-domain steps fill per-cell records, not the movie, so
+  snapshotting them would only duplicate the prior (often blank) frame.
 
-``until=<stage name>`` stops the run right after that stage — the partial-build
+``until=<stage name>`` stops the run right after that stage - the partial-build
 path the training notebook uses to reveal the pipeline one effect at a time.
 """
 

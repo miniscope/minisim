@@ -1,8 +1,8 @@
-"""Unit tests for local caching (migration Step 7).
+"""Unit tests for local caching.
 
-Covers the zarr persistence layer — ``Recording.save``/``load`` round-trips
+Covers the zarr persistence layer - ``Recording.save``/``load`` round-trips
 (observed movie, every GroundTruth field, optional-field presence, heterogeneous
-snapshots, empty ground truth, atomic overwrite, the spec-hash integrity check) —
+snapshots, empty ground truth, atomic overwrite, the spec-hash integrity check) -
 and the thin ``simulate_cached`` wrapper (miss-writes / hit-reads, cache-dir
 resolution).
 """

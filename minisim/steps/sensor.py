@@ -1,22 +1,22 @@
 """Sensor-domain steps: the static optical fields, then digitization.
 
-The sensor domain is the *static* frame — effects fixed to the optics and
+The sensor domain is the *static* frame - effects fixed to the optics and
 detector that do **not** move with the brain (unlike the tissue-frame steps in
 :mod:`minisim.steps.tissue`). They are applied after the motion
 boundary:
 
-* :class:`IlluminationProfileStep` (``illumination_profile``) — multiplicative
+* :class:`IlluminationProfileStep` (``illumination_profile``) - multiplicative
   radial excitation falloff (the LED lights the FOV unevenly).
-* :class:`VignetteStep` (``vignette``) — multiplicative radial vignette on the
+* :class:`VignetteStep` (``vignette``) - multiplicative radial vignette on the
   emission / return path (collection light loss toward the edges).
-* :class:`LeakageStep` (``leakage``) — additive static baseline, the "glow"
+* :class:`LeakageStep` (``leakage``) - additive static baseline, the "glow"
   minian's glow-removal subtracts.
-* :class:`SensorStep` (``sensor``) — the only step that turns honest radiometric
+* :class:`SensorStep` (``sensor``) - the only step that turns honest radiometric
   intensity into integer ADC counts (shot + read noise, gain, quantization).
 
 The three field steps each record their static ``(height, width)`` field to ground
 truth. The illumination and vignette fields are load-bearing downstream:
-``finalize()`` (Step 6) reads their *product* at each cell's lateral position to
+``finalize()`` reads their *product* at each cell's lateral position to
 finish the per-cell ``detectable`` flag, since both falloffs dim edge cells and so
 shrink the usable FOV below the physical one.
 """
@@ -31,13 +31,20 @@ from minisim.scene import Scene
 from minisim.steps.base import Step
 
 if TYPE_CHECKING:
-    from minisim.spec import IlluminationProfile, Leakage, Sensor, Vignette
+    # Referenced only as string Generic bases (Step["Vignette"] etc.), which ruff's
+    # F401 misses; pyright needs them in scope to resolve the forward references.
+    from minisim.spec import (  # noqa: F401
+        IlluminationProfile,
+        Leakage,
+        Sensor,
+        Vignette,
+    )
 
 
 def radius_grid(shape: tuple[int, int], center_px: tuple[float, float]) -> np.ndarray:
     """Per-pixel Euclidean distance (in pixels) from ``center_px``, shape ``shape``.
 
-    The shared geometry behind both static fields — the radial falloff fields and
+    The shared geometry behind both static fields - the radial falloff fields and
     the gaussian leakage glow are each a radial function of this distance.
     """
     h, w = shape
@@ -80,7 +87,7 @@ def combined_falloff_field(acq, illumination_spec, vignette_spec) -> np.ndarray 
 
     A prediction of the per-pixel photon budget the sensor-domain
     :class:`IlluminationProfileStep` / :class:`VignetteStep` will apply, built
-    straight from the sensor FOV shape and the spec parameters — so it is
+    straight from the sensor FOV shape and the spec parameters - so it is
     identical (by construction, same :func:`radial_falloff`) to what those steps
     record at run time, but is available *before* the pipeline reaches the sensor
     domain. ``None`` when neither field is present (no dimming).
@@ -103,8 +110,8 @@ def combined_falloff_field(acq, illumination_spec, vignette_spec) -> np.ndarray 
 class IlluminationProfileStep(Step["IlluminationProfile"]):
     """Static excitation-illumination falloff: the LED lights the FOV unevenly.
 
-    Multiplies every frame by a :func:`radial_falloff` field — brightest at the
-    center (plus ``center_offset_um``), dimmer toward the edges — modelling the
+    Multiplies every frame by a :func:`radial_falloff` field - brightest at the
+    center (plus ``center_offset_um``), dimmer toward the edges - modelling the
     single excitation LED's uneven illumination of the tissue. Like the vignette it
     is a **sensor-frame** field (fixed to the scope, applied after the motion crop,
     so it does *not* move with the brain) and is recorded ``(height, width)`` to
@@ -131,7 +138,7 @@ class VignetteStep(Step["Vignette"]):
     """Multiplicative radial vignette: emission / return-path light loss (static).
 
     Multiplies every frame by a :func:`radial_falloff` field for the **collection**
-    side — the physical return path trims light rays toward the field edges
+    side - the physical return path trims light rays toward the field edges
     (aperture/relay clipping, plus poorer off-axis optical performance), so corners
     read dimmer regardless of how brightly the tissue was lit. Distinct from the
     illumination profile (excitation) but the same field shape; both are
@@ -159,7 +166,7 @@ def leakage_field(spec, acq, shape: tuple[int, int]) -> np.ndarray:
     Factored out of :class:`LeakageStep` so the streaming video writer can add the
     same glow without running the step. ``uniform`` is a flat ``level``; ``gaussian``
     is a central glow ``level·exp(−r²/2σ²)`` (``sigma_um`` defaults to a quarter of
-    the smaller FOV dimension). No RNG — deterministic from the spec.
+    the smaller FOV dimension). No RNG - deterministic from the spec.
     """
     h, w = shape
     if spec.profile == "uniform":
@@ -171,7 +178,7 @@ def leakage_field(spec, acq, shape: tuple[int, int]) -> np.ndarray:
 
 
 class LeakageStep(Step["Leakage"]):
-    """Additive static baseline — the "glow" minian's glow-removal subtracts.
+    """Additive static baseline - the "glow" minian's glow-removal subtracts.
 
     Adds the same field to every frame: ``uniform`` is a flat ``level``
     everywhere; ``gaussian`` is a central glow ``level·exp(−r²/2σ²)`` peaking at
@@ -196,16 +203,17 @@ class SensorStep(Step["Sensor"]):
     """Intensity → expected photons → digitized counts (the only count-producing step).
 
     Multiplies the working movie by ``photons_per_unit`` to get the per-pixel
-    expected photon count (clipped at 0 — negative intensity from optional trace
+    expected photon count (clipped at 0 - negative intensity from optional trace
     noise is unphysical light), then runs the image sensor's forward model to add
     shot + read noise and quantize to clipped integer counts. The result is
     written back into ``scene.movie`` as integer-valued counts in the float
     working container; the downcast to ``Output.store_dtype`` is a ``finalize()``
-    concern (migration Step 6).
+    concern.
     """
 
     name = "sensor"
     domain = "sensor"
+    consumes_rng = True  # Poisson shot noise + Gaussian read noise per frame
 
     def __call__(self, scene: Scene) -> None:
         # Digitize FRAME BY FRAME, in order, on the shared rng: each frame draws its

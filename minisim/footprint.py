@@ -1,4 +1,4 @@
-"""Sparse, patch-based spatial footprints — a neuron's weight map without the zeros.
+"""Sparse, patch-based spatial footprints - a neuron's weight map without the zeros.
 
 A neuron's spatial footprint (its fluorophore support, the ``A`` of ``A·C``) is
 **local**: a soma plus proximal neurites occupy a small patch, while the canvas it
@@ -9,14 +9,14 @@ lives on is the whole sensor FOV (plus any motion margin). Stored as a dense
 This module stores only what is non-zero. A :class:`Footprint` is a small dense
 ``patch`` plus the ``offset`` of its top-left corner on a known ``canvas_shape``;
 the dense array is ``np.zeros(canvas_shape)`` with ``patch`` written at ``offset``,
-but is never materialized in the pipeline — :class:`~minisim.steps.tissue.RenderStep`
+but is never materialized in the pipeline - :class:`~minisim.steps.tissue.RenderStep`
 composites each cell directly into its own canvas window, and metrics binarize each
 patch in place. A :class:`FootprintStack` is the per-recording bundle of these,
 the form ``GroundTruth.A_planted`` / ``A_observed`` take.
 
 The patch is always the *tight* non-zero bounding box (see :meth:`Footprint.from_dense`),
-so its size is set by the physics — soma radius, dendrite length, and the optical
-PSF width — not by any guessed constant. Patches are held in ``float32``: a
+so its size is set by the physics - soma radius, dendrite length, and the optical
+PSF width - not by any guessed constant. Patches are held in ``float32``: a
 peak-normalized weight in ``[0, 1]`` needs far less than ``float64``'s ~16 digits,
 and the render accumulator (the movie) stays ``float64``, so nothing downstream
 loses precision.
@@ -90,7 +90,7 @@ class Footprint:
 
     @property
     def is_empty(self) -> bool:
-        """True when the patch holds no pixels — no support on the canvas."""
+        """True when the patch holds no pixels - no support on the canvas."""
         return self.patch.size == 0
 
     @property
@@ -119,7 +119,7 @@ class Footprint:
         Returns a footprint on the new ``(height, width)`` canvas whose patch is
         the intersection of this one with the window, offset rebased to the new
         origin. A footprint lying entirely outside the window yields an empty
-        footprint on the new canvas — the signal a cell has left the FOV. This is
+        footprint on the new canvas - the signal a cell has left the FOV. This is
         how :func:`~minisim.recording.finalize` crops canvas footprints to the
         sensor FOV.
         """
@@ -144,7 +144,7 @@ class Footprint:
 
         With ``weights=None``, adds the 2-D patch into the matching ``(H, W)``
         window of ``canvas``. With ``weights`` of shape ``(T,)``, adds the outer
-        product ``weights[:, None, None] · patch`` into the ``(T, H, W)`` window —
+        product ``weights[:, None, None] · patch`` into the ``(T, H, W)`` window -
         the render primitive: a cell's patch scaled frame-by-frame by what it
         emits, written only where it has support. A no-op for an empty footprint.
         """
@@ -212,7 +212,7 @@ def stack_dense(
 
     The render primitive. Footprints are stored sparse (one small patch per cell),
     but compositing is fastest as a single BLAS contraction ``tensordot(C, A)`` over
-    a dense ``A`` — even though that multiplies the zeros, optimized matmul beats a
+    a dense ``A`` - even though that multiplies the zeros, optimized matmul beats a
     Python per-cell loop, and deep cells' optically-scattered footprints are
     near-full-canvas anyway (little sparsity left to exploit). So the stack is
     rebuilt dense here, transiently, only for the contraction; persistent storage
@@ -228,12 +228,12 @@ def stack_dense(
 
 @dataclass(frozen=True)
 class FootprintStack:
-    """A recording's footprints — the sparse form of a dense ``(unit, H, W)`` stack.
+    """A recording's footprints - the sparse form of a dense ``(unit, H, W)`` stack.
 
     Holds one :class:`Footprint` per unit, all sharing :attr:`canvas_shape`. This
     is the type of ``GroundTruth.A_planted`` and ``A_observed``. It supports the
-    access patterns the dense stack did — ``len``, integer and boolean-mask
-    indexing (so ``A[detectable]`` still subsets units), iteration — plus
+    access patterns the dense stack did - ``len``, integer and boolean-mask
+    indexing (so ``A[detectable]`` still subsets units), iteration - plus
     :meth:`to_dense` to recover the ``(unit, H, W)`` array on demand, and the
     ``to_arrays`` / ``from_arrays`` pair the zarr (de)serializer uses.
     """
@@ -294,7 +294,7 @@ class FootprintStack:
                 raise IndexError(
                     f"boolean mask {idx.shape} does not match {len(self.footprints)} units."
                 )
-            chosen = [fp for fp, keep in zip(self.footprints, idx) if keep]
+            chosen = [fp for fp, keep in zip(self.footprints, idx, strict=True) if keep]
         else:
             chosen = [self.footprints[int(i)] for i in idx]
         return FootprintStack(tuple(chosen), self.canvas_shape)
@@ -331,7 +331,7 @@ class FootprintStack:
         """Flatten to three arrays for ragged storage (zarr): offsets, shapes, data.
 
         Returns ``(offsets (n, 2) int32, shapes (n, 2) int32, data (Σ pixels,)
-        float32)`` — patches concatenated in row-major order, sliceable back via
+        float32)`` - patches concatenated in row-major order, sliceable back via
         the per-unit pixel counts in ``shapes``. Round-trips through
         :meth:`from_arrays`.
         """
@@ -365,7 +365,7 @@ class FootprintStack:
         canvas_shape = (int(canvas_shape[0]), int(canvas_shape[1]))
         footprints = []
         pos = 0
-        for (y0, x0), (ph, pw) in zip(offsets, shapes):
+        for (y0, x0), (ph, pw) in zip(offsets, shapes, strict=True):
             count = int(ph) * int(pw)
             patch = data[pos : pos + count].reshape(int(ph), int(pw))
             pos += count

@@ -1,7 +1,7 @@
 """Stream a recording straight to a video file, one frame-chunk at a time.
 
 :func:`~minisim.simulate.simulate` materializes the entire ``(frame, height, width)``
-movie in memory — gigabytes for a long recording, growing linearly with duration.
+movie in memory - gigabytes for a long recording, growing linearly with duration.
 :func:`simulate_video` instead computes the **duration-independent** and **small
 per-frame** state once (footprints, the static optical fields, the motion
 trajectory, the neuropil components, each cell's emission trace), then renders and
@@ -28,12 +28,13 @@ from minisim.footprint import stack_dense
 from minisim.scene import Scene
 from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
+from minisim.steps import STEP_FOR_KIND
 from minisim.steps.motion import brain_motion_shifts, shift_and_crop
 from minisim.steps.sensor import leakage_field
 from minisim.steps.tissue import neuropil_components
 
 # Frames rendered+digitized per chunk. ~64 at 608x608 float64 is ~150 MB of working
-# movie — small versus a full recording, large enough that per-chunk overhead is
+# movie - small versus a full recording, large enough that per-chunk overhead is
 # negligible. Bigger trades memory for slightly less Python overhead.
 _DEFAULT_CHUNK_FRAMES = 64
 
@@ -105,7 +106,7 @@ def _write_gray_video(media, frames, total, path, fov, fps, vmin, vmax, codec, p
 
 def _iter_count_frames(spec: Spec, chunk_frames: int):
     """Yield ``(frame_index, frame)`` count arrays, frame-for-frame equal to
-    ``simulate(spec).observed`` — without ever materializing the full movie.
+    ``simulate(spec).observed`` - without ever materializing the full movie.
 
     Runs the cell-domain steps exactly as ``simulate`` does (same RNG draws, same
     "auto"-focus injection so footprints match), pulls the neuropil/motion/field
@@ -134,9 +135,14 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
 
     # Walk the steps in order, consuming the RNG exactly as simulate() would: run the
     # cell-domain steps (they fill scene.cells), and for the RNG-consuming non-cell
-    # steps call the same generators their steps call. Render/vasculature/illumination/
-    # vignette/leakage/sensor draw no RNG, so building their (deterministic) artifacts
-    # here -- or skipping them -- never desyncs the stream.
+    # steps call the same generators their steps call. Every RNG-consuming step must
+    # be reproduced here in draw order (or, for the sensor, in the chunk loop below),
+    # or the stream silently desyncs from simulate(). The else-branch enforces that
+    # against Step.consumes_rng: a new RNG-consuming step added to the catalog without
+    # being taught here raises loudly instead of corrupting the stream. Render,
+    # vasculature, illumination_profile, and vignette draw no RNG (their fields are
+    # deterministic, already folded into photon_field), so they are applied in the
+    # chunk loop and ignored here.
     for step_spec in spec.steps:
         # Branch on step_spec.kind (not a local copy) so the discriminated union
         # narrows step_spec to the concrete spec type inside each branch.
@@ -153,8 +159,18 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
             shifts = brain_motion_shifts(step_spec, acq, n_frames, rng)
         elif step_spec.kind == "leakage":
             leak = leakage_field(step_spec, acq, fov)
-        # render / vasculature / illumination_profile / vignette / sensor: no RNG,
-        # handled in the chunk loop (or already folded into photon_field).
+        elif step_spec.kind == "sensor":
+            pass  # its per-frame RNG draws happen in the chunk loop below, in order
+        elif STEP_FOR_KIND[step_spec.kind].consumes_rng:
+            raise NotImplementedError(
+                f"step {step_spec.kind!r} consumes RNG but the streaming video writer "
+                "does not reproduce its draws, so simulate_video() would silently "
+                "desync from simulate(). Teach minisim.video._iter_count_frames to "
+                "replay this step's RNG draws in order (and extend the bit-for-bit "
+                "test) before adding it to a streamed spec."
+            )
+        # else: a deterministic non-cell step (render / vasculature /
+        # illumination_profile / vignette) -- no RNG, applied in the chunk loop.
 
     # The cells are now fully populated; rebuild the dense footprint stack (sparse
     # in storage) and per-cell emission (clean calcium dimmed by bleaching when

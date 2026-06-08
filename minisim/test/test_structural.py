@@ -1,6 +1,6 @@
-"""Whole-pipeline structural tests (migration Step 10a).
+"""Whole-pipeline structural tests.
 
-These assert that a full ``simulate()`` recording is *physically coherent* — the
+These assert that a full ``simulate()`` recording is *physically coherent* - the
 foundation the per-stage recovery demos (10b motion, 10c CNMF) stand on. Unlike
 ``test_steps.py`` (which exercises each step's ``build()`` in isolation), these
 run the composed pipeline end to end and check emergent physics that a broken
@@ -11,10 +11,12 @@ chain would violate:
 * photobleaching dims later frames,
 * the static sensor-frame fields are invariant to brain motion.
 
-They use small, fixed-seed specs and decisive (not finely-calibrated) margins —
+They use small, fixed-seed specs and decisive (not finely-calibrated) margins -
 this is a capability demonstration, not the threshold-calibrated replacement
 suite (that lands in a later PR).
 """
+
+from itertools import pairwise
 
 import numpy as np
 
@@ -87,7 +89,7 @@ def test_detectability_falls_with_depth():
     # geometric depth-of-field effect: fully in focus at the surface, gone when deep
     assert in_focus[0] > 0.9
     assert in_focus[-1] < 0.1
-    assert all(later <= earlier + 0.05 for earlier, later in zip(in_focus, in_focus[1:]))
+    assert all(later <= earlier + 0.05 for earlier, later in pairwise(in_focus))
     # detectability tracks the focus down: a meaningful shallow fraction, ~none deep
     assert detectable[0] > 0.2
     assert detectable[-1] < 0.05
@@ -101,8 +103,8 @@ def test_strong_vignette_concentrates_detection_centrally():
         acquisition=_acq(focal_depth_in_tissue_um=5.0, depth_of_field_um=40.0),
         seed=11,
         steps=[
-            # A dense, shallow population so the vignette gradient — not per-cell
-            # amplitude scatter — dominates which cells clear the floor.
+            # A dense, shallow population so the vignette gradient - not per-cell
+            # amplitude scatter - dominates which cells clear the floor.
             PlaceNeurons(density_per_mm3=2.5e6, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),

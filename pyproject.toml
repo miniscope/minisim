@@ -115,10 +115,34 @@ changelog_incremental = true
 
 [tool.ruff]
 target-version = "py310"
+# Teaching notebooks follow notebook conventions (mid-cell imports, explicit
+# int() casts for clarity), so they are linted by hand, not by this gate.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
-select = ["UP"]
+# UP (pyupgrade) plus the high-value, low-noise families: pyflakes (F: unused
+# imports/vars, undefined names), import sorting (I), bugbear (B), a slice of
+# pycodestyle (E4/E7/E9: import/statement/runtime errors, not line length), and
+# ruff's own checks (RUF).
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "RUF"]
+ignore = [
+    # Scientific notation (µ, σ, →, ×, ≈, ⊛) is intentional throughout the
+    # docstrings, comments, and Field descriptions; it is not an ambiguous typo.
+    "RUF001", "RUF002", "RUF003",
+    # Compact `a; b` one-liners are an intentional style choice in a few spots.
+    "E702",
+    # `int(round(x))` is deliberate: round() on a numpy scalar returns a numpy
+    # type, and the int() pins it to a Python int. Not an unnecessary cast.
+    "RUF046",
+]
 fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+# numpydantic's `Shape["* unit, * frame"]` DSL is a string ruff parses as a
+# Python forward annotation, where the leading `*` is a syntax error. It is valid
+# numpydantic, so F722 is a false positive here -- the same root cause that keeps
+# recording.py out of the pyright gate (see [tool.pyright].exclude).
+"minisim/recording.py" = ["F722"]
 
 [tool.pyright]
 include = ["minisim"]

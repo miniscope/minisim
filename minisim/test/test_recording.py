@@ -1,10 +1,10 @@
-"""Unit tests for the typed output + finalize() transform (migration Step 6a).
+"""Unit tests for the typed output + finalize() transform.
 
 Covers ``finalize(scene, spec)`` turning an exhausted ``Scene`` into a
 ``Recording``/``GroundTruth``: array shapes and dtypes, the planted-vs-observed
 footprint split, FOV cropping of margin cells under motion, the per-effect
 ground-truth fields (present vs ``None``), the detectability rule, and
-``detectable_subset()``. The ``simulate()`` orchestrator is Step 6b.
+``detectable_subset()``. The ``simulate()`` orchestrator is tested separately.
 """
 
 import numpy as np

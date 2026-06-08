@@ -1,4 +1,4 @@
-"""Typed simulator output — ``Recording`` / ``GroundTruth`` — and ``finalize()``.
+"""Typed simulator output - ``Recording`` / ``GroundTruth`` - and ``finalize()``.
 
 Where :mod:`minisim.scene` is the mutable working state a pipeline of
 steps fills in, this module is the *frozen, typed result* that state is distilled
@@ -12,8 +12,8 @@ Two things that were deliberately deferred from earlier steps land here:
 * **FOV cropping.** Under motion the tissue steps render on a canvas larger than
   the sensor (see :mod:`minisim.steps.motion`); cells carry canvas-sized
   footprints and canvas-frame positions. ``finalize`` crops them to the sensor
-  FOV at the reference (zero-shift) frame — the template motion correction aligns
-  back to — and drops cells whose reference footprint falls entirely in the
+  FOV at the reference (zero-shift) frame - the template motion correction aligns
+  back to - and drops cells whose reference footprint falls entirely in the
   margin (real tissue, but background that only flickers in transiently, not a
   recoverable unit).
 * **Detectability.** ``detectable`` is not an optics-only property: a cell's peak
@@ -39,7 +39,7 @@ from minisim.scene import MOVIE_DIMS, Cell, Scene
 from minisim.spec import Acquisition, Spec
 
 # Minimum realized peak SNR (signal electrons over the sensor noise floor) for a
-# cell to count as detectable. A provisional value: the Step 10 threshold
+# cell to count as detectable. A provisional value: a future threshold
 # calibration revisits it against observed metric distributions. Kept here, named,
 # rather than buried as a literal so that calibration is a one-line change.
 DETECT_SNR_THRESHOLD = 3.0
@@ -119,7 +119,7 @@ class GroundTruth(BaseModel):
     neuropil_temporal: NDArray[Shape["* component, * frame"], float] | None = None
     neuropil_spatial: NDArray[Shape["* component, * height, * width"], float] | None = None
     neuropil_population: NDArray[Shape["* frame"], float] | None = None
-    # The concrete focal depth (µm) the optics step resolved "auto" to — the plane
+    # The concrete focal depth (µm) the optics step resolved "auto" to - the plane
     # that maximized recoverable yield. A scalar, so persisted as a group attr (not
     # a dataset) by save/load; None when the optics step did not run.
     focal_depth_um: float | None = None
@@ -146,7 +146,7 @@ class GroundTruth(BaseModel):
         """The optically degraded footprints CNMF could recover, dense ``(unit, H, W)``.
 
         Regenerated (and memoized) from the planted footprints and the per-unit
-        ``observed_sigma_px`` / ``observed_gain`` scalars, then cropped to the FOV —
+        ``observed_sigma_px`` / ``observed_gain`` scalars, then cropped to the FOV -
         bit-identical to what the optics step produced. Falls back to
         :attr:`A_planted` when the optics step did not run.
         """
@@ -172,7 +172,7 @@ class GroundTruth(BaseModel):
 
     @property
     def depth_um(self) -> np.ndarray:
-        """Per-cell depth ``z`` (µm) — the first column of ``centers_um``.
+        """Per-cell depth ``z`` (µm) - the first column of ``centers_um``.
 
         Exposed as a derived view rather than stored, to avoid drift. Lateral
         pixel coordinates are likewise ``centers_um[:, 1:] / pixel_size_um`` using
@@ -181,7 +181,7 @@ class GroundTruth(BaseModel):
         return self.centers_um[:, 0]
 
     def detectable_subset(self) -> GroundTruth:
-        """Subset to detectable cells — the fair denominator for recall metrics.
+        """Subset to detectable cells - the fair denominator for recall metrics.
 
         Slices the per-unit fields by the ``detectable`` mask (the planted stack,
         the optics scalars, and ``bleaching`` are all per-unit); the per-effect
@@ -218,8 +218,8 @@ class Recording(BaseModel):
 
     ``observed`` holds the integer-valued sensor counts in a float container (per
     ``Output.store_dtype``). ``snapshots`` is populated only when
-    ``Output.save_intermediates`` is set, keyed by each step's stage ``name`` (see
-    ``simulation-spec.md`` §7); ``stage()`` reads them.
+    ``Output.save_intermediates`` is set, keyed by each step's stage ``name``;
+    ``stage()`` reads them.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -230,7 +230,7 @@ class Recording(BaseModel):
     snapshots: dict[str, xr.DataArray] = Field(default_factory=dict)
 
     def stage(self, name: str) -> xr.DataArray:
-        """Return the snapshot taken after the named stage (see §7 stage names)."""
+        """Return the snapshot taken after the named stage."""
         if name not in self.snapshots:
             raise KeyError(
                 f"Stage '{name}' unavailable. Set Output.save_intermediates=True, "
@@ -245,7 +245,7 @@ class Recording(BaseModel):
         ``{spec.cache_key()}.zarr`` but any path works)::
 
             {path}/
-                spec.json            human-readable, diffable spec (see §13)
+                spec.json            human-readable, diffable spec
                 (group attrs)        format_version, spec_cache_key, gt_present,
                                      snapshot_names
                 observed             (frame, height, width) in store_dtype
@@ -258,7 +258,7 @@ class Recording(BaseModel):
         Footprints are stored sparse (the ``planted`` subgroup holds the ragged
         patch arrays); the observed footprints are not stored -- they regenerate
         from the per-unit ``observed_sigma_px`` / ``observed_gain`` scalars.
-        Snapshot coordinates are not stored — they are the trivial ``arange`` grid
+        Snapshot coordinates are not stored - they are the trivial ``arange`` grid
         over ``MOVIE_DIMS`` and are rebuilt on :meth:`load`. The write is atomic: it
         builds a sibling ``{path}.tmp`` and renames it into place, so a crash never
         leaves a half-written directory that :meth:`load` would trust.
@@ -316,7 +316,7 @@ class Recording(BaseModel):
         """Load a recording written by :meth:`save`, verifying its spec hash.
 
         Reads back ``spec.json``, re-validates it, and checks that its
-        :attr:`Spec.cache_key` matches the one stamped at save time — guarding
+        :attr:`Spec.cache_key` matches the one stamped at save time - guarding
         against a stale cache or a hand-edited ``spec.json``. Snapshots are
         rebuilt as ``DataArray``s over ``MOVIE_DIMS`` with ``arange`` coordinates.
         """
@@ -533,7 +533,7 @@ def _movie_dataarray(values: np.ndarray) -> xr.DataArray:
     return xr.DataArray(
         values,
         dims=list(MOVIE_DIMS),
-        coords={dim: np.arange(size) for dim, size in zip(MOVIE_DIMS, values.shape)},
+        coords={dim: np.arange(size) for dim, size in zip(MOVIE_DIMS, values.shape, strict=True)},
         name="movie",
     )
 
@@ -566,7 +566,7 @@ def _combine_fields(
 def _illumination_at(
     field: np.ndarray | None, y_fov_um: float, x_fov_um: float, pixel_size_um: float
 ) -> float:
-    """Photon-budget factor at a cell's FOV position — the combined illumination ×
+    """Photon-budget factor at a cell's FOV position - the combined illumination ×
     vignette field, or 1.0 when neither is present."""
     if field is None:
         return 1.0
@@ -577,7 +577,7 @@ def _illumination_at(
 
 
 def detection_snr(peak_dF, baseline, gain, read_e):
-    """Transient SNR in detected electrons — the single detectability formula.
+    """Transient SNR in detected electrons - the single detectability formula.
 
     ``gain`` converts a cell's ΔF units to detected electrons
     (``optical_brightness · illumination · photons_per_unit · QE``); ``peak_dF``

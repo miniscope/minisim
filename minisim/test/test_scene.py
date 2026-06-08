@@ -1,9 +1,10 @@
-"""Unit tests for the ``minisim`` runtime substrate (migration Step 4).
+"""Unit tests for the ``minisim`` runtime substrate.
 
 Covers the empty, correctly-shaped ``Scene`` built by ``Scene.zeros`` /
 ``Scene.ones`` (shape, dims, coords, fill, dtype, mutability), the RNG handling,
-and the ``Cell`` / ``GroundTruthBuilder`` defaults. Step bodies that *populate*
-the scene arrive in Step 5; this file only exercises the substrate.
+and the ``Cell`` / ``GroundTruthBuilder`` defaults. The step bodies that
+*populate* the scene live in :mod:`minisim.steps`; this file only exercises the
+substrate.
 """
 
 import numpy as np
@@ -49,7 +50,7 @@ def test_zeros_is_all_zero_and_ones_is_all_one():
 
 def test_working_movie_is_float64():
     # Honest-radiometry accumulation happens in float64; the downcast to
-    # Output.store_dtype is a finalize() concern (Step 6), not here.
+    # Output.store_dtype is a finalize() concern, not here.
     assert Scene.zeros(_tiny_acquisition()).movie.dtype == np.float64
 
 

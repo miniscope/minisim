@@ -14,8 +14,8 @@ import pytest
 
 from minisim import (
     Acquisition,
-    BrainMotion,
     Bleaching,
+    BrainMotion,
     CellActivity,
     CellOptics,
     IlluminationProfile,
@@ -34,8 +34,12 @@ from minisim import (
 from minisim.video import _default_vmax, _iter_count_frames, _to_uint8
 
 
-def _spec(duration_s=1.5, motion=True, sensor=True, n_px=48, seed=3):
-    """A small but complete forward pipeline for streaming tests."""
+def _spec(duration_s=1.5, motion=True, sensor=True, neuropil=True, bleaching=True, n_px=48, seed=3):
+    """A small but complete forward pipeline for streaming tests.
+
+    The optional effects (motion, sensor, neuropil, bleaching) toggle so the
+    bit-for-bit test can sweep a matrix of pipelines, not one fixed shape.
+    """
     acq = Acquisition(
         fps=20.0,
         duration_s=duration_s,
@@ -46,11 +50,12 @@ def _spec(duration_s=1.5, motion=True, sensor=True, n_px=48, seed=3):
     steps = [
         PlaceNeurons(density_per_mm3=40000.0, soma_radius_um=5.0, depth_range_um=(0.0, 60.0)),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
-        Bleaching(),
-        CellOptics(),
-        Render(),
-        Neuropil(n_components=2),
     ]
+    if bleaching:
+        steps.append(Bleaching())
+    steps += [CellOptics(), Render()]
+    if neuropil:
+        steps.append(Neuropil(n_components=2))
     if motion:
         steps.append(BrainMotion())
     steps += [IlluminationProfile(), Vignette(), Leakage()]
@@ -63,12 +68,37 @@ def _stream(spec, chunk):
     return np.stack([f for _, f in _iter_count_frames(spec, chunk)])
 
 
-def test_streamed_frames_match_simulate_bit_for_bit():
-    spec = _spec()
+@pytest.mark.parametrize(
+    "motion,neuropil,bleaching",
+    [
+        (True, True, True),  # the full pipeline
+        (False, True, True),  # no motion -> canvas is the FOV, no shift_and_crop
+        (True, False, True),  # no neuropil
+        (True, True, False),  # no bleaching
+        (False, False, False),  # the minimal count-producing chain
+    ],
+)
+def test_streamed_frames_match_simulate_bit_for_bit(motion, neuropil, bleaching):
+    # Sweep a matrix of pipelines (not one fixed spec): each RNG-consuming effect
+    # toggled, so a draw-order desync in any of them is caught. Sensor stays on so
+    # the counts are integer-valued (exact in float32) and the equality is meaningful.
+    spec = _spec(motion=motion, neuropil=neuropil, bleaching=bleaching)
     observed = simulate(spec).observed
     streamed = _stream(spec, chunk=8)
     assert streamed.shape == observed.shape
     np.testing.assert_array_equal(streamed, observed)  # exact counts, not approximate
+
+
+def test_iter_count_frames_raises_on_unreproduced_rng(monkeypatch):
+    # The streamer reproduces simulate()'s RNG draws by hand; the consumes_rng guard
+    # is what stops a newly RNG-consuming step from silently desyncing the stream.
+    # Flip render's flag (render is a deterministic non-cell step, normally handled
+    # in the chunk loop) to stand in for such a step: the walk must refuse loudly.
+    from minisim.steps.tissue import RenderStep
+
+    monkeypatch.setattr(RenderStep, "consumes_rng", True)
+    with pytest.raises(NotImplementedError, match="consumes RNG"):
+        _stream(_spec(), chunk=8)
 
 
 def test_stream_is_chunk_size_invariant():

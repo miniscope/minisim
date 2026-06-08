@@ -3,14 +3,15 @@
 Each step is the runtime counterpart of a ``StepSpec`` (see
 :mod:`minisim.spec`): a small callable that mutates a ``Scene`` in
 place, returned by the spec's ``build()`` method. They are organized by pipeline
-domain — ``cell`` → ``tissue`` → ``motion`` → ``sensor`` — mirroring the forward
+domain - ``cell`` → ``tissue`` → ``motion`` → ``sensor`` - mirroring the forward
 order biology → optics → motion → sensor.
 
-Migration Step 5a lands the minimal runnable chain (``place_neurons`` →
-``cell_activity`` → ``render`` → ``sensor``); optics is 5b, the field effects
+The minimal runnable chain is ``place_neurons`` → ``cell_activity`` → ``render``
+→ ``sensor``; ``optics`` degrades the footprints, the field effects
 (``neuropil``/``bleaching``/``vignette``/``leakage``, plus the ``vasculature``
-no-op placeholder) are 5c, and ``brain_motion`` is 5d — the full forward
-pipeline. The :class:`Step` base and the physics helpers
+no-op placeholder) layer on top, and ``brain_motion`` is the brain→sensor frame
+boundary - together the full forward pipeline. The :class:`Step` base and the
+physics helpers
 (:func:`calcium_kernel`, :func:`neuron_footprint`, :func:`bleaching_pool`,
 :func:`ou_process`, :func:`bounded_random_walk`, …) are exposed here for direct
 unit testing and teaching.
@@ -65,7 +66,7 @@ from minisim.steps.tissue import (
 #: table *is* the relationship between a spec and its executable step;
 #: ``StepSpec.build`` looks the class up here rather than each spec hardcoding an
 #: import. It lives in the steps package (not ``spec``) because the step modules
-#: depend, through ``recording``, back on ``spec`` — so ``spec`` cannot import the
+#: depend, through ``recording``, back on ``spec`` - so ``spec`` cannot import the
 #: classes at module load. ``test_spec`` asserts it stays in 1:1 sync with the
 #: spec ``kind`` catalog.
 STEP_FOR_KIND: dict[str, type[Step]] = {
@@ -103,8 +104,8 @@ __all__ = [
     "brain_motion_shifts",
     "calcium_kernel",
     "combined_falloff_field",
-    "falloff_center_px",
     "degrade_footprint",
+    "falloff_center_px",
     "kernel_timing",
     "leakage_field",
     "neuron_footprint",
@@ -118,7 +119,7 @@ __all__ = [
     "resolve_focal_plane",
     "sample_neurons",
     "shift_and_crop",
+    "smooth_spatial_field",
     "spike_activity_params",
     "tau_from_kernel_timing",
-    "smooth_spatial_field",
 ]

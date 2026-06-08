@@ -1,16 +1,16 @@
 """Tissue-domain steps: composite the cells, then add brain-bound field effects.
 
-The tissue domain is the brain-frame stack — everything that moves rigidly with
-the tissue under :mod:`~minisim` motion (Step 5d), as opposed to the
+The tissue domain is the brain-frame stack - everything that moves rigidly with
+the tissue under :mod:`~minisim` motion, as opposed to the
 static optics/sensor fields (:mod:`minisim.steps.sensor`). It opens
 with ``render`` (the cell→image boundary) and then layers the diffuse/global
 effects that ride on top of the cells:
 
-* :class:`RenderStep` (``cells_only``) — composite ``Σ footprint·trace`` into the
+* :class:`RenderStep` (``cells_only``) - composite ``Σ footprint·trace`` into the
   movie; the first step to write ``scene.movie``.
-* :class:`NeuropilStep` (``neuropil``) — additive diffuse background, a smooth
+* :class:`NeuropilStep` (``neuropil``) - additive diffuse background, a smooth
   spatial field modulated by a slow temporal envelope.
-* :class:`VasculatureStep` (``vasculature``) — honest no-op placeholder; the
+* :class:`VasculatureStep` (``vasculature``) - honest no-op placeholder; the
   absorbing-vessel model is deferred to v1.1.
 
 All run before the motion boundary, so a later ``brain_motion`` step translates
@@ -38,7 +38,9 @@ from minisim.scene import Scene
 from minisim.steps.base import PipelineContext, Step
 
 if TYPE_CHECKING:
-    from minisim.spec import Bleaching, Neuropil, Render, Vasculature
+    # Referenced only as string Generic bases (Step["Render"] etc.), which ruff's
+    # F401 misses; pyright needs them in scope to resolve the forward references.
+    from minisim.spec import Bleaching, Neuropil, Render, Vasculature  # noqa: F401
 
 # Guards a divide-by-peak for a degenerate (flat) smooth field; far below any
 # physically meaningful intensity.
@@ -46,7 +48,7 @@ _EPS = 1e-12
 
 # Temporal fluctuation depth of the neuropil envelope, as the log-space sigma of
 # its mean-1 lognormal modulation (see :func:`neuropil_envelope`). A fixed v1
-# constant — slow background *drifts* by tens of percent rather than blinking;
+# constant - slow background *drifts* by tens of percent rather than blinking;
 # per-component variability could become a spec field later.
 _NEUROPIL_FLUCT_LOG_STD = 0.4
 
@@ -55,11 +57,11 @@ class RenderStep(Step["Render"]):
     """Composite ``Σ_i footprint_i · trace_i`` additively into the movie.
 
     Each cell contributes its footprint scaled, frame by frame, by the light it
-    actually *emits* — its calcium trace ``C`` times its bleaching envelope ``B``
+    actually *emits* - its calcium trace ``C`` times its bleaching envelope ``B``
     when ``bleaching`` has run (the trace is the clean calcium; ``B`` is the
     intact-fluorophore fraction that fades it), else just ``C``. The *observed*
     (optically degraded) footprint is used when present; until the ``optics`` step
-    (5b) populates it, the *planted* (sharp) footprint is used — so the minimal
+    populates it, the *planted* (sharp) footprint is used - so the minimal
     chain renders sharp cells, and gains optical realism for free once optics
     lands, with no change here. Cells missing a footprint or a trace are skipped
     (e.g. before ``cell_activity`` has run), and an empty scene leaves the movie
@@ -126,7 +128,7 @@ def ou_process(n: int, tau_frames: float, rng: np.random.Generator) -> np.ndarra
     variance at 1, and the first sample is drawn from that stationary
     distribution, so the whole sequence is mean-0/unit-variance with correlation
     time ``τ_frames``. Sequential by construction (``x[t]`` depends on ``x[t-1]``)
-    — an explicit loop, cheap at the recording lengths the simulator targets.
+    - an explicit loop, cheap at the recording lengths the simulator targets.
     """
     if n <= 0:
         return np.zeros(0)
@@ -149,12 +151,12 @@ def population_envelope(
     into an aggregate ``g(t) = Σ_i C_i(t)``, then **causally** low-pass it with a
     one-pole exponential at ``tau_frames`` (``y[t] = a·y[t-1] + (1-a)·g[t]``,
     ``a = exp(-1/τ)``). Causal, not symmetric, because the felt *integrates and
-    lags* activity — the haze swells after the population fires, never before.
+    lags* activity - the haze swells after the population fires, never before.
     Normalized to mean 1 so the absolute level stays carried by ``amplitude``.
 
     Returns ``None`` when there is no signal to drive it (no cells, or all traces
     silent), so the caller falls back to a purely independent background rather
-    than dividing by zero — the neuropil step must stay valid before
+    than dividing by zero - the neuropil step must stay valid before
     ``cell_activity`` has run.
     """
     if not traces:
@@ -177,8 +179,8 @@ def neuropil_envelope(
     """A slow, strictly positive temporal envelope with mean 1.
 
     Exponentiates a unit OU process into a lognormal modulation
-    ``exp(σ·OU − σ²/2)`` (``σ = _NEUROPIL_FLUCT_LOG_STD``): always positive — so
-    the additive background it scales stays non-negative without clipping — and
+    ``exp(σ·OU − σ²/2)`` (``σ = _NEUROPIL_FLUCT_LOG_STD``): always positive - so
+    the additive background it scales stays non-negative without clipping - and
     mean exactly 1, so the neuropil's overall level is set by ``amplitude`` alone,
     not by the temporal fluctuation. The ``−σ²/2`` offset is the lognormal
     mean-1 correction, the same trick used for spike amplitudes in
@@ -196,7 +198,7 @@ def neuropil_components(
     The RNG-consuming generation half of :class:`NeuropilStep`, factored out so the
     step *and* the streaming video writer build the **identical** components from
     the same RNG draws (the draws run in a fixed order: all ``n_components`` spatial
-    fields, then all ``n_components`` temporal envelopes — :func:`population_envelope`
+    fields, then all ``n_components`` temporal envelopes - :func:`population_envelope`
     is deterministic). ``shape`` is the canvas ``(h, w)``; ``n_frames`` the recording
     length. The diffuse background fades with the population-average bleaching
     envelope when ``bleaching`` has run. Returns peak-normalized spatial fields
@@ -236,17 +238,17 @@ class NeuropilStep(Step["Neuropil"]):
     of an independent slow drift ``OUₖ`` :func:`neuropil_envelope` (the unmodeled
     out-of-FOV/out-of-plane tissue) and the shared population driver ``P``
     :func:`population_envelope` (the local cells' aggregate calcium, lagged and
-    smoothed — the dendritic felt brightening as the population fires). Both legs
+    smoothed - the dendritic felt brightening as the population fires). Both legs
     are positive and mean-1, so ``Tₖ`` is too: the absolute level stays set by
     ``amplitude`` (relative to the ``f0 = 1`` cell baseline) and the background is
     non-negative by construction. With no cells yet (``P`` is ``None``) it falls
-    back to pure ``OUₖ``. This is the modeled diffuse mesh only — out-of-focus
+    back to pure ``OUₖ``. This is the modeled diffuse mesh only - out-of-focus
     somata are a *separate* background that emerges for free from
     ``place_neurons`` + ``optics``.
 
     The diffuse fluorophore **bleaches with the cells**: when ``bleaching`` has
     run, the whole background is faded by the population-average intact fraction
-    ``meanᵢ Bᵢ(t)`` — the felt is those same neurons' arbors, so it dims as they
+    ``meanᵢ Bᵢ(t)`` - the felt is those same neurons' arbors, so it dims as they
     do (no separate neuropil pool). The fade is folded into the stored temporal
     envelopes, so they remain the true modulation applied.
 
@@ -258,6 +260,7 @@ class NeuropilStep(Step["Neuropil"]):
 
     name = "neuropil"
     domain = "tissue"
+    consumes_rng = True  # smooth-field noise + OU drift in neuropil_components
 
     def __call__(self, scene: Scene) -> None:
         # Grid from the scene canvas (which a motion margin may enlarge beyond
@@ -301,8 +304,8 @@ def bleaching_pool(
     excitation level, ``q`` the bleach susceptibility (per frame, per unit
     emission·intensity), ``τ_turn`` the turnover time in frames. Integrated exactly
     per frame for piecewise-constant emission (unconditionally stable). With the
-    light off (``emission`` or ``intensity`` 0) it relaxes back toward 1 — a dark
-    recovery — so imaging sessions chain by passing the previous ending ``B`` as
+    light off (``emission`` or ``intensity`` 0) it relaxes back toward 1 - a dark
+    recovery - so imaging sessions chain by passing the previous ending ``B`` as
     ``b0``. More active or more brightly lit emitters bleach faster and settle at a
     lower floor ``B* = k_turn / (k_turn + q·intensity·⟨emission⟩)``.
     """
@@ -320,7 +323,7 @@ def bleaching_pool(
 
 
 class BleachingStep(Step["Bleaching"]):
-    """Per-cell, activity-driven fluorophore decay — bleaching fought by turnover.
+    """Per-cell, activity-driven fluorophore decay - bleaching fought by turnover.
 
     Gives each cell an intact-fluorophore envelope ``Bᵢ(t)`` from
     :func:`bleaching_pool`, driven by its own calcium trace (its emission) scaled by
@@ -359,7 +362,7 @@ class BleachingStep(Step["Bleaching"]):
         q = spec.bleach_susceptibility / acq.fps  # per-second coefficient -> per-frame
         tau_frames = acq.s_to_frame(spec.turnover_tau_s)
         dose = self._illumination_dose(scene)
-        for cell, illum in zip(scene.cells, dose):
+        for cell, illum in zip(scene.cells, dose, strict=True):
             if cell.trace is None:
                 continue
             cell.bleach = bleaching_pool(
@@ -371,7 +374,7 @@ class BleachingStep(Step["Bleaching"]):
 
         All ones when no ``IlluminationProfile`` was injected. Otherwise the same
         :func:`~minisim.steps.sensor.radial_falloff` field the illumination step
-        applies (sensor-FOV sized), sampled at each cell's clipped lateral pixel — so
+        applies (sensor-FOV sized), sampled at each cell's clipped lateral pixel - so
         the dose a cell sees matches the brightness its image gets.
         """
         n = len(scene.cells)
@@ -397,7 +400,7 @@ class BleachingStep(Step["Bleaching"]):
 
 
 class VasculatureStep(Step["Vasculature"]):
-    """Honest no-op placeholder — the absorbing-vessel model is deferred to v1.1.
+    """Honest no-op placeholder - the absorbing-vessel model is deferred to v1.1.
 
     The dark, pulsating vasculature mask (a multiplicative absorber driven by slow
     dilation + cardiac motion) is registered in the v1 catalog so the spec surface

@@ -1,4 +1,4 @@
-"""Unit tests for the simulate() orchestrator (migration Step 6b).
+"""Unit tests for the simulate() orchestrator.
 
 Covers the compose loop end-to-end: a recording from a full ``Spec``, seed
 determinism, automatic motion-margin sizing (so motion specs need no hand-sized

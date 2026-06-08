@@ -1,8 +1,8 @@
-"""Unit tests for the ``minisim`` spec surface (migration Step 2).
+"""Unit tests for the ``minisim`` spec surface.
 
 Covers the model contract (``extra="forbid"``, ``frozen``), the unit
 conversions on ``Acquisition``/``Optics``, JSON round-tripping through the
-static ``AnyStep`` discriminated union, ``cache_key`` behavior, and the §11
+static ``AnyStep`` discriminated union, ``cache_key`` behavior, and the
 cross-field validators (hard fails and advisory warnings).
 """
 
@@ -164,7 +164,7 @@ def test_duplicate_kind_fails():
 def test_soma_larger_than_fov_fails():
     # 20 µm radius → 40 µm diameter, far larger than the 12 µm FOV.
     with pytest.raises(ValidationError, match="FOV"):
-        _valid_spec(steps=[PlaceNeurons(soma_radius_um=20.0)] + _minimal_steps()[1:])
+        _valid_spec(steps=[PlaceNeurons(soma_radius_um=20.0), *_minimal_steps()[1:]])
 
 
 def test_unresolvable_decay_fails():
@@ -190,7 +190,7 @@ def test_render_before_its_producers_fails():
 
 def test_absent_prerequisite_is_allowed_for_partial_pipelines():
     # A partial pipeline (cells rendered, no cell_activity / motion / sensor) is
-    # valid: requires enforces order-when-present, not completeness — so a few
+    # valid: requires enforces order-when-present, not completeness - so a few
     # stages can be run to make targeted test data. place_neurons precedes render.
     Spec(acquisition=_tiny_acquisition(), steps=[PlaceNeurons(soma_radius_um=3.0), Render()])
 
@@ -230,12 +230,12 @@ def test_large_motion_warns():
         _valid_spec(steps=steps)
 
 
-# --- the whole step catalog builds (Steps 5a–5d complete) ------------------
+# --- the whole step catalog builds -----------------------------------------
 
 
 def test_every_step_kind_builds():
-    # Every spec in the v1 catalog now returns an executable Step — the full
-    # forward pipeline is wired (5a–5d). None falls back to the base
+    # Every spec in the v1 catalog now returns an executable Step - the full
+    # forward pipeline is wired. None falls back to the base
     # NotImplementedError, and each step self-describes its name and domain.
     acq = _tiny_acquisition()
     rng = np.random.default_rng(0)
@@ -270,11 +270,11 @@ def test_step_registry_matches_spec_catalog():
         s.model_fields["kind"].default for s in StepSpec.__subclasses__()
     }
     assert set(STEP_FOR_KIND) == catalog_kinds
-    for kind, step_cls in STEP_FOR_KIND.items():
+    for step_cls in STEP_FOR_KIND.values():
         assert issubclass(step_cls, Step)
 
 
-# --- Layer-2 physics helpers (Step 3) --------------------------------------
+# --- Layer-2 physics helpers ------------------------------------------------
 # Diffraction
 
 
@@ -316,7 +316,7 @@ def test_attenuation_monotonic_and_bounded():
 
 def test_round_trip_mfp_is_reciprocal_sum_and_steeper_than_either_leg():
     # The excitation + emission legs multiply, so the effective MFP is the
-    # reciprocal sum (1/mfp_eff = 1/mfp_ex + 1/mfp_em) — shorter than either leg.
+    # reciprocal sum (1/mfp_eff = 1/mfp_ex + 1/mfp_em) - shorter than either leg.
     t = Tissue(scatter_mfp_excitation_um=90.0, scatter_mfp_emission_um=110.0)
     assert t.scatter_mfp_um == pytest.approx(1.0 / (1.0 / 90.0 + 1.0 / 110.0))
     assert t.scatter_mfp_um < min(t.scatter_mfp_excitation_um, t.scatter_mfp_emission_um)
@@ -360,7 +360,7 @@ def test_cell_optics_brightness_scales_with_na_squared():
 def test_cell_optics_defocus_conserves_integrated_intensity():
     # Integrated intensity ∝ σ_tot²·brightness = sigma_px²·brightness (px² is a
     # constant factor). Defocus broadens σ and drops the peak but leaves the
-    # integral untouched — only attenuation removes light — so the product is
+    # integral untouched - only attenuation removes light - so the product is
     # invariant to the focal plane for a fixed depth.
     acq = _tiny_acquisition()
     z = 60.0

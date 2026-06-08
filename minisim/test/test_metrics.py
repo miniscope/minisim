@@ -1,4 +1,4 @@
-"""Unit tests for the structural metrics oracle (migration Step 8).
+"""Unit tests for the structural metrics oracle.
 
 Synthetic, fully-controlled inputs with known overlaps and correlations: spatial
 matching (Hungarian-IoU recall/precision/mean_iou, shuffled order, unequal

@@ -7,14 +7,14 @@ a small callable that mutates a :class:`~minisim.scene.Scene` in place.
 ``Acquisition`` (which owns every µm↔px / s↔frame conversion) and the RNG it
 draws from.
 
-A step does exactly one thing to the scene — fill per-cell records, composite
-into the movie, or record a ground-truth contribution — so a single step can be
+A step does exactly one thing to the scene - fill per-cell records, composite
+into the movie, or record a ground-truth contribution - so a single step can be
 constructed and run against a hand-built ``Scene`` in a unit test. That, not the
-full ``simulate()`` loop (migration Step 6), is the primary test substrate.
+full ``simulate()`` loop, is the primary test substrate.
 
 Each step captures the RNG handed to ``build()`` and draws from *that* generator
 (not ``scene.rng``), so a step is reproducible from its construction regardless
-of which scene it is later run against — matching the ``build(acq, rng)``
+of which scene it is later run against - matching the ``build(acq, rng)``
 signature the orchestrator and the unit tests both use.
 """
 
@@ -61,12 +61,19 @@ class PipelineContext:
 class Step(Generic[SpecT]):
     """Base class for an executable pipeline step.
 
-    Subclasses set the two class attributes and implement :meth:`__call__`:
+    Subclasses set the class attributes and implement :meth:`__call__`:
 
-    * ``name`` — the snapshot/stage name (usually the spec ``kind``; ``render``
+    * ``name`` - the snapshot/stage name (usually the spec ``kind``; ``render``
       is the exception, whose stage is ``"cells_only"``).
-    * ``domain`` — the pipeline domain (``cell`` → ``tissue`` → ``motion`` →
+    * ``domain`` - the pipeline domain (``cell`` -> ``tissue`` -> ``motion`` ->
       ``sensor``), the same ordering axis the spec validator checks.
+    * ``consumes_rng`` - whether :meth:`__call__` draws from the RNG (default
+      ``False``). This is the contract the streaming video writer relies on: it
+      reproduces ``simulate()`` bit-for-bit only by replaying every RNG draw in
+      the same order, so a step that consumes RNG must be one the streamer knows
+      how to replay. ``minisim.video._iter_count_frames`` asserts against this
+      flag and refuses to run rather than silently desync if a new
+      RNG-consuming step is added without teaching the streamer to reproduce it.
 
     The constructor stores the originating spec, the acquisition, and the RNG;
     subclasses read parameters off ``self.spec`` and physical conversions off
@@ -75,6 +82,7 @@ class Step(Generic[SpecT]):
 
     name: ClassVar[str]
     domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
+    consumes_rng: ClassVar[bool] = False
 
     def __init__(
         self, spec: SpecT, acq: Acquisition, rng: np.random.Generator
