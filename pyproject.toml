@@ -55,6 +55,7 @@ minisim-notebooks = "minisim.notebooks:main"
 
 [project.urls]
 Homepage = "https://github.com/miniscope/minisim"
+Documentation = "https://minisim.readthedocs.io/"
 Repository = "https://github.com/miniscope/minisim"
 Issues = "https://github.com/miniscope/minisim/issues"
 Changelog = "https://github.com/miniscope/minisim/blob/main/CHANGELOG.md"

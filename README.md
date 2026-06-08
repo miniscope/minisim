@@ -2,6 +2,7 @@
 
 [![pytest](https://github.com/miniscope/minisim/actions/workflows/testandcov.yml/badge.svg)](https://github.com/miniscope/minisim/actions/workflows/testandcov.yml)
 [![codecov](https://codecov.io/gh/miniscope/minisim/branch/main/graph/badge.svg)](https://codecov.io/gh/miniscope/minisim)
+[![Documentation Status](https://readthedocs.org/projects/minisim/badge/?version=latest)](https://minisim.readthedocs.io/en/latest/?badge=latest)
 [![PyPI](https://img.shields.io/pypi/v/minisim.svg)](https://pypi.org/project/minisim/)
 [![Python versions](https://img.shields.io/pypi/pyversions/minisim.svg)](https://pypi.org/project/minisim/)
 [![License](https://img.shields.io/pypi/l/minisim.svg)](https://github.com/miniscope/minisim/blob/main/LICENSE)
@@ -29,6 +30,9 @@ fields), which makes minisim useful for:
 - **Teaching** the anatomy of miniscope data: what each physical effect does to
   the image, via interactive notebooks.
 - **Testing** analysis code with reproducible, parameterized fixtures.
+
+📖 **Full documentation: [minisim.readthedocs.io](https://minisim.readthedocs.io/)** — concepts,
+quickstart, how-to guides, and the API reference.
 
 ## Install
 
