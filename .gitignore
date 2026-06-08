@@ -54,11 +54,16 @@ coverage.xml
 # Environments
 .env
 .venv
+.venv-docs/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Sphinx docs build
+docs/_build/
+docs/_build/.jupyter_cache/
 
 # mypy
 .mypy_cache/
