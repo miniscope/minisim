@@ -6,6 +6,7 @@ the {doc}`basics <../quickstart>`.
 ```{toctree}
 :maxdepth: 1
 
+examples
 populations
 benchmark
 sweep
