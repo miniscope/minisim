@@ -57,7 +57,12 @@ from minisim.steps import (
     sample_neurons,
     smooth_spatial_field,
 )
-from minisim.steps.sensor import falloff_center_px, radial_falloff, radius_grid
+from minisim.steps.sensor import (
+    combined_falloff_field,
+    falloff_center_px,
+    radial_falloff,
+    radius_grid,
+)
 
 # Sandbox geometry / tissue constants (a Miniscope-V4-like scope imaging GCaMP).
 WD_UM = 700.0          # nominal front working distance
@@ -653,7 +658,8 @@ class IlluminationPanel:
     def _cell_snr(self, cell, field):
         # gain = optical brightness x illumination/vignette x exposure x QE; the field
         # sampling and shot+read SNR come from the library, matching finalize().
-        g = ((cell.optical_brightness or 1.0)
+        brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
+        g = (brightness
              * sample_field_at(field, cell.center_um[1], cell.center_um[2], self.px)
              * self.sensor.photons_per_unit * self.qe)
         return float(detection_snr(cell.trace.max() - cell.trace.min(), cell.trace.min(), g, self.read))
@@ -707,11 +713,12 @@ class SensorPanel:
         self.frame = mov[int(np.argmax(mov.reshape(mov.shape[0], -1).sum(axis=1)))]  # liveliest frame
         self.hw = (acq9.image_sensor.n_px_height, acq9.image_sensor.n_px_width)
         self.px, self.qe = acq9.pixel_size_um, acq9.image_sensor.quantum_efficiency
-        # committed illumination x vignette, applied to the intensity before digitizing
-        self.field = np.ones(self.hw)
-        for sp in (s for s in steps if s.kind in ("illumination_profile", "vignette")):
-            self.field = self.field * radial_falloff(
-                self.hw, falloff_center_px(self.hw, acq9, sp.center_offset_um), sp.falloff, sp.exponent)
+        # committed illumination x vignette, applied to the intensity before digitizing;
+        # built from the specs by the same helper the sensor steps use, so it matches by construction
+        illum = next((s for s in steps if s.kind == "illumination_profile"), None)
+        vig = next((s for s in steps if s.kind == "vignette"), None)
+        field = combined_falloff_field(acq9, illum, vig)
+        self.field = field if field is not None else np.ones(self.hw)
         # leakage spatial shape: a central gaussian glow (stray excitation), scaled by the slider
         sig_px = acq9.um_to_px(0.25 * min(acq9.fov_um))
         self.glow = np.exp(-(radius_grid(self.hw, ((self.hw[0] - 1) / 2.0, (self.hw[1] - 1) / 2.0)) ** 2)
@@ -719,10 +726,10 @@ class SensorPanel:
         cells = [c for c in sc.cells if c.in_focus and c.trace is not None]
         cen = ((self.hw[0] - 1) / 2.0 * self.px, (self.hw[1] - 1) / 2.0 * self.px)
         self.rad = np.array([math.hypot(c.center_um[1] - cen[0], c.center_um[2] - cen[1]) for c in cells])
-        self.fcell = np.array([self.field[int(np.clip(round(c.center_um[1] / self.px), 0, self.hw[0] - 1)),
-                                          int(np.clip(round(c.center_um[2] / self.px), 0, self.hw[1] - 1))]
+        self.fcell = np.array([sample_field_at(self.field, c.center_um[1], c.center_um[2], self.px)
                                for c in cells])
-        self.bright = np.array([(c.optical_brightness or 1.0) for c in cells])
+        self.bright = np.array([c.optical_brightness if c.optical_brightness is not None else 1.0
+                                 for c in cells])
         self.peak = np.array([float(c.trace.max() - c.trace.min()) for c in cells])
         self.baseln = np.array([max(float(c.trace.min()), 0.0) for c in cells])
         self.fig = plt.figure(figsize=(11.0, 3.7))

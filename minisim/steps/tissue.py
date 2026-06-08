@@ -337,10 +337,16 @@ def bleaching_floor(q: float, intensity: float, emission: float, tau_turn: float
     ``emission`` 0) the floor is 1 (turnover wins); ``tau_turn → ∞`` (no turnover)
     drives it to 0.
     """
+    if q < 0 or intensity < 0 or emission < 0 or tau_turn < 0:
+        raise ValueError(
+            "bleaching_floor needs non-negative rates; got "
+            f"q={q}, intensity={intensity}, emission={emission}, tau_turn={tau_turn}"
+        )
     k_turn = 1.0 / tau_turn if tau_turn > 0 else 0.0
-    drive = q * intensity * emission
-    denom = k_turn + drive
-    return k_turn / denom if denom > 0 else 1.0
+    denom = k_turn + q * intensity * emission
+    # denom == 0 only when there is neither drive nor turnover: nothing destroys the
+    # pool, so it stays fully intact at 1. With non-negative inputs denom is never < 0.
+    return 1.0 if denom == 0 else k_turn / denom
 
 
 def dark_recovery(b0: float, t, tau_turn: float):
@@ -357,6 +363,8 @@ def dark_recovery(b0: float, t, tau_turn: float):
     chains imaging sessions: a long gap (``t ≫ tau_turn``) restores the signal, a
     short one lets the baseline ratchet down session to session.
     """
+    if tau_turn <= 0:
+        raise ValueError(f"dark_recovery requires tau_turn > 0; got {tau_turn}")
     return 1.0 - (1.0 - b0) * np.exp(-np.asarray(t, dtype=float) / tau_turn)
 
 

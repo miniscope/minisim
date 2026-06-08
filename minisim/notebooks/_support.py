@@ -10,10 +10,12 @@ module load - so importing it without the extra installed fails loudly, by
 design. If these helpers ever earn external use, promote them to a public
 ``minisim.viz``; until then they live here, contained.
 
-The footprint mask / ROI threshold and the per-cell detectability SNR are *not*
-re-derived here - the dashboards call :func:`minisim.metrics.footprint_mask`,
-:func:`minisim.metrics.footprint_roi_trace`, and the recording's detectability
-helpers, so the visuals read the data exactly as the engine does.
+The footprint mask / ROI threshold is *not* re-derived here - the dashboards call
+:func:`minisim.metrics.footprint_mask` and :func:`minisim.metrics.footprint_roi_trace`,
+so the visuals read the data exactly as the engine does. The per-cell detectability
+SNR is the same story one module over: the panels in ``_anatomy_panels.py`` compute it
+with the recording's helpers (:func:`minisim.detection_snr`, :func:`minisim.sample_field_at`)
+and hand the result to :func:`plot_snr_vs_radius` here purely to draw.
 """
 
 from __future__ import annotations
@@ -218,10 +220,7 @@ def build_dashboard_frames(movie, gt, picks, colors, t, vmax, px_um, downsample=
 
     frames = np.empty((n, h, wm + right.shape[1], 3), np.uint8)
     frames[:, :, :wm] = mov_rgb
-    for k in range(n):
-        rc = right.copy()
-        rc[row_top:row_bot, max(xpix[k] - 1, 0):xpix[k] + 1] = (80, 80, 80)
-        frames[k, :, wm:] = rc
+    _paint_right_panel(frames, right, xpix, row_top, row_bot, wm)
     return frames
 
 
@@ -243,6 +242,19 @@ def _cursor_panel(rfig, axts, t, h):
         rgb = ndzoom(rgb, (fy, 1, 1), order=1)
         row_top, row_bot = int(row_top * fy), int(row_bot * fy)
     return rgb, np.clip(xpix.astype(int), 0, wr - 1), row_top, row_bot
+
+
+def _paint_right_panel(frames, right, xpix, row_top, row_bot, x_off):
+    """Place the once-rendered ``right`` panel at column ``x_off`` in every frame,
+    then repaint only the vertical time-cursor column per frame.
+
+    The static panel is broadcast into the output buffer once; per frame we touch
+    just the thin cursor column directly in ``frames`` (no per-frame panel copy).
+    Shared by all three dashboards.
+    """
+    frames[:, :, x_off:x_off + right.shape[1]] = right
+    for k in range(len(frames)):
+        frames[k, row_top:row_bot, x_off + max(xpix[k] - 1, 0):x_off + xpix[k] + 1] = (80, 80, 80)
 
 
 def build_components_frames(spatial, temporal, population, t, downsample=2):
@@ -288,10 +300,7 @@ def build_components_frames(spatial, temporal, population, t, downsample=2):
 
     frames = np.empty((n, h, wm + right.shape[1], 3), np.uint8)
     frames[:, :, :wm] = left
-    for k in range(n):
-        rc = right.copy()
-        rc[row_top:row_bot, max(xpix[k] - 1, 0):xpix[k] + 1] = (80, 80, 80)
-        frames[k, :, wm:] = rc
+    _paint_right_panel(frames, right, xpix, row_top, row_bot, wm)
     return frames
 
 
@@ -330,10 +339,7 @@ def build_neuropil_frames(clean, withbg, gt, picks, colors, t, vmax, px_um, down
     frames[:, :, :wm] = left
     frames[:, :, wm:wm + div] = 60
     frames[:, :, wm + div:wm + div + wm] = mid
-    for k in range(n):
-        rc = right.copy()
-        rc[row_top:row_bot, max(xpix[k] - 1, 0):xpix[k] + 1] = (80, 80, 80)
-        frames[k, :, wm + div + wm:] = rc
+    _paint_right_panel(frames, right, xpix, row_top, row_bot, wm + div + wm)
     return frames
 
 

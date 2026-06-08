@@ -177,6 +177,9 @@ def test_footprint_mask_thresholds_relative_to_peak():
     # a gentler threshold keeps the whole disk; an all-zero footprint masks nothing.
     assert footprint_mask(a, rel=0.05).sum() == int((a > 0).sum())
     assert not footprint_mask(np.zeros((8, 8))).any()
+    # all-negative is a distinct peak<=0 path (peak = max < 0): still all-False, same shape.
+    neg = footprint_mask(-np.ones((5, 5)))
+    assert not neg.any() and neg.shape == (5, 5)
 
 
 def test_footprint_roi_trace_averages_over_the_mask():

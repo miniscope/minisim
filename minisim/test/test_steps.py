@@ -1098,6 +1098,16 @@ def test_bleaching_floor_is_the_pool_fixed_point():
     # Light off (or no turnover) are the two limits: turnover wins -> 1; no turnover -> 0.
     assert bleaching_floor(q, intensity=0.0, emission=emission, tau_turn=tau) == pytest.approx(1.0)
     assert bleaching_floor(q, intensity, emission, tau_turn=float("inf")) == pytest.approx(0.0)
+    # tau_turn == 0 (no turnover) is the same limit, and still equals the pool: under
+    # any positive drive the integrator settles at 0, and the degenerate no-drive /
+    # no-turnover case (denom == 0) falls back to the fully-intact 1.0.
+    settled0 = bleaching_pool(np.full(4000, emission), q=q, tau_turn_frames=0.0, intensity=intensity)
+    assert bleaching_floor(q, intensity, emission, tau_turn=0.0) == pytest.approx(settled0[-1], abs=1e-9)
+    assert bleaching_floor(q, intensity=0.0, emission=0.0, tau_turn=0.0) == pytest.approx(1.0)
+    # negative rates are non-physical and rejected rather than silently returning 1.0.
+    for bad in (dict(q=-q), dict(intensity=-1.0), dict(emission=-1.0), dict(tau_turn=-1.0)):
+        with pytest.raises(ValueError, match="non-negative"):
+            bleaching_floor(**{"q": q, "intensity": intensity, "emission": emission, "tau_turn": tau, **bad})
 
 
 def test_dark_recovery_is_the_pool_zero_input_response():
@@ -1109,6 +1119,11 @@ def test_dark_recovery_is_the_pool_zero_input_response():
     np.testing.assert_allclose(closed, pool, atol=1e-9)
     assert dark_recovery(b0, 0.0, tau) == pytest.approx(b0)  # starts at b0
     assert dark_recovery(b0, 1e9, tau) == pytest.approx(1.0)  # fully recovered after long dark
+    assert np.ndim(dark_recovery(b0, 10.0, tau)) == 0  # scalar t -> 0-d scalar back
+    # a non-positive turnover time is rejected (would divide by zero / diverge).
+    for bad_tau in (0.0, -1.0):
+        with pytest.raises(ValueError, match="tau_turn > 0"):
+            dark_recovery(b0, np.arange(n), bad_tau)
 
 
 def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
