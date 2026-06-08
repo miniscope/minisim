@@ -13,15 +13,26 @@ respond in real time.
 
 :::{note}
 This notebook is **interactive** (it uses `ipywidgets` and runs a live
-simulation), so it is meant to be *run*, not read statically. Launch it locally:
+simulation), so it is meant to be *run*, not read statically.
+:::
+
+### Get the notebook
+
+The notebooks ship inside the package. After installing, copy them out to a
+directory you own with the bundled `minisim-notebooks` command:
 
 ```bash
 pip install "minisim[notebook]"
-jupyter lab minisim/notebooks/training/01_anatomy/01_anatomy.ipynb
+minisim-notebooks ./minisim-notebooks      # copies the bundle(s) here
+cd minisim-notebooks/01_anatomy
+jupyter lab 01_anatomy.ipynb
 ```
-:::
 
-It lives in the repository at
+`minisim-notebooks` takes an optional destination (default `./minisim-notebooks`)
+and `--force` to overwrite an existing copy. No data download is needed: minisim
+*generates* the recording from code as the notebook runs.
+
+Working from a clone of the repository instead? Open it directly at
 [`minisim/notebooks/training/01_anatomy/01_anatomy.ipynb`](https://github.com/miniscope/minisim/blob/main/minisim/notebooks/training/01_anatomy/01_anatomy.ipynb).
 
 The stages mirror the forward chain described in {doc}`../concepts`:

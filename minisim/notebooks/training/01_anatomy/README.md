@@ -4,7 +4,7 @@
 
 This is the first of two training notebooks. It **constructs** a synthetic
 miniscope recording one physically-meaningful stage at a time, using
-[`minisim`](../../../simulation). Each stage follows the same rhythm —
+[`minisim`](https://github.com/miniscope/minisim). Each stage follows the same rhythm —
 *understand* the physics, *explore* it with sliders, then *commit* the values you
 want and move on — so the recording grows in front of you. Because every stage is
 built by hand, the *exact* ground truth is known at each step, which is precisely
@@ -22,7 +22,7 @@ truth.
 No data download is needed — the recording is generated on the fly.
 
 ```bash
-pip install minian            # plus: ipywidgets, matplotlib, mediapy
+pip install "minisim[notebook]"   # engine + ipywidgets, matplotlib, mediapy
 jupyter notebook 01_anatomy.ipynb
 ```
 
@@ -31,7 +31,7 @@ cells are interactive and need a live kernel (e.g. the Stage-1 scope sliders for
 NA / magnification / pixel pitch); in a statically-rendered copy they show their
 default state — run the notebook locally to drag them.
 
-## Dependencies beyond core minian
+## Dependencies beyond core minisim
 
 `ipywidgets` (sliders), `matplotlib` (figures), and `mediapy` (inline movie
 playback, used by the movie stages; it relies on `ffmpeg`). All are lightweight
