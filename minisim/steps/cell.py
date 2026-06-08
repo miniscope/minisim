@@ -27,6 +27,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.signal import oaconvolve
 
+from minisim.footprint import Footprint
 from minisim.recording import DETECT_SNR_THRESHOLD, detection_snr
 from minisim.scene import Cell, Scene
 from minisim.steps.base import PipelineContext, Step
@@ -357,16 +358,23 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
 
         centers = sample_neurons(spec, fov_h_um, fov_w_um, rng)
         for (z, y, x) in centers:
-            footprint = neuron_footprint(
-                shape,
-                (acq.um_to_px(y), acq.um_to_px(x)),
-                radius_px,
-                spec.irregularity,
-                rng,
-                morphology=spec.morphology,
-                n_dendrites=spec.n_dendrites,
-                dendrite_length_px=dendrite_length_px,
-                dendrite_width_px=dendrite_width_px,
+            # Rasterize the cell onto the canvas grid, then keep only its non-zero
+            # patch: a soma + neurites cover a tiny window of a frame that may be a
+            # full sensor FOV, so storing the dense canvas array would be ~98%
+            # zeros. The dense grid here is transient (one cell, freed at once); the
+            # Cell holds the trimmed Footprint. See :mod:`minisim.footprint`.
+            footprint = Footprint.from_dense(
+                neuron_footprint(
+                    shape,
+                    (acq.um_to_px(y), acq.um_to_px(x)),
+                    radius_px,
+                    spec.irregularity,
+                    rng,
+                    morphology=spec.morphology,
+                    n_dendrites=spec.n_dendrites,
+                    dendrite_length_px=dendrite_length_px,
+                    dendrite_width_px=dendrite_width_px,
+                )
             )
             scene.cells.append(
                 Cell(center_um=(z, y, x), footprint_planted=footprint)
@@ -807,47 +815,6 @@ def _photon_budget_at(
     return photon_field[iy, ix]
 
 
-_GAUSS_TRUNCATE = 4.0  # scipy gaussian_filter default; the PSF is exactly 0 beyond
-
-
-def degrade_footprint(
-    planted: np.ndarray, sigma_px: float, gain: float
-) -> np.ndarray:
-    """Apply the optical PSF blur and the multiplicative light-loss to a footprint.
-
-    ``observed = gain · (planted ⊛ Gaussian(sigma_px))``. The Gaussian
-    convolution is the combined diffraction + defocus + scatter point-spread; it
-    is sum-normalized, so it **conserves integrated intensity** — that is what
-    makes *defocus* intensity-conserving (it spreads light: the peak drops but
-    the integral is unchanged). ``gain`` is the flat light-loss that actually
-    removes signal: scatter ``attenuation(z)`` (depth) × ``collection_efficiency``
-    (``∝ NA²``, the objective's light-gathering power). Both are focal-plane
-    independent, so the observed footprint's integral is too. ``mode="constant"``
-    means light blurred past the FOV edge is lost — physically honest for a cell
-    near the boundary.
-
-    A footprint is local (one cell) on a canvas that may be far larger, so the
-    blur is computed only within the cell's bounding box, grown by the PSF's
-    truncation radius (``4·sigma_px``). Beyond that the Gaussian is exactly zero,
-    so the result is **bit-identical** to filtering the whole canvas — just much
-    cheaper when the cell is small relative to the frame.
-    """
-    rows = np.any(planted > 0, axis=1)
-    if not rows.any():
-        return np.zeros(planted.shape, dtype=float)  # empty footprint → nothing to blur
-    cols = np.any(planted > 0, axis=0)
-    y0, y1 = int(np.argmax(rows)), len(rows) - int(np.argmax(rows[::-1]))
-    x0, x1 = int(np.argmax(cols)), len(cols) - int(np.argmax(cols[::-1]))
-    pad = int(np.ceil(_GAUSS_TRUNCATE * sigma_px)) + 1
-    y0, x0 = max(y0 - pad, 0), max(x0 - pad, 0)
-    y1, x1 = min(y1 + pad, planted.shape[0]), min(x1 + pad, planted.shape[1])
-    observed = np.zeros(planted.shape, dtype=float)
-    observed[y0:y1, x0:x1] = gain * gaussian_filter(
-        planted[y0:y1, x0:x1], sigma=sigma_px, mode="constant"
-    )
-    return observed
-
-
 class CellOpticsStep(Step["CellOptics"]):
     """Degrade each planted footprint by diffraction + defocus(|z−focal|) + scatter(z).
 
@@ -855,9 +822,14 @@ class CellOpticsStep(Step["CellOptics"]):
     constants (via :meth:`Acquisition.cell_optics`) — there are no tunable
     fields. For every cell it:
 
-    * writes ``footprint_observed = gain · (planted ⊛ Gaussian(σ_total))`` where
-      ``gain = attenuation(z) · collection_efficiency`` — the blurred, dimmed
-      footprint CNMF could actually recover;
+    * stores the two scalars that define the observed footprint -- ``sigma_px``
+      (the total PSF width) and ``gain = attenuation(z) · collection_efficiency``
+      (the flat light-loss) -- as ``observed_sigma_px`` / ``observed_gain``. The
+      observed footprint ``gain · (planted ⊛ Gaussian(σ_total))`` -- the blurred,
+      dimmed footprint CNMF could recover -- is **not stored**: it is a pure
+      function of those scalars and the planted footprint, so ``render`` and
+      ``GroundTruth.A_observed`` regenerate it on demand (deep cells' observed
+      footprints are near-full-canvas, so storing them dominated memory and disk);
     * sets ``in_focus`` geometrically (``|z − focal_eff| ≤`` the NA-derived depth
       of field), where ``focal_eff`` includes the field-curvature shift;
     * stores ``optical_brightness`` — the per-cell *peak* scalar from
@@ -932,10 +904,9 @@ class CellOpticsStep(Step["CellOptics"]):
             r = math.hypot(cell.center_um[1] - axis_y, cell.center_um[2] - axis_x)
             focal_eff = focal - acq.optics.focal_curvature_shift_um(r)
             sigma_px, brightness = acq.cell_optics(z, focal_eff)
-            cell.footprint_observed = degrade_footprint(
-                cell.footprint_planted,
-                sigma_px,
-                acq.tissue.attenuation(z) * acq.optics.collection_efficiency,
-            )
+            # Keep only the two scalars that define the observed footprint; render
+            # and GroundTruth.A_observed regenerate it via degrade_footprint.
+            cell.observed_sigma_px = sigma_px
+            cell.observed_gain = acq.tissue.attenuation(z) * acq.optics.collection_efficiency
             cell.in_focus = abs(z - focal_eff) <= dof
             cell.optical_brightness = brightness

@@ -62,6 +62,7 @@ from minisim.steps import (
     shift_and_crop,
     tau_from_kernel_timing,
 )
+from minisim.footprint import Footprint
 from minisim.scene import Cell
 
 
@@ -119,7 +120,7 @@ def test_place_neurons_footprint_is_peak_normalized():
     scene = Scene.zeros(acq)
     step(scene)
     for cell in scene.cells:
-        fp = cell.footprint_planted
+        fp = cell.footprint_planted.to_dense()
         assert fp.shape == (50, 50)
         assert fp.max() == pytest.approx(1.0)
         assert fp.min() >= 0.0
@@ -407,8 +408,8 @@ def test_render_is_the_footprint_trace_outer_sum():
     tr1 = np.array([1.0, 2.0, 3.0])
     tr2 = np.array([4.0, 5.0, 6.0])
     scene.cells += [
-        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=fp1, trace=tr1),
-        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=fp2, trace=tr2),
+        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=Footprint.from_dense(fp1), trace=tr1),
+        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=Footprint.from_dense(fp2), trace=tr2),
     ]
     RenderStep(Render(), acq, np.random.default_rng(0))(scene)
     np.testing.assert_allclose(scene.movie.values[:, 2, 3], tr1)
@@ -417,24 +418,29 @@ def test_render_is_the_footprint_trace_outer_sum():
     assert scene.movie.values[:, 0, 0].sum() == 0.0
 
 
-def test_render_prefers_observed_footprint_when_present():
+def test_render_regenerates_observed_footprint_from_optics_scalars():
+    # Once optics has set the per-cell blur scalars, render composites the observed
+    # (regenerated) footprint -- gain·(planted ⊛ Gaussian(sigma)) -- not the raw
+    # planted dot. The observed footprint is not stored; render rebuilds it.
     acq = _acq(n_px=8, duration_s=0.05)  # 1 frame
     scene = Scene.zeros(acq)
     planted = np.zeros((8, 8))
-    planted[1, 1] = 1.0
-    observed = np.zeros((8, 8))
-    observed[4, 4] = 1.0
+    planted[4, 4] = 1.0
     scene.cells.append(
         Cell(
             center_um=(0.0, 0.0, 0.0),
-            footprint_planted=planted,
-            footprint_observed=observed,
+            footprint_planted=Footprint.from_dense(planted),
+            observed_sigma_px=1.0,
+            observed_gain=0.5,
             trace=np.array([2.0]),
         )
     )
     RenderStep(Render(), acq, np.random.default_rng(0))(scene)
-    assert scene.movie.values[0, 4, 4] == pytest.approx(2.0)  # observed used
-    assert scene.movie.values[0, 1, 1] == 0.0  # planted ignored
+    expected = degrade_footprint(
+        Footprint.from_dense(planted), 1.0, 0.5
+    ).to_dense(dtype=float) * 2.0
+    np.testing.assert_allclose(scene.movie.values[0], expected, rtol=1e-5)
+    assert scene.movie.values[0, 4, 4] < 2.0 * 0.5  # blurred: peak below gain·trace
 
 
 def test_render_empty_scene_leaves_movie_untouched():
@@ -486,39 +492,45 @@ def test_sensor_is_reproducible():
 def _cell_with_footprint(acq, z, radius_um=4.0):
     """A single centered cell carrying a clean planted disk at depth ``z``."""
     h, w = acq.image_sensor.n_px_height, acq.image_sensor.n_px_width
-    fp = neuron_footprint(
-        (h, w), (h / 2, w / 2), acq.um_to_px(radius_um), 0.0, np.random.default_rng(0)
+    fp = Footprint.from_dense(
+        neuron_footprint(
+            (h, w), (h / 2, w / 2), acq.um_to_px(radius_um), 0.0, np.random.default_rng(0)
+        )
     )
     y_um, x_um = (h / 2) * acq.pixel_size_um, (w / 2) * acq.pixel_size_um
     return Cell(center_um=(z, y_um, x_um), footprint_planted=fp)
 
 
 def test_degrade_footprint_blur_conserves_sum_and_drops_peak():
-    fp = neuron_footprint(
-        (64, 64),
-        (32.0, 32.0),
-        radius_px=6.0,
-        irregularity=0.0,
-        rng=np.random.default_rng(0),
+    fp = Footprint.from_dense(
+        neuron_footprint(
+            (64, 64),
+            (32.0, 32.0),
+            radius_px=6.0,
+            irregularity=0.0,
+            rng=np.random.default_rng(0),
+        )
     )
     out = degrade_footprint(fp, sigma_px=2.0, gain=1.0)
-    assert out.sum() == pytest.approx(
-        fp.sum(), rel=1e-3
+    assert out.patch.sum() == pytest.approx(
+        fp.patch.sum(), rel=1e-3
     )  # convolution conserves integral
-    assert out.max() < fp.max()  # ...but spreads light, so the peak drops
+    assert out.patch.max() < fp.patch.max()  # ...but spreads light, so the peak drops
 
 
 def test_degrade_footprint_gain_scales_integral():
-    fp = neuron_footprint(
-        (64, 64),
-        (32.0, 32.0),
-        radius_px=6.0,
-        irregularity=0.0,
-        rng=np.random.default_rng(0),
+    fp = Footprint.from_dense(
+        neuron_footprint(
+            (64, 64),
+            (32.0, 32.0),
+            radius_px=6.0,
+            irregularity=0.0,
+            rng=np.random.default_rng(0),
+        )
     )
     full = degrade_footprint(fp, sigma_px=2.0, gain=1.0)
     half = degrade_footprint(fp, sigma_px=2.0, gain=0.5)
-    assert half.sum() == pytest.approx(0.5 * full.sum())
+    assert half.patch.sum() == pytest.approx(0.5 * full.patch.sum())
 
 
 def test_resolve_focal_plane_auto_is_median_and_numeric_passes_through():
@@ -631,8 +643,8 @@ def test_optics_in_focus_surface_cell_is_barely_degraded():
     assert cell.optical_brightness == pytest.approx(collection)
     # the sum-normalized PSF conserves the integral, so the only change is the
     # NA² collection loss: observed integral == planted integral × collection.
-    assert cell.footprint_observed.sum() == pytest.approx(
-        cell.footprint_planted.sum() * collection, rel=1e-2
+    assert cell.observed_footprint().patch.sum() == pytest.approx(
+        cell.footprint_planted.patch.sum() * collection, rel=1e-2
     )
     assert cell.detectable is None  # deferred to finalize (Step 6)
 
@@ -649,9 +661,9 @@ def test_optics_deeper_cell_is_broader_and_dimmer():
 
     shallow, deep = run(10.0), run(180.0)
     assert deep.optical_brightness < shallow.optical_brightness  # attenuation
-    assert deep.footprint_observed.sum() < shallow.footprint_observed.sum()
+    assert deep.observed_footprint().patch.sum() < shallow.observed_footprint().patch.sum()
     assert (
-        deep.footprint_observed.max() < shallow.footprint_observed.max()
+        deep.observed_footprint().patch.max() < shallow.observed_footprint().patch.max()
     )  # broader + dimmer
 
 
@@ -664,7 +676,7 @@ def test_optics_defocus_conserves_observed_integral():
         scene = Scene.zeros(acq)
         scene.cells.append(_cell_with_footprint(acq, z=z, radius_um=3.0))
         CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
-        sums.append(scene.cells[0].footprint_observed.sum())
+        sums.append(scene.cells[0].observed_footprint().patch.sum())
     assert sums == pytest.approx([sums[0]] * 3, rel=1e-2)
 
 
@@ -722,9 +734,11 @@ def test_field_curvature_blurs_off_axis_cells():
     z = 100.0
 
     def cell_at(y_um, x_um):
-        fp = neuron_footprint(
-            (npx, npx), (y_um / px, x_um / px), acq.um_to_px(4.0), 0.0,
-            np.random.default_rng(0),
+        fp = Footprint.from_dense(
+            neuron_footprint(
+                (npx, npx), (y_um / px, x_um / px), acq.um_to_px(4.0), 0.0,
+                np.random.default_rng(0),
+            )
         )
         return Cell(center_um=(z, y_um, x_um), footprint_planted=fp)
 
@@ -735,7 +749,7 @@ def test_field_curvature_blurs_off_axis_cells():
     CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
     assert center.in_focus is True
     assert corner.in_focus is False  # off-axis sagitta pushes it past the DOF
-    assert corner.footprint_observed.max() < center.footprint_observed.max()
+    assert corner.observed_footprint().patch.max() < center.observed_footprint().patch.max()
 
 
 def test_optics_makes_render_use_the_degraded_footprint():
@@ -754,10 +768,10 @@ def test_optics_makes_render_use_the_degraded_footprint():
 
     scene.movie.values[:] = 0.0
     CellOpticsStep(CellOptics(), acq, rng)(scene)
-    RenderStep(Render(), acq, rng)(scene)  # now uses footprint_observed
+    RenderStep(Render(), acq, rng)(scene)  # now regenerates the observed footprint
     observed_peak = scene.movie.values.max()
 
-    assert all(c.footprint_observed is not None for c in scene.cells)
+    assert all(c.observed_sigma_px is not None for c in scene.cells)
     assert observed_peak < planted_peak
 
 
@@ -776,7 +790,7 @@ def test_optics_chain_with_sensor_runs_end_to_end():
     ]
     for sspec in steps:
         sspec.build(acq, rng)(scene)
-    assert all(c.footprint_observed is not None for c in scene.cells)
+    assert all(c.observed_sigma_px is not None for c in scene.cells)
     movie = scene.movie.values
     np.testing.assert_array_equal(movie, np.round(movie))
     assert movie.min() >= 0.0 and movie.max() <= 255.0
@@ -1147,7 +1161,7 @@ def test_steps_fill_the_scene_canvas_not_the_sensor_dims():
         density_per_mm3=250000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
     ).build(acq, np.random.default_rng(0))(scene)
     assert scene.cells, "expected cells placed across the larger canvas"
-    assert all(c.footprint_planted.shape == (30, 30) for c in scene.cells)
+    assert all(c.footprint_planted.canvas_shape == (30, 30) for c in scene.cells)
 
     NeuropilStep(Neuropil(), acq, np.random.default_rng(0))(scene)
     assert scene.truth.neuropil_spatial.shape[1:] == (30, 30)

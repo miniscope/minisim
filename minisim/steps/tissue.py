@@ -33,6 +33,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.signal import lfilter
 
+from minisim.footprint import stack_dense
 from minisim.scene import Scene
 from minisim.steps.base import PipelineContext, Step
 
@@ -72,11 +73,10 @@ class RenderStep(Step["Render"]):
     def __call__(self, scene: Scene) -> None:
         footprints, traces = [], []
         for cell in scene.cells:
-            footprint = (
-                cell.footprint_observed
-                if cell.footprint_observed is not None
-                else cell.footprint_planted
-            )
+            # The observed (optically degraded) footprint is regenerated here from
+            # the planted one rather than stored (see Cell.observed_footprint); it
+            # falls back to the planted footprint until the optics step has run.
+            footprint = cell.observed_footprint()
             if footprint is None or cell.trace is None:
                 continue
             footprints.append(footprint)
@@ -84,7 +84,10 @@ class RenderStep(Step["Render"]):
             traces.append(cell.trace if cell.bleach is None else cell.trace * cell.bleach)
         if not footprints:
             return
-        A = np.stack(footprints)  # (unit, height, width)
+        # Footprints are stored sparse (a small patch each); rebuild the dense
+        # (unit, H, W) stack transiently for the BLAS contraction against the
+        # traces -- faster than a per-cell loop, and the stack is freed at once.
+        A = stack_dense(footprints, scene.canvas_shape)  # (unit, height, width)
         C = np.stack(traces)  # (unit, frame)
         contrib = np.tensordot(C, A, axes=([0], [0]))  # (frame, height, width)
         scene.movie.values[:] += contrib

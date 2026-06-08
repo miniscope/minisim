@@ -32,8 +32,9 @@ import numpy as np
 import xarray as xr
 import zarr
 from numpydantic import NDArray, Shape
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from minisim.footprint import FootprintStack, degrade_footprint
 from minisim.scene import MOVIE_DIMS, Cell, Scene
 from minisim.spec import Acquisition, Spec
 
@@ -46,14 +47,16 @@ DETECT_SNR_THRESHOLD = 3.0
 # On-disk layout for save()/load() (zarr group + sibling spec.json). The format
 # version is stamped in the group attrs so a future layout change can be detected
 # rather than silently misread.
-_FORMAT_VERSION = 1
-# GroundTruth array fields, split by whether they are always present or optional
-# (None when their producing step is absent). Order is the construction order.
+# v2: footprints stored sparse (planted patches; observed regenerated on load).
+_FORMAT_VERSION = 2
+# Plain GroundTruth array fields saved as datasets, split by whether they are always
+# present or optional (None when their producing step is absent). The sparse planted
+# footprints (and the fov crop) are handled separately; A_observed is not stored.
 _GT_REQUIRED = (
-    "A_planted", "A_observed", "C", "S",
-    "centers_um", "amplitude_per_cell", "in_focus", "detectable",
+    "C", "S", "centers_um", "amplitude_per_cell", "in_focus", "detectable",
 )
 _GT_OPTIONAL = (
+    "observed_sigma_px", "observed_gain",
     "shifts", "illumination", "vignette", "leakage", "bleaching",
     "neuropil_temporal", "neuropil_spatial", "neuropil_population",
 )
@@ -62,19 +65,39 @@ _GT_OPTIONAL = (
 class GroundTruth(BaseModel):
     """The per-recording truth: structural targets + per-cell and per-effect fields.
 
-    Numpydantic annotations declare the dim names, dtype, and rank of every array
-    (validated on construction). The **planted vs observed footprint split is
-    load-bearing**: ``A_observed`` is what CNMF can actually recover (tests match
-    against it), while ``A_planted`` is the ideal, optics-free target that
-    quantifies the irreducible limit. Per-effect fields are ``None`` when their
-    step is absent from the recording.
+    The **planted vs observed footprint split is load-bearing**: ``A_observed`` is
+    what CNMF can actually recover (tests match against it), while ``A_planted`` is
+    the ideal, optics-free target that quantifies the irreducible limit. Both are
+    exposed as dense ``(unit, height, width)`` arrays via properties, but neither is
+    *stored* dense:
+
+    * Footprints are stored sparse, as canvas-coordinate patches in :attr:`planted`
+      (a :class:`~minisim.footprint.FootprintStack`); :attr:`fov_offset` /
+      :attr:`fov_shape` crop them to the sensor FOV.
+    * The observed footprint is **not stored at all**: it is the deterministic blur
+      ``gain · (planted ⊛ Gaussian(sigma_px))`` of the planted one, so it is
+      regenerated on demand from the per-unit :attr:`observed_sigma_px` /
+      :attr:`observed_gain` scalars. Deep cells' observed footprints are
+      near-full-canvas, so storing them dominated memory and disk; regenerating is
+      bit-identical and far cheaper to keep.
+
+    Per-effect fields are ``None`` when their step is absent from the recording.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
-    # structural truth ------------------------------------------------------
-    A_planted: NDArray[Shape["* unit, * height, * width"], float]
-    A_observed: NDArray[Shape["* unit, * height, * width"], float]
+    # structural truth (sparse) --------------------------------------------
+    # Canvas-coordinate planted footprints + the crop to the sensor FOV. Stored in
+    # canvas coords (not pre-cropped) so the regenerated observed footprint exactly
+    # matches blur-then-crop even for cells straddling the FOV edge.
+    planted: FootprintStack
+    fov_offset: tuple[int, int]  # (top, left) crop from canvas to sensor FOV
+    fov_shape: tuple[int, int]  # (height, width) of the sensor FOV
+    # Per-unit optics scalars defining the observed footprint; both None when the
+    # optics step did not run (then A_observed falls back to A_planted).
+    observed_sigma_px: NDArray[Shape["* unit"], float] | None = None
+    observed_gain: NDArray[Shape["* unit"], float] | None = None
+
     C: NDArray[Shape["* unit, * frame"], float]
     S: NDArray[Shape["* unit, * frame"], float]
 
@@ -101,10 +124,51 @@ class GroundTruth(BaseModel):
     # a dataset) by save/load; None when the optics step did not run.
     focal_depth_um: float | None = None
 
+    # Memoizes the regenerated dense A_observed (one blur pass over all units), so
+    # repeated reads on the same object are free. A private attr, so it does not
+    # affect equality, serialization, or the frozen field set.
+    _observed_cache: np.ndarray | None = PrivateAttr(default=None)
+
     @property
     def n_units(self) -> int:
         """Number of ground-truth cells (units) in the recording."""
-        return int(self.A_planted.shape[0])
+        return len(self.planted)
+
+    @property
+    def A_planted(self) -> np.ndarray:
+        """The sharp, pre-optics footprints, dense ``(unit, height, width)`` over the FOV."""
+        top, left = self.fov_offset
+        h, w = self.fov_shape
+        return self.planted.crop(top, left, h, w).to_dense(dtype=float)
+
+    @property
+    def A_observed(self) -> np.ndarray:
+        """The optically degraded footprints CNMF could recover, dense ``(unit, H, W)``.
+
+        Regenerated (and memoized) from the planted footprints and the per-unit
+        ``observed_sigma_px`` / ``observed_gain`` scalars, then cropped to the FOV —
+        bit-identical to what the optics step produced. Falls back to
+        :attr:`A_planted` when the optics step did not run.
+        """
+        if self._observed_cache is None:
+            self._observed_cache = self._regenerate_observed()
+        return self._observed_cache
+
+    def _regenerate_observed(self) -> np.ndarray:
+        top, left = self.fov_offset
+        h, w = self.fov_shape
+        if self.observed_sigma_px is None:
+            return self.A_planted  # no optics -> observed == planted
+        observed = []
+        for i, fp in enumerate(self.planted):
+            sigma = float(self.observed_sigma_px[i])
+            if np.isnan(sigma):  # a cell without optics params -> sharp footprint
+                observed.append(fp)
+            else:
+                observed.append(degrade_footprint(fp, sigma, float(self.observed_gain[i])))
+        return FootprintStack(tuple(observed), self.planted.canvas_shape).crop(
+            top, left, h, w
+        ).to_dense(dtype=float)
 
     @property
     def depth_um(self) -> np.ndarray:
@@ -119,14 +183,18 @@ class GroundTruth(BaseModel):
     def detectable_subset(self) -> GroundTruth:
         """Subset to detectable cells — the fair denominator for recall metrics.
 
-        Slices the per-unit arrays by the ``detectable`` mask (``bleaching`` is
-        per-unit too); the per-effect fields (shifts, vignette, neuropil, …) are
-        not per-unit and are carried unchanged.
+        Slices the per-unit fields by the ``detectable`` mask (the planted stack,
+        the optics scalars, and ``bleaching`` are all per-unit); the per-effect
+        fields (shifts, vignette, neuropil, …) are not per-unit and are carried
+        unchanged.
         """
         m = self.detectable
         return GroundTruth(
-            A_planted=self.A_planted[m],
-            A_observed=self.A_observed[m],
+            planted=self.planted[m],
+            fov_offset=self.fov_offset,
+            fov_shape=self.fov_shape,
+            observed_sigma_px=self.observed_sigma_px[m] if self.observed_sigma_px is not None else None,
+            observed_gain=self.observed_gain[m] if self.observed_gain is not None else None,
             C=self.C[m],
             S=self.S[m],
             centers_um=self.centers_um[m],
@@ -141,6 +209,7 @@ class GroundTruth(BaseModel):
             neuropil_temporal=self.neuropil_temporal,
             neuropil_spatial=self.neuropil_spatial,
             neuropil_population=self.neuropil_population,
+            focal_depth_um=self.focal_depth_um,
         )
 
 
@@ -182,8 +251,13 @@ class Recording(BaseModel):
                 observed             (frame, height, width) in store_dtype
                 ground_truth/        the GroundTruth arrays (optional ones only
                                      when not None; listed in the gt_present attr)
+                    planted/         sparse footprints: offsets, shapes, data
+                                     (+ canvas_shape/fov_offset/fov_shape attrs)
                 snapshots/           per-stage movie values, only when non-empty
 
+        Footprints are stored sparse (the ``planted`` subgroup holds the ragged
+        patch arrays); the observed footprints are not stored -- they regenerate
+        from the per-unit ``observed_sigma_px`` / ``observed_gain`` scalars.
         Snapshot coordinates are not stored — they are the trivial ``arange`` grid
         over ``MOVIE_DIMS`` and are rebuilt on :meth:`load`. The write is atomic: it
         builds a sibling ``{path}.tmp`` and renames it into place, so a crash never
@@ -194,18 +268,29 @@ class Recording(BaseModel):
         if tmp.exists():
             shutil.rmtree(tmp)
 
+        gt = self.ground_truth
         root = zarr.open_group(str(tmp), mode="w")
         root.create_dataset("observed", data=np.asarray(self.observed))
 
         gt_group = root.create_group("ground_truth")
         for name in _GT_REQUIRED:
-            gt_group.create_dataset(name, data=np.asarray(getattr(self.ground_truth, name)))
+            gt_group.create_dataset(name, data=np.asarray(getattr(gt, name)))
         present = []
         for name in _GT_OPTIONAL:
-            value = getattr(self.ground_truth, name)
+            value = getattr(gt, name)
             if value is not None:
                 gt_group.create_dataset(name, data=np.asarray(value))
                 present.append(name)
+
+        # Sparse planted footprints: ragged patches flattened to three datasets.
+        offsets, shapes, data = gt.planted.to_arrays()
+        planted_group = gt_group.create_group("planted")
+        planted_group.create_dataset("offsets", data=offsets)
+        planted_group.create_dataset("shapes", data=shapes)
+        planted_group.create_dataset("data", data=data)
+        planted_group.attrs["canvas_shape"] = list(gt.planted.canvas_shape)
+        planted_group.attrs["fov_offset"] = list(gt.fov_offset)
+        planted_group.attrs["fov_shape"] = list(gt.fov_shape)
 
         snapshot_names = sorted(self.snapshots)
         if snapshot_names:
@@ -214,7 +299,7 @@ class Recording(BaseModel):
                 snap_group.create_dataset(name, data=np.asarray(self.snapshots[name].values))
 
         # focal_depth_um is a scalar, not an array: stash it as a group attr.
-        gt_group.attrs["focal_depth_um"] = self.ground_truth.focal_depth_um
+        gt_group.attrs["focal_depth_um"] = gt.focal_depth_um
 
         root.attrs["format_version"] = _FORMAT_VERSION
         root.attrs["spec_cache_key"] = self.spec.cache_key()
@@ -254,6 +339,18 @@ class Recording(BaseModel):
         focal = gt_group.attrs.get("focal_depth_um")
         if focal is not None:
             fields["focal_depth_um"] = float(focal)
+
+        # Rebuild the sparse planted footprints and the FOV crop.
+        planted_group = gt_group["planted"]
+        canvas_shape = tuple(int(v) for v in planted_group.attrs["canvas_shape"])
+        fields["planted"] = FootprintStack.from_arrays(
+            np.asarray(planted_group["offsets"]),
+            np.asarray(planted_group["shapes"]),
+            np.asarray(planted_group["data"]),
+            canvas_shape,
+        )
+        fields["fov_offset"] = tuple(int(v) for v in planted_group.attrs["fov_offset"])
+        fields["fov_shape"] = tuple(int(v) for v in planted_group.attrs["fov_shape"])
         ground_truth = GroundTruth(**fields)
 
         snapshots = {
@@ -311,17 +408,28 @@ class Recording(BaseModel):
 def finalize(scene: Scene, spec: Spec) -> Recording:
     """Distill an exhausted ``Scene`` into a frozen, typed ``Recording``.
 
-    Crops each cell's canvas-sized footprint and canvas-frame position to the
-    sensor FOV (reference frame), drops cells left entirely in the motion margin,
-    assembles the per-cell structural truth, sets ``detectable`` from the realized
-    optical × illumination peak versus the sensor noise floor, reads the
-    per-effect fields off ``scene.truth``, and downcasts the working movie to
-    ``Output.store_dtype`` for ``observed``.
+    Keeps each cell's canvas-coordinate planted footprint (sparse) plus its
+    canvas-frame position rebased to the sensor FOV, drops cells left entirely in
+    the motion margin, records the per-unit optics scalars (so ``A_observed`` can be
+    regenerated rather than stored), assembles the per-cell structural truth, sets
+    ``detectable`` from the realized optical × illumination peak versus the sensor
+    noise floor, reads the per-effect fields off ``scene.truth``, and downcasts the
+    working movie to ``Output.store_dtype`` for ``observed``.
     """
     acq = scene.acq
     fov_h = acq.image_sensor.n_px_height
     fov_w = acq.image_sensor.n_px_width
     n_frames = acq.n_frames
+    # Footprints were stamped on the canvas (sensor FOV + any motion margin); read
+    # the canvas size off them, since a brain_motion step crops scene.movie down to
+    # the FOV after stamping. Falls back to the bare FOV when there are no cells.
+    canvas_h, canvas_w = next(
+        (c.footprint_planted.canvas_shape for c in scene.cells if c.footprint_planted is not None),
+        (fov_h, fov_w),
+    )
+    # Centered crop from the canvas (sensor FOV + any motion margin) down to the FOV.
+    margin_h = (canvas_h - fov_h) // 2
+    margin_w = (canvas_w - fov_w) // 2
 
     sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
     # Both falloff fields are FOV-sized (built post-motion-crop), or None. Their
@@ -330,21 +438,17 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     vignette = scene.truth.vignette
     photon_field = _combine_fields(illumination, vignette)
 
-    planted, observed, traces, spikes, bleaches = [], [], [], [], []
+    planted_fps, traces, spikes, bleaches = [], [], [], []
     centers, amplitudes, in_focus, detectable = [], [], [], []
+    sigmas, gains = [], []
     for cell in scene.cells:
         if cell.footprint_planted is None:
             continue
-        margin_h = (cell.footprint_planted.shape[0] - fov_h) // 2
-        margin_w = (cell.footprint_planted.shape[1] - fov_w) // 2
-        p_crop = _crop(cell.footprint_planted, margin_h, margin_w, fov_h, fov_w)
-        if not p_crop.any():
-            continue  # entirely in the margin -> background, not a recoverable unit
-        raw_obs = cell.footprint_observed
-        o_crop = _crop(
-            raw_obs if raw_obs is not None else cell.footprint_planted,
-            margin_h, margin_w, fov_h, fov_w,
-        )
+        # Drop a cell whose planted footprint, cropped to the FOV, is empty: it sits
+        # entirely in the motion margin -- real tissue, but background that only
+        # flickers in transiently, not a recoverable unit.
+        if cell.footprint_planted.crop(margin_h, margin_w, fov_h, fov_w).is_empty:
+            continue
         z, y_um, x_um = cell.center_um
         y_fov_um = y_um - margin_h * acq.pixel_size_um
         x_fov_um = x_um - margin_w * acq.pixel_size_um
@@ -353,8 +457,10 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         spike = cell.spikes if cell.spikes is not None else np.zeros(n_frames)
         ifocus = cell.in_focus if cell.in_focus is not None else True
 
-        planted.append(p_crop)
-        observed.append(o_crop)
+        # Stored in canvas coords; A_planted/A_observed crop to the FOV on access.
+        planted_fps.append(cell.footprint_planted)
+        sigmas.append(cell.observed_sigma_px if cell.observed_sigma_px is not None else np.nan)
+        gains.append(cell.observed_gain if cell.observed_gain is not None else np.nan)
         traces.append(trace)
         spikes.append(spike)
         bleaches.append(cell.bleach)
@@ -365,9 +471,15 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
             _is_detectable(cell, ifocus, y_fov_um, x_fov_um, photon_field, sensor_spec, acq)
         )
 
+    # Optics ran iff any surviving cell carries a sigma; then keep the per-unit
+    # scalars so A_observed regenerates. Otherwise None -> A_observed == A_planted.
+    optics_ran = any(not np.isnan(s) for s in sigmas)
     gt = GroundTruth(
-        A_planted=_stack(planted, (0, fov_h, fov_w)),
-        A_observed=_stack(observed, (0, fov_h, fov_w)),
+        planted=FootprintStack.from_footprints(planted_fps, (canvas_h, canvas_w)),
+        fov_offset=(margin_h, margin_w),
+        fov_shape=(fov_h, fov_w),
+        observed_sigma_px=np.array(sigmas, dtype=float) if optics_ran else None,
+        observed_gain=np.array(gains, dtype=float) if optics_ran else None,
         C=_stack(traces, (0, n_frames)),
         S=_stack(spikes, (0, n_frames)),
         centers_um=np.array(centers, dtype=float).reshape(-1, 3),
@@ -424,11 +536,6 @@ def _movie_dataarray(values: np.ndarray) -> xr.DataArray:
         coords={dim: np.arange(size) for dim, size in zip(MOVIE_DIMS, values.shape)},
         name="movie",
     )
-
-
-def _crop(field: np.ndarray, top: int, left: int, h: int, w: int) -> np.ndarray:
-    """Crop the centered ``h×w`` sensor FOV out of a (possibly margined) canvas."""
-    return field[top : top + h, left : left + w]
 
 
 def _crop_components(stack: np.ndarray | None, h: int, w: int) -> np.ndarray | None:

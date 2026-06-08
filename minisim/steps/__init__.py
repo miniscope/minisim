@@ -16,13 +16,13 @@ pipeline. The :class:`Step` base and the physics helpers
 unit testing and teaching.
 """
 
+from minisim.footprint import degrade_footprint
 from minisim.steps.base import Step
 from minisim.steps.cell import (
     CellActivityStep,
     CellOpticsStep,
     PlaceNeuronsStep,
     calcium_kernel,
-    degrade_footprint,
     kernel_timing,
     neuron_footprint,
     resolve_focal_plane,

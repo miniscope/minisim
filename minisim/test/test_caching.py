@@ -34,6 +34,7 @@ from minisim import (
     simulate,
     simulate_cached,
 )
+from minisim.footprint import FootprintStack
 
 
 def _acq():
@@ -145,8 +146,9 @@ def test_empty_ground_truth_roundtrips(tmp_path):
     spec = _minimal_spec()
     nf, h, w = spec.acquisition.n_frames, 64, 64
     gt = GroundTruth(
-        A_planted=np.zeros((0, h, w)),
-        A_observed=np.zeros((0, h, w)),
+        planted=FootprintStack.from_footprints([], (h, w)),
+        fov_offset=(0, 0),
+        fov_shape=(h, w),
         C=np.zeros((0, nf)),
         S=np.zeros((0, nf)),
         centers_um=np.zeros((0, 3)),

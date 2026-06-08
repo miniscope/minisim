@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import xarray as xr
 
+from minisim.footprint import Footprint, degrade_footprint
 from minisim.spec import Acquisition
 
 # Movie axis order, matching the convention used by 1p analysis pipelines (e.g.
@@ -54,9 +55,14 @@ class Cell:
     * ``bleach`` — the intact-fluorophore envelope ``B(t)`` from the optional
       ``bleaching`` step; ``render`` emits ``trace · bleach``, leaving ``trace``
       the clean calcium. ``None`` until/unless bleaching runs.
-    * ``footprint_observed`` / ``in_focus`` / ``optical_brightness`` — the
-      optically degraded footprint, the geometric in-focus flag, and the
-      depth-driven peak-brightness scalar, all from the ``optics`` step (5b).
+    * ``observed_sigma_px`` / ``observed_gain`` / ``in_focus`` /
+      ``optical_brightness`` — from the ``optics`` step (5b). The observed
+      (optically degraded) footprint is **not stored**: it is a deterministic
+      function ``gain · (planted ⊛ Gaussian(sigma_px))`` of the planted footprint
+      (see :func:`minisim.footprint.degrade_footprint`), so the optics step keeps
+      only the two scalars and ``render`` / ``GroundTruth.A_observed`` regenerate
+      the footprint on demand. ``in_focus`` is the geometric in-focus flag and
+      ``optical_brightness`` the depth-driven peak-brightness scalar.
     * ``detectable`` is *not* an optics-only property and so is **not** set by
       the optics step: it is a whole-pipeline flag (optical brightness ×
       illumination falloff, judged against the sensor noise floor) assembled in
@@ -67,8 +73,9 @@ class Cell:
     """
 
     center_um: tuple[float, float, float]
-    footprint_planted: np.ndarray | None = None
-    footprint_observed: np.ndarray | None = None
+    footprint_planted: Footprint | None = None
+    observed_sigma_px: float | None = None
+    observed_gain: float | None = None
     trace: np.ndarray | None = None
     spikes: np.ndarray | None = None
     amplitude: float | None = None
@@ -76,6 +83,27 @@ class Cell:
     in_focus: bool | None = None
     optical_brightness: float | None = None
     detectable: bool | None = None
+
+    def observed_footprint(self) -> Footprint | None:
+        """The optically degraded footprint, regenerated from the planted one.
+
+        Returns the planted footprint blurred + dimmed by the optics step's
+        scalars (``observed_sigma_px``/``observed_gain``), or the planted footprint
+        unchanged when the optics step has not run, or ``None`` if the cell has no
+        footprint yet. Regenerated, not stored: it is a deterministic function of
+        the planted footprint (see :func:`minisim.footprint.degrade_footprint`),
+        and deep cells' observed footprints are near-full-canvas, so storing them
+        would dominate memory. ``render`` and ``GroundTruth.A_observed`` call this.
+        """
+        if (
+            self.footprint_planted is None
+            or self.observed_sigma_px is None
+            or self.observed_gain is None
+        ):
+            return self.footprint_planted
+        return degrade_footprint(
+            self.footprint_planted, self.observed_sigma_px, self.observed_gain
+        )
 
 
 @dataclass

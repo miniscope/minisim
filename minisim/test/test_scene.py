@@ -134,7 +134,8 @@ def test_cell_defaults_are_unpopulated():
     assert cell.center_um == (50.0, 10.0, 12.0)
     assert (
         cell.footprint_planted
-        is cell.footprint_observed
+        is cell.observed_sigma_px
+        is cell.observed_gain
         is cell.trace
         is cell.spikes
         is cell.amplitude

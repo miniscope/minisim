@@ -29,6 +29,7 @@ from minisim import (
     Vignette,
     finalize,
 )
+from minisim.footprint import Footprint
 from minisim.scene import Cell
 
 
@@ -52,9 +53,10 @@ def _run(acq, steps, seed=0, margin_px=0):
 
 
 def _dot(shape, iy, ix, value=1.0):
+    """A single-lit-pixel footprint as a Footprint (the form cells now hold)."""
     fp = np.zeros(shape)
     fp[iy, ix] = value
-    return fp
+    return Footprint.from_dense(fp)
 
 
 # --- shapes / types --------------------------------------------------------

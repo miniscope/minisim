@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from minisim.footprint import stack_dense
 from minisim.scene import Scene
 from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
@@ -155,16 +156,17 @@ def _iter_count_frames(spec: Spec, chunk_frames: int):
         # render / vasculature / illumination_profile / vignette / sensor: no RNG,
         # handled in the chunk loop (or already folded into photon_field).
 
-    # The cells are now fully populated; stack the footprints and per-cell emission
-    # (clean calcium dimmed by bleaching when present), exactly as RenderStep does.
+    # The cells are now fully populated; rebuild the dense footprint stack (sparse
+    # in storage) and per-cell emission (clean calcium dimmed by bleaching when
+    # present), exactly as RenderStep does, so the chunked render is bit-for-bit.
     footprints, emissions = [], []
     for cell in scene.cells:
-        fp = cell.footprint_observed if cell.footprint_observed is not None else cell.footprint_planted
+        fp = cell.observed_footprint()  # regenerated from planted (see RenderStep)
         if fp is None or cell.trace is None:
             continue
         footprints.append(fp)
         emissions.append(cell.trace if cell.bleach is None else cell.trace * cell.bleach)
-    A = np.stack(footprints) if footprints else None  # (unit, Hc, Wc)
+    A = stack_dense(footprints, canvas_shape) if footprints else None  # (unit, Hc, Wc)
     CB = np.stack(emissions) if emissions else None  # (unit, frame)
     ppu = sensor_spec.photons_per_unit if sensor_spec is not None else None
 
