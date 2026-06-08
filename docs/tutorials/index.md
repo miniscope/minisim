@@ -18,19 +18,22 @@ simulation), so it is meant to be *run*, not read statically.
 
 ### Get the notebook
 
-The notebooks ship inside the package. After installing, copy them out to a
-directory you own with the bundled `minisim-notebooks` command:
+The notebooks ship inside the package. After installing, list them and copy the
+one you want out to a directory you own with the bundled `minisim-notebooks`
+command:
 
 ```bash
 pip install "minisim[notebook]"
-minisim-notebooks ./minisim-notebooks      # copies the bundle(s) here
+minisim-notebooks list                     # show available notebooks
+minisim-notebooks copy 01_anatomy          # -> ./minisim-notebooks/01_anatomy
 cd minisim-notebooks/01_anatomy
 jupyter lab 01_anatomy.ipynb
 ```
 
-`minisim-notebooks` takes an optional destination (default `./minisim-notebooks`)
-and `--force` to overwrite an existing copy. No data download is needed: minisim
-*generates* the recording from code as the notebook runs.
+`minisim-notebooks copy` takes `--all` to copy every bundle, `-o/--output` to
+choose the destination (default `./minisim-notebooks`), and `--force` to
+overwrite an existing copy. No data download is needed: minisim *generates* the
+recording from code as the notebook runs.
 
 Working from a clone of the repository instead? Open it directly at
 [`minisim/notebooks/training/01_anatomy/01_anatomy.ipynb`](https://github.com/miniscope/minisim/blob/main/minisim/notebooks/training/01_anatomy/01_anatomy.ipynb).

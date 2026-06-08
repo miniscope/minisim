@@ -74,8 +74,9 @@ pip install "minisim[notebook]"    # + the interactive teaching notebooks
 Requires Python >= 3.10. Core dependencies are numpy, scipy, xarray, zarr,
 pydantic, and numpydantic.
 
-The teaching notebooks ship inside the package; copy them out with
-`minisim-notebooks ./minisim-notebooks` (see the {doc}`tutorials <tutorials/index>`).
+The teaching notebooks ship inside the package; list them with
+`minisim-notebooks list` and copy one out with `minisim-notebooks copy 01_anatomy`
+(see the {doc}`tutorials <tutorials/index>`).
 
 ## Where to go next
 

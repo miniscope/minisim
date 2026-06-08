@@ -1,47 +1,119 @@
-"""The bundled-notebooks packaging and the ``minisim-notebooks`` copier."""
+"""The bundled-notebooks packaging and the ``minisim-notebooks`` CLI."""
 
 from __future__ import annotations
 
 import pytest
 
-from minisim.notebooks import bundles_dir, copy_notebooks, main
+from minisim.notebooks import (
+    _description,
+    _print_table,
+    bundles_dir,
+    copy,
+    main,
+    notebooks,
+)
 
 
 def test_bundles_dir_ships_the_anatomy_notebook():
     """The package carries the training bundle (notebook + README)."""
     root = bundles_dir()
     assert root.is_dir()
-    notebooks = list(root.rglob("*.ipynb"))
-    assert notebooks, "no .ipynb shipped under notebooks/training"
+    assert list(root.rglob("*.ipynb")), "no .ipynb shipped under notebooks/training"
     assert (root / "01_anatomy" / "README.md").is_file()
 
 
-def test_copy_notebooks_copies_notebook_and_skips_videos(tmp_path):
-    """A fresh copy carries the notebook but never generated movies."""
-    dest = tmp_path / "out"
-    result = copy_notebooks(dest)
+def test_notebooks_lists_bundles_with_descriptions():
+    """`notebooks()` discovers each bundle and reads its README title."""
+    available = notebooks()
+    assert "01_anatomy" in available
+    # The description comes from the README title line, not the placeholder.
+    assert available["01_anatomy"] != "(no description)"
+    assert available["01_anatomy"]
 
-    assert result == dest
-    assert list(dest.rglob("*.ipynb")), "notebook not copied"
-    assert not list(dest.rglob("*.avi")), "generated video leaked into the copy"
+
+def test_copy_copies_notebook_into_named_subdir_and_skips_videos(tmp_path):
+    """A fresh copy lands under dest/<name> and never carries generated movies."""
+    result = copy("01_anatomy", tmp_path)
+
+    assert result == tmp_path / "01_anatomy"
+    assert list(result.rglob("*.ipynb")), "notebook not copied"
+    assert not list(result.rglob("*.avi")), "generated video leaked into the copy"
 
 
-def test_copy_notebooks_refuses_existing_dir_without_force(tmp_path):
-    dest = tmp_path / "out"
-    copy_notebooks(dest)
+def test_copy_unknown_notebook_raises_keyerror(tmp_path):
+    with pytest.raises(KeyError):
+        copy("does_not_exist", tmp_path)
+
+
+def test_description_falls_back_when_bundle_has_no_readme(tmp_path):
+    """A bundle with no README still gets a (placeholder) description."""
+    assert _description(tmp_path) == "(no description)"
+
+
+def test_description_reads_the_readme_title(tmp_path):
+    (tmp_path / "README.md").write_text("# My Title\n\nbody\n", encoding="utf-8")
+    assert _description(tmp_path) == "My Title"
+
+
+def test_print_table_handles_no_rows(capsys):
+    _print_table([])
+    assert capsys.readouterr().out == ""
+
+
+def test_copy_refuses_existing_dir_without_force(tmp_path):
+    copy("01_anatomy", tmp_path)
     with pytest.raises(FileExistsError):
-        copy_notebooks(dest)
+        copy("01_anatomy", tmp_path)
     # force overwrites in place rather than raising.
-    assert copy_notebooks(dest, force=True) == dest
+    assert copy("01_anatomy", tmp_path, force=True) == tmp_path / "01_anatomy"
 
 
-def test_main_returns_zero_and_reports(tmp_path, capsys):
-    rc = main([str(tmp_path / "out")])
-    assert rc == 0
-    assert "Copied" in capsys.readouterr().out
+def test_cli_list_reports_a_notebook(capsys):
+    assert main(["list"]) == 0
+    assert "01_anatomy" in capsys.readouterr().out
 
 
-def test_main_returns_one_on_existing_dir(tmp_path):
-    dest = tmp_path / "out"
-    assert main([str(dest)]) == 0
-    assert main([str(dest)]) == 1  # second run without --force fails cleanly
+def test_cli_list_on_empty_install_fails_cleanly(capsys, monkeypatch):
+    """With no bundles discoverable, `list` reports and exits non-zero."""
+    monkeypatch.setattr("minisim.notebooks.notebooks", dict)
+    assert main(["list"]) == 1
+    assert "No notebooks" in capsys.readouterr().err
+
+
+def test_cli_copy_by_name_returns_zero_and_reports(tmp_path, capsys):
+    assert main(["copy", "01_anatomy", "-o", str(tmp_path)]) == 0
+    assert "copied 01_anatomy" in capsys.readouterr().out
+    assert (tmp_path / "01_anatomy" / "01_anatomy.ipynb").is_file()
+
+
+def test_cli_copy_all_copies_every_bundle(tmp_path):
+    assert main(["copy", "--all", "-o", str(tmp_path)]) == 0
+    for name in notebooks():
+        assert (tmp_path / name).is_dir()
+
+
+def test_cli_copy_without_name_fails_cleanly(tmp_path, capsys):
+    assert main(["copy", "-o", str(tmp_path)]) == 1
+    assert "name or --all" in capsys.readouterr().err
+
+
+def test_cli_copy_unknown_notebook_fails_cleanly(tmp_path, capsys):
+    assert main(["copy", "does_not_exist", "-o", str(tmp_path)]) == 1
+    assert "unknown notebook" in capsys.readouterr().err
+
+
+def test_cli_copy_existing_dir_fails_without_force(tmp_path):
+    assert main(["copy", "01_anatomy", "-o", str(tmp_path)]) == 0
+    assert main(["copy", "01_anatomy", "-o", str(tmp_path)]) == 1  # no --force
+
+
+def test_cli_copy_force_overwrites_existing(tmp_path):
+    assert main(["copy", "01_anatomy", "-o", str(tmp_path)]) == 0
+    assert main(["copy", "01_anatomy", "-o", str(tmp_path), "--force"]) == 0
+
+
+def test_cli_requires_a_subcommand():
+    """Bare `minisim-notebooks` exits non-zero rather than doing nothing."""
+    with pytest.raises(SystemExit) as exc:
+        main([])
+    assert exc.value.code != 0
