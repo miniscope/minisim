@@ -781,7 +781,7 @@ class CellActivity(StepSpec):
 
 
 class CellOptics(StepSpec):
-    """Per-cell diffraction + defocus(|z − z_f|) + scatter(z) blur & attenuation.
+    """Per-cell diffraction + defocus ``|z − z_f|`` + scatter(z) blur & attenuation.
 
     No tunable fields: blur and attenuation are fully determined by each cell's
     ``z`` plus the physical ``Optics``/``Tissue`` constants on ``Acquisition``.

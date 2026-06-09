@@ -5,27 +5,34 @@ the {doc}`benchmarking guide <../howto/benchmark>` for how they fit together.
 
 ## Spatial matching
 
-```{autofunction} minisim.hungarian_match
+```{eval-rst}
+.. autofunction:: minisim.hungarian_match
 ```
 
-```{autoclass} minisim.Match
+```{eval-rst}
+.. autoclass:: minisim.Match
 ```
 
 ## Temporal scores
 
-```{autofunction} minisim.trace_pearson
+```{eval-rst}
+.. autofunction:: minisim.trace_pearson
 ```
 
-```{autofunction} minisim.spike_precision_recall
+```{eval-rst}
+.. autofunction:: minisim.spike_precision_recall
 ```
 
-```{autoclass} minisim.SpikeScore
+```{eval-rst}
+.. autoclass:: minisim.SpikeScore
 ```
 
 ## Field and motion
 
-```{autofunction} minisim.field_pearson
+```{eval-rst}
+.. autofunction:: minisim.field_pearson
 ```
 
-```{autofunction} minisim.shift_rmse
+```{eval-rst}
+.. autofunction:: minisim.shift_rmse
 ```

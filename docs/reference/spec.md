@@ -6,7 +6,8 @@ It validates the whole pipeline on construction.
 
 ## Spec
 
-```{autopydantic_model} minisim.Spec
+```{eval-rst}
+.. autopydantic_model:: minisim.Spec
 ```
 
 ## Acquisition and physical models
@@ -15,21 +16,26 @@ The acquisition owns all unit conversions between the physical world (µm,
 seconds) and the sampled world (pixels, frames), and composes the three physical
 models below.
 
-```{autopydantic_model} minisim.Acquisition
+```{eval-rst}
+.. autopydantic_model:: minisim.Acquisition
 ```
 
-```{autopydantic_model} minisim.Optics
+```{eval-rst}
+.. autopydantic_model:: minisim.Optics
 ```
 
-```{autopydantic_model} minisim.ImageSensor
+```{eval-rst}
+.. autopydantic_model:: minisim.ImageSensor
 ```
 
-```{autopydantic_model} minisim.Tissue
+```{eval-rst}
+.. autopydantic_model:: minisim.Tissue
 ```
 
 ## Output
 
-```{autopydantic_model} minisim.Output
+```{eval-rst}
+.. autopydantic_model:: minisim.Output
 ```
 
 ## Steps
@@ -38,12 +44,14 @@ models below.
 {py:class}`~minisim.StepSpec`; `AnyStep` is the discriminated union of them.
 Each `kind` may appear at most once in a spec.
 
-```{autopydantic_model} minisim.StepSpec
+```{eval-rst}
+.. autopydantic_model:: minisim.StepSpec
 ```
 
 ### The forward chain
 
-```{autopydantic_model} minisim.PlaceNeurons
+```{eval-rst}
+.. autopydantic_model:: minisim.PlaceNeurons
 ```
 
 A `PlaceNeurons` step is itself a single {py:class}`~minisim.NeuronPopulation`
@@ -53,46 +61,60 @@ once - a thin soma-targeted layer over a deep cytosolic volume, say - set
 density-sampled (`density_per_mm3` over a `depth_range_um`) or placed at exact
 `positions_um` centers `(z, y, x)`; the two kinds can be mixed in one spec.
 
-```{autopydantic_model} minisim.NeuronPopulation
+```{eval-rst}
+.. autopydantic_model:: minisim.NeuronPopulation
 ```
 
-```{autopydantic_model} minisim.CellActivity
+```{eval-rst}
+.. autopydantic_model:: minisim.CellActivity
 ```
 
-```{autopydantic_model} minisim.CellOptics
+```{eval-rst}
+.. autopydantic_model:: minisim.CellOptics
 ```
 
-```{autopydantic_model} minisim.Composite
+```{eval-rst}
+.. autopydantic_model:: minisim.Composite
 ```
 
-```{autopydantic_model} minisim.Neuropil
+```{eval-rst}
+.. autopydantic_model:: minisim.Neuropil
 ```
 
-```{autopydantic_model} minisim.Vasculature
+```{eval-rst}
+.. autopydantic_model:: minisim.Vasculature
 ```
 
-```{autopydantic_model} minisim.VesselLayer
+```{eval-rst}
+.. autopydantic_model:: minisim.VesselLayer
 ```
 
-```{autopydantic_model} minisim.Bleaching
+```{eval-rst}
+.. autopydantic_model:: minisim.Bleaching
 ```
 
-```{autopydantic_model} minisim.BrainMotion
+```{eval-rst}
+.. autopydantic_model:: minisim.BrainMotion
 ```
 
-```{autopydantic_model} minisim.IlluminationProfile
+```{eval-rst}
+.. autopydantic_model:: minisim.IlluminationProfile
 ```
 
-```{autopydantic_model} minisim.Vignette
+```{eval-rst}
+.. autopydantic_model:: minisim.Vignette
 ```
 
-```{autopydantic_model} minisim.Leakage
+```{eval-rst}
+.. autopydantic_model:: minisim.Leakage
 ```
 
-```{autopydantic_model} minisim.Sensor
+```{eval-rst}
+.. autopydantic_model:: minisim.Sensor
 ```
 
 ## Warnings
 
-```{autoclass} minisim.SpecWarning
+```{eval-rst}
+.. autoclass:: minisim.SpecWarning
 ```

@@ -5,15 +5,18 @@
 
 ## simulate_cached
 
-```{autofunction} minisim.simulate_cached
+```{eval-rst}
+.. autofunction:: minisim.simulate_cached
 ```
 
 ## cache_dir
 
-```{autofunction} minisim.cache_dir
+```{eval-rst}
+.. autofunction:: minisim.cache_dir
 ```
 
 ## cache_path
 
-```{autofunction} minisim.cache_path
+```{eval-rst}
+.. autofunction:: minisim.cache_path
 ```

@@ -2,23 +2,29 @@
 
 ## simulate
 
-```{autofunction} minisim.simulate
+```{eval-rst}
+.. autofunction:: minisim.simulate
 ```
 
 ## simulate_cached
 
-```{autofunction} minisim.simulate_cached
+```{eval-rst}
+.. autofunction:: minisim.simulate_cached
+   :no-index:
 ```
 
 ## simulate_video
 
-```{autofunction} minisim.simulate_video
+```{eval-rst}
+.. autofunction:: minisim.simulate_video
 ```
 
 ## sweep
 
-```{autofunction} minisim.sweep
+```{eval-rst}
+.. autofunction:: minisim.sweep
 ```
 
-```{autopydantic_model} minisim.SweptSpec
+```{eval-rst}
+.. autopydantic_model:: minisim.SweptSpec
 ```
