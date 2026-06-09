@@ -160,7 +160,61 @@ components) and the per-component temporal envelopes with the population driver
 contamination demixing must separate from the real traces.
 :::
 
-## 5. Add the static optical fields
+## 5. Add vasculature: a static landmark and a confound
+
+`vasculature` grows depth-resolved branching blood vessels and multiplies a dark
+transmission mask into the movie (vessels absorb both the excitation going in and
+the emission coming out). It is a *tissue*-domain step applied right after
+`neuropil` and before `brain_motion`, so the vessel pattern is fixed in the brain
+frame and rides the motion crop rigidly with the cells. That is exactly what makes
+it useful two ways: a **temporally static, high-contrast landmark** for
+motion-correction to register against (the cells flicker with activity, the vessels
+do not), and a tunable **confound** - a vessel crossing a soma absorbs its light
+and corrupts its footprint and trace.
+
+It is **off by default** (`enabled=False`, empty `layers`); turn it on with at
+least one `VesselLayer`. Each layer is blurred by the defocus + scatter at its own
+`depth_um`, so a vessel near the focal plane is a crisp dark thread while one far
+from focus softens into a broad shadow (the same depth blur the cells get).
+
+```python
+from minisim import Vasculature, VesselLayer
+
+rec = simulate(Spec(acquisition=acq, seed=1, steps=[
+    PlaceNeurons(), CellActivity(), CellOptics(), Composite(), Neuropil(),
+    Vasculature(enabled=True, layers=[       # off by default; one layer here
+        VesselLayer(depth_um=100.0, n_roots=4, root_radius_um=10.0, opacity=0.8),
+    ]),
+]))
+```
+
+The occlusion is **scored, not hidden**. The vessel mask is recorded, and each
+cell gets a footprint-weighted vessel-overlap fraction so you can stratify recall
+or footprint-correlation by vessel burden; a vessel over a soma also dims its peak
+in the `detectable` test. The footprints (`A_observed`) themselves stay
+vessel-free - they are the single-cell optical truth the confound is measured
+against:
+
+```python
+gt = rec.ground_truth
+gt.vasculature_mask           # (H, W) static vessel transmission in (0, 1]
+gt.vessel_overlap_fraction    # (n,) per-cell occlusion: 0 = clear, ->1 = fully under a vessel
+gt.detectable                 # (n,) now folds vessel transmission into the peak SNR test
+```
+
+List several `VesselLayer`s to stack scales and depths (e.g. a shallow
+large-caliber layer above the cells plus a deeper fine-capillary bed).
+
+:::{figure} /_static/examples/05_vasculature.png
+:alt: a frame with a vessel shadow, the vessel transmission mask, and per-cell vessel overlap
+
+Left: a frame - cells and haze under a branching vessel shadow. Middle: ground
+truth - the static vessel transmission mask (vessels dark), sharp here because the
+layer sits near the focal plane. Right: ground truth - each cell colored by its
+`vessel_overlap_fraction`, the scoreable confound; cells under a vessel light up.
+:::
+
+## 6. Add the static optical fields
 
 Three scope-fixed fields, all smooth and static (they do **not** move with the
 brain): `illumination_profile` (excitation brighter at center), `vignette`
@@ -185,7 +239,7 @@ These three are exactly the smooth, static background that minian's "glow remova
 estimates and strips (the multiplicative falloffs *and* the additive leakage),
 because the cells are sharp and moving while the fields are not.
 
-:::{figure} /_static/examples/05_fields.png
+:::{figure} /_static/examples/06_fields.png
 :alt: illumination times vignette field, the leakage glow, and a frame with both applied
 
 Left/middle: the combined illumination × vignette field and the additive leakage
@@ -193,7 +247,7 @@ glow. Right: a frame with the fields applied - bright center, dim corners, plus
 the central haze.
 :::
 
-## 6. Full recording: add the sensor
+## 7. Full recording: add the sensor
 
 `sensor` is the last step and the only one that produces integer counts: it turns
 the clean intensity into raw 8-bit ADC counts via Poisson shot noise, Gaussian
@@ -220,9 +274,11 @@ rec.observed         # (frames, H, W) raw 8-bit counts
 
 (`bleaching` is cell-domain, so it sits before `composite` with the other
 per-cell steps. Its fade acts over minutes, so it is negligible in a 20 s clip -
-included here for completeness.)
+included here for completeness. `vasculature` is left out of this default chain
+because it is off by default and used deliberately as a confound (section 5); drop
+a `Vasculature(...)` step in right after `Neuropil()` when you want vessels.)
 
-:::{figure} /_static/examples/06_full.png
+:::{figure} /_static/examples/07_full.png
 :alt: noise-free expected counts vs realized noisy counts, and the ADC count histogram
 
 Left: the noise-free *expected* counts (the intensity the sensor sees, digitized
