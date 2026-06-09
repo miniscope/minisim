@@ -51,7 +51,7 @@ MORPH = "cytosolic"  # soma + proximal dendrites, for both concepts
 matplotlib.rcParams["font.sans-serif"] = ["Segoe UI", "Arial", "Helvetica", "DejaVu Sans"]
 matplotlib.rcParams["font.family"] = "sans-serif"
 
-GRAY = "#aebcb0"
+GRAY = "#4f5d54"  # solid dark slate-green; the old light gray read as washed-out
 # Green colormap that stays green at the top (no white blowout) so cells read on white.
 SIMGREEN = LinearSegmentedColormap.from_list(
     "simgreen", [(0, "#04140a"), (0.35, "#1f9a45"), (0.7, "#3fe06a"), (1.0, "#9ff7bb")]
