@@ -132,13 +132,12 @@ class ImagingSandbox:
         sliders,
         *,
         morphology: str = "cytosolic",
-        n_dendrites: int = 4,
-        dendrite_len_um: float = 45.0,
+        dendrite_len_um: float = 24.0,
         dendrite_width_um: float = 3.0,
     ) -> None:
         self.sliders = sliders
         self._patches = self._build_ref_patches(
-            morphology, n_dendrites, dendrite_len_um, dendrite_width_um
+            morphology, dendrite_len_um, dendrite_width_um
         )
         # Build the figure ONCE; the fixed-range (0-255) colorbar is created once so
         # it never accumulates across redraws.
@@ -157,15 +156,20 @@ class ImagingSandbox:
         return self.fig.canvas
 
     @staticmethod
-    def _build_ref_patches(morphology, n_dendrites, dendrite_len_um, dendrite_width_um):
-        """The five sharp reference footprints on the fixed fine grid (one per cell)."""
+    def _build_ref_patches(morphology, dendrite_len_um, dendrite_width_um):
+        """The five sharp reference footprints on the fixed fine grid (one per cell).
+
+        Cytosolic cells draw a random number of branched proximal dendrites per cell
+        (from the fixed seed below), so the five reference shapes differ from one
+        another the way real neurons do.
+        """
         rng = np.random.default_rng(0)  # fixed seed: identical shapes every build
         n = int(round(2 * PATCH_HALF_UM / REF_PX_UM))
         c = (n - 1) / 2.0  # each cell sits at the center of its own patch
         return [
             neuron_footprint(
                 (n, n), (c, c), SOMA_UM / REF_PX_UM, 0.35, rng,
-                morphology=morphology, n_dendrites=n_dendrites,
+                morphology=morphology,
                 dendrite_length_px=dendrite_len_um / REF_PX_UM,
                 dendrite_width_px=dendrite_width_um / REF_PX_UM,
             )

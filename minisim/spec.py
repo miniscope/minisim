@@ -627,18 +627,16 @@ class NeuronPopulation(_Base):
     morphology: Literal["soma", "cytosolic"] = Field(
         default="soma",
         description="GCaMP targeting variant: 'soma' = soma-targeted (lumpy disk "
-        "only); 'cytosolic' = standard GCaMP (soma + tapering proximal dendrites).",
-    )
-    n_dendrites: int = Field(
-        ge=0,
-        default=4,
-        description="Proximal dendrites grown per cell when morphology='cytosolic' "
-        "(ignored for 'soma').",
+        "only); 'cytosolic' = standard GCaMP (soma + branched proximal dendrites).",
     )
     dendrite_length_um: float = Field(
         gt=0,
-        default=45.0,
-        description="Proximal-dendrite length, µm (cytosolic only).",
+        default=24.0,
+        description="Nominal proximal-dendrite reach, µm (cytosolic only); kept "
+        "proximal so the arbor shapes the blurred footprint without blowing up the "
+        "sparse-patch bounding box. The per-cell count is drawn randomly (not a "
+        "spec input, so cells differ), and each dendrite's length jitters around "
+        "this value and may branch.",
     )
     dendrite_width_um: float = Field(
         gt=0,

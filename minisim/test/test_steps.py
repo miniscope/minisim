@@ -349,7 +349,6 @@ def test_cytosolic_morphology_adds_dendrites_beyond_soma():
         irregularity=0.0,
         rng=np.random.default_rng(0),
         morphology="cytosolic",
-        n_dendrites=4,
         dendrite_length_px=18.0,
         dendrite_width_px=2.5,
     )
@@ -359,6 +358,25 @@ def test_cytosolic_morphology_adds_dendrites_beyond_soma():
     rr = np.hypot(yy - center[0], xx - center[1])
     assert rr[cyto > 0].max() > rr[soma > 0].max() + 2.0  # reach beyond the soma
     assert 0.0 < cyto[cyto > 0].min() < 1.0  # dendrites graded dimmer than soma
+
+
+def test_cytosolic_dendrite_count_is_random_per_cell():
+    # The count is drawn per cell (not a spec input), so different RNG states give
+    # different dendrite layouts - what makes cells look distinct.
+    shape, center, radius = (96, 96), (48.0, 48.0), 6.0
+    fps = [
+        neuron_footprint(shape, center, radius, irregularity=0.0,
+                         rng=np.random.default_rng(s), morphology="cytosolic",
+                         dendrite_length_px=18.0, dendrite_width_px=2.5)
+        for s in range(8)
+    ]
+    counts = {int((fp > 0).sum()) for fp in fps}
+    assert len(counts) >= 5  # cells differ from one another (varied arbors)
+    # Same seed reproduces the same arbor exactly (determinism for streaming/cache).
+    again = neuron_footprint(shape, center, radius, irregularity=0.0,
+                             rng=np.random.default_rng(3), morphology="cytosolic",
+                             dendrite_length_px=18.0, dendrite_width_px=2.5)
+    np.testing.assert_array_equal(again, fps[3])
 
 
 def test_soma_morphology_is_unchanged_by_dendrite_params():
@@ -376,7 +394,6 @@ def test_soma_morphology_is_unchanged_by_dendrite_params():
         irregularity=0.3,
         rng=np.random.default_rng(11),
         morphology="soma",
-        n_dendrites=4,
         dendrite_length_px=18.0,
         dendrite_width_px=2.5,
     )

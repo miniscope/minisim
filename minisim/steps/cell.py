@@ -31,6 +31,7 @@ from minisim.footprint import Footprint
 from minisim.recording import DETECT_SNR_THRESHOLD, detection_snr
 from minisim.scene import Cell, Scene
 from minisim.steps.base import PipelineContext, Step
+from minisim.steps.tissue import murray_children
 
 if TYPE_CHECKING:
     # CellActivity / CellOptics are referenced only as string Generic bases
@@ -57,13 +58,30 @@ _EPS = 1e-12
 
 # Proximal-dendrite rendering constants (cytosolic morphology only). Dendrites
 # are graded dimmer than the soma and taper to a thread, so blur, defocus, and
-# the sensor noise floor erase them first - the "we lose thin features fast"
-# lesson falls out of the physics for free.
-_DENDRITE_BASE_INTENSITY = 0.6  # planted weight where a dendrite leaves the soma
-_DENDRITE_TIP_INTENSITY = 0.15  # ...tapering to this at the distal tip
-_DENDRITE_TIP_WIDTH_PX = 0.75  # minimum stamp radius, keeps the thread continuous
-_DENDRITE_WANDER_RAD = 0.15  # per-step heading random walk, radians (gently wavy, not curly)
+# the sensor noise floor erase the thin distal structure first - the "we lose thin
+# features fast" lesson falls out of the physics for free. Their reach is kept
+# *proximal* (bounded by the spec's dendrite length): a far-reaching arbor would
+# blow up the sparse-footprint bounding box and merely re-create, in the per-cell
+# ground-truth A, the diffuse felt the ``neuropil`` step already models. What the
+# proximal arbor *does* add - that ``neuropil`` cannot, being cell-unattached - is a
+# lobed, asymmetric *shape* to each cell's blurred footprint.
+_DENDRITE_BASE_INTENSITY = 0.55  # planted weight where a dendrite leaves the soma
+_DENDRITE_TIP_INTENSITY = 0.05  # ...tapering to this at the distal tip (faint)
+_DENDRITE_TIP_WIDTH_PX = 0.5  # minimum stamp radius, keeps the thread continuous
+_DENDRITE_WANDER_RAD = 0.16  # per-step heading random walk, radians (gently wavy, not curly)
 _DENDRITE_ANGLE_JITTER_RAD = 0.4  # jitter on the evenly spaced launch angles
+# The number of primary dendrites is drawn *per cell* (not a spec input), so cells
+# differ from one another: a clamped Poisson around this mean.
+_DENDRITE_MEAN_COUNT = 5.0
+_DENDRITE_COUNT_RANGE = (2, 9)  # clamp the Poisson draw to a plausible range
+_DENDRITE_LENGTH_JITTER = (0.6, 1.25)  # per-dendrite multiple of the nominal length
+# Bounded bifurcation: a dendrite may branch a few times, a side branch peeling off
+# (Murray's-law width split) while the main continues thinner - the realistic arbor
+# shape, kept cheap by capping the branch count and the reach.
+_DENDRITE_BRANCH_PROB = 0.06  # per-step bifurcation probability
+_DENDRITE_MAX_BRANCHES = 2  # cap per primary dendrite (keeps the patch small)
+_DENDRITE_BRANCH_AREA_MAIN = 0.62  # main child's share of the Murray cube-sum
+_DENDRITE_BRANCH_ANGLE_RAD = 0.7  # heading split at a bifurcation
 
 
 def neuron_footprint(
@@ -74,7 +92,6 @@ def neuron_footprint(
     rng: np.random.Generator,
     *,
     morphology: str = "soma",
-    n_dendrites: int = 0,
     dendrite_length_px: float = 0.0,
     dendrite_width_px: float = 0.0,
 ) -> np.ndarray:
@@ -90,10 +107,13 @@ def neuron_footprint(
     * ``"soma"`` - soma-targeted GCaMP (e.g. SomaGCaMP / riboGCaMP): a single
       filled, possibly lumpy disk, the soma body only.
     * ``"cytosolic"`` - standard cytosolic GCaMP (GCaMP6/7/8…): the same soma
-      disk plus ``n_dendrites`` tapering proximal dendrites. The dendrites are
-      *graded* (dimmer than the soma) and *thin*, so they are exactly what
-      diffraction, defocus, scatter, and the sensor noise floor erase first - a
-      faithful demonstration of how quickly fine neurites become unresolvable.
+      disk plus a *random* number of **branched, bounded proximal dendrites**
+      (drawn per cell, so cells differ - see :func:`_stamp_dendrites`). The
+      dendrites are *graded* (dimmer than the soma), *thin*, and *taper* to a
+      thread, so their fine distal structure is exactly what diffraction, defocus,
+      scatter, and the sensor noise floor erase first - a faithful demonstration of
+      how quickly fine neurites become unresolvable - while the surviving proximal
+      arbor gives each cell's blurred footprint a lobed, asymmetric shape.
 
     The soma is **identical** in both variants; ``"cytosolic"`` only *adds*
     dendrites after the soma is drawn, so ``"soma"`` (the default) reproduces the
@@ -151,17 +171,8 @@ def neuron_footprint(
         footprint[y0:y1, x0:x1] = (dist <= r_eff).astype(float)
     # Cytosolic GCaMP fills the proximal dendrites too. Stamp them *after* the
     # soma so the soma's RNG draw above is untouched - "soma" stays bit-identical.
-    if morphology == "cytosolic" and n_dendrites > 0 and dendrite_length_px > 0:
-        _stamp_dendrites(
-            footprint,
-            cy,
-            cx,
-            radius_px,
-            n_dendrites,
-            dendrite_length_px,
-            dendrite_width_px,
-            rng,
-        )
+    if morphology == "cytosolic" and dendrite_length_px > 0:
+        _stamp_dendrites(footprint, cy, cx, radius_px, dendrite_length_px, dendrite_width_px, rng)
     if not footprint.any():
         # Sub-pixel soma: keep at least the nearest pixel lit so the cell is
         # never silently empty.
@@ -198,40 +209,68 @@ def _stamp_dendrites(
     cy: float,
     cx: float,
     radius_px: float,
-    n_dendrites: int,
     length_px: float,
     width_px: float,
     rng: np.random.Generator,
 ) -> None:
-    """Grow ``n_dendrites`` tapering proximal dendrites out of the soma.
+    """Grow a random number of branched, bounded proximal dendrites out of the soma.
 
-    Each dendrite launches from just inside the soma edge at a roughly evenly
+    The **count is drawn per cell** (a clamped Poisson around
+    :data:`_DENDRITE_MEAN_COUNT`), not a spec input, so no two cells look alike. Each
+    primary dendrite launches from just inside the soma edge at a roughly evenly
     spaced (then jittered) angle and walks outward in ~1 px steps with a small
     per-step heading wobble, so it curves gently rather than spiking out straight.
-    Both its width and its intensity taper from base to tip; it is laid down as a
-    chain of overlapping disks (:func:`_stamp_disk`), so it stays continuous.
+    Its width and intensity **taper** base→tip, and it may **bifurcate** up to
+    :data:`_DENDRITE_MAX_BRANCHES` times - a side branch peels off with a Murray's-law
+    width split (:func:`~minisim.steps.tissue.murray_children`) while the main branch
+    continues thinner, the realistic arbor shape. ``length_px`` **bounds the reach**
+    (with a per-dendrite jitter only), keeping the arbor *proximal*: that is what
+    shapes the blurred footprint without exploding the sparse-patch bounding box (a
+    far-reaching arbor would just re-create the ``neuropil`` felt in the per-cell A).
+    Laid down as a chain of overlapping disks (:func:`_stamp_disk`), so it stays
+    continuous and peak-normalized (the soma keeps the peak at 1).
     """
+    n = int(np.clip(rng.poisson(_DENDRITE_MEAN_COUNT), *_DENDRITE_COUNT_RANGE))
     # Roughly even angular spread, then jittered, so dendrites don't all clump.
     base = rng.uniform(0.0, 2.0 * np.pi)
-    angles = base + np.arange(n_dendrites) * (2.0 * np.pi / n_dendrites)
-    angles = angles + rng.normal(0.0, _DENDRITE_ANGLE_JITTER_RAD, size=n_dendrites)
-    n_steps = max(int(round(length_px)), 2)
+    angles = base + np.arange(n) * (2.0 * np.pi / n)
+    angles = angles + rng.normal(0.0, _DENDRITE_ANGLE_JITTER_RAD, size=n)
+    half_w = 0.5 * width_px  # base stamp radius (width_px is a diameter)
     for theta in angles:
+        length = length_px * rng.uniform(*_DENDRITE_LENGTH_JITTER)
         # Start just inside the soma so the dendrite connects without a gap.
-        y = cy + 0.8 * radius_px * np.sin(theta)
-        x = cx + 0.8 * radius_px * np.cos(theta)
-        heading = theta
-        for i in range(n_steps):
-            frac = i / (n_steps - 1)  # 0 at the soma .. 1 at the tip
-            # width_px is a diameter; stamp radius is half of it, tapering to a thread
-            rad = max(0.5 * width_px * (1.0 - frac), _DENDRITE_TIP_WIDTH_PX)
-            intensity = _DENDRITE_BASE_INTENSITY + frac * (
-                _DENDRITE_TIP_INTENSITY - _DENDRITE_BASE_INTENSITY
-            )
-            _stamp_disk(footprint, y, x, rad, intensity)
-            heading += rng.normal(0.0, _DENDRITE_WANDER_RAD)
-            y += np.sin(heading)
-            x += np.cos(heading)
+        y0 = cy + 0.8 * radius_px * np.sin(theta)
+        x0 = cx + 0.8 * radius_px * np.cos(theta)
+        # DFS over branches: each entry is one branch's start state
+        # (y, x, heading, remaining_length_px, base_width, branches_left).
+        stack = [(y0, x0, theta, length, width_px, _DENDRITE_MAX_BRANCHES)]
+        while stack:
+            y, x, heading, rem, w, branches = stack.pop()
+            n_steps = max(int(round(rem)), 2)
+            for i in range(n_steps):
+                frac = i / (n_steps - 1)  # 0 at this branch's base .. 1 at its tip
+                rad = max(0.5 * w * (1.0 - frac), _DENDRITE_TIP_WIDTH_PX)
+                # Intensity tracks width (thick→bright, thin→faint), so child branches
+                # and distal tips fade out - exactly what optics erase first.
+                intensity = _DENDRITE_TIP_INTENSITY + min(rad / half_w, 1.0) * (
+                    _DENDRITE_BASE_INTENSITY - _DENDRITE_TIP_INTENSITY
+                )
+                _stamp_disk(footprint, y, x, rad, intensity)
+                heading += rng.normal(0.0, _DENDRITE_WANDER_RAD)
+                y += np.sin(heading)
+                x += np.cos(heading)
+                if branches > 0 and i < n_steps - 2 and rng.random() < _DENDRITE_BRANCH_PROB:
+                    w_main, w_side = murray_children(w, _DENDRITE_BRANCH_AREA_MAIN)
+                    side = -1.0 if rng.random() < 0.5 else 1.0
+                    # Side branch peels off and grows the rest of the way (a little
+                    # shorter); the main continues, thinner and bending slightly back.
+                    stack.append((
+                        y, x, heading + side * _DENDRITE_BRANCH_ANGLE_RAD,
+                        (n_steps - 1 - i) * 0.8, w_side, branches - 1,
+                    ))
+                    heading -= side * 0.5 * _DENDRITE_BRANCH_ANGLE_RAD
+                    w = w_main
+                    branches -= 1
 
 
 def sample_neurons(
@@ -406,7 +445,6 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
                     pop.irregularity,
                     rng,
                     morphology=pop.morphology,
-                    n_dendrites=pop.n_dendrites,
                     dendrite_length_px=acq.um_to_px(pop.dendrite_length_um),
                     dendrite_width_px=acq.um_to_px(pop.dendrite_width_um),
                 )
