@@ -2,7 +2,13 @@
 sd_hide_title: true
 ---
 
-# minisim
+# Minisim
+
+```{image} _static/logo/minisim_wordmark_sim.png
+:alt: Minisim
+:width: 360px
+:align: center
+```
 
 ```{div} sd-text-center sd-fs-3 sd-font-weight-light
 Physically-driven synthetic 1-photon miniscope data
@@ -15,7 +21,7 @@ pipeline like [minian](https://github.com/miniscope/minian).
 
 ---
 
-minisim builds a miniscope recording *forward* from its physical components, the
+Minisim builds a miniscope recording *forward* from its physical components, the
 inverse of an analysis pipeline. Instead of recovering signals from a movie, it
 starts from biology and optics and produces the movie, together with the exact
 ground truth that generated it: cell locations, footprints, calcium traces,
@@ -42,7 +48,7 @@ rec = simulate(spec)         # -> Recording, with rec.ground_truth attached
 movie = rec.observed         # the simulated movie: (frame, height, width) array
 ```
 
-Because every recording ships with its ground truth, minisim is built for:
+Because every recording ships with its ground truth, Minisim is built for:
 
 ::::{grid} 1 1 3 3
 :gutter: 3

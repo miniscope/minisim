@@ -1,6 +1,6 @@
-# Releasing minisim to PyPI
+# Releasing Minisim to PyPI
 
-minisim is published to PyPI by the `Publish to PyPI` GitHub Actions workflow
+Minisim is published to PyPI by the `Publish to PyPI` GitHub Actions workflow
 (`.github/workflows/publish.yml`) using
 [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC),
 so no API tokens are stored in this repo.

@@ -1,6 +1,6 @@
 """Physically-driven synthetic 1-photon miniscope data: generator + teaching tool.
 
-minisim builds a recording forward from its physical components (biology ->
+Minisim builds a recording forward from its physical components (biology ->
 optics -> motion -> sensor), the inverse of an analysis pipeline like minian.
 Each recording ships with the exact ground truth that generated it, so it is
 suitable for benchmarking pipelines, testing analysis code, and teaching the

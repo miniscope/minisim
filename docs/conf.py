@@ -1,4 +1,4 @@
-"""Sphinx configuration for the minisim documentation site.
+"""Sphinx configuration for the Minisim documentation site.
 
 Docs are authored in Markdown (MyST). The API reference renders from the live
 package: prose docstrings via autodoc + napoleon, and the typed Spec/steps via
@@ -9,7 +9,7 @@ from importlib.metadata import version as _dist_version
 
 # -- Project information -----------------------------------------------------
 
-project = "minisim"
+project = "Minisim"
 author = "Daniel Aharoni"
 copyright = "2026, Daniel Aharoni"  # noqa: A001 (Sphinx requires this name)
 
@@ -84,10 +84,17 @@ intersphinx_mapping = {
 # -- HTML output -------------------------------------------------------------
 
 html_theme = "pydata_sphinx_theme"
-html_title = "minisim"
+html_title = "Minisim"
 html_static_path = ["_static"]
+html_favicon = "_static/logo/minisim_icon.png"
 
 html_theme_options = {
+    "logo": {
+        # the 'M' icon (dark tile reads on both light and dark navbars)
+        "image_light": "_static/logo/minisim_icon.png",
+        "image_dark": "_static/logo/minisim_icon.png",
+        "alt_text": "Minisim",
+    },
     "github_url": "https://github.com/miniscope/minisim",
     "icon_links": [
         {

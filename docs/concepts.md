@@ -3,7 +3,7 @@
 ## The forward model
 
 An analysis pipeline runs *backward*: it takes a movie and tries to recover what
-produced it (where the cells are, when they fired). minisim runs the same chain
+produced it (where the cells are, when they fired). Minisim runs the same chain
 *forward*. It starts from biology and optics and produces the movie, so it
 already knows every answer the analysis pipeline is trying to recover.
 
@@ -22,7 +22,7 @@ miniscope data because it was made the way miniscope data is made.
 ## Ground truth is a byproduct, not an annotation
 
 Because the recording is built forward, every quantity an analysis pipeline
-would estimate is something minisim *chose* on the way in. They are attached to
+would estimate is something Minisim *chose* on the way in. They are attached to
 the result as {py:class}`~minisim.GroundTruth`:
 
 - cell locations, depths, and spatial footprints,
@@ -36,7 +36,7 @@ against the exact signal that generated the pixels.
 
 ## The three objects you work with
 
-minisim's surface is small. Almost everything you do is:
+Minisim's surface is small. Almost everything you do is:
 
 ```
     Spec  ──simulate──▶  Recording  ──your pipeline──▶  estimates
@@ -74,7 +74,7 @@ data realistic. See the {doc}`reference/spec` for every step and its parameters.
 
 ## Design principle: simulate the biology, not the algorithm
 
-minisim deliberately models the real physical and biological process, *not* the
+Minisim deliberately models the real physical and biological process, *not* the
 assumptions of any particular analysis pipeline. The point of benchmarking
 against it is to find where a pipeline's model diverges from the biology, so the
 data is never shaped to flatter a given algorithm.

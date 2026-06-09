@@ -1,6 +1,6 @@
 # Tutorials
 
-minisim is also a teaching tool. The tutorials walk the *anatomy* of miniscope
+Minisim is also a teaching tool. The tutorials walk the *anatomy* of miniscope
 data: starting from a clean simulated signal and adding one physical effect at a
 time (optics, brain motion, illumination falloff, sensor noise), so you can see
 exactly what each does to the image.
@@ -32,7 +32,7 @@ jupyter lab 01_anatomy.ipynb
 
 `minisim-notebooks copy` takes `--all` to copy every bundle, `-o/--output` to
 choose the destination (default `./minisim-notebooks`), and `--force` to
-overwrite an existing copy. No data download is needed: minisim *generates* the
+overwrite an existing copy. No data download is needed: Minisim *generates* the
 recording from code as the notebook runs.
 
 Working from a clone of the repository instead? Open it directly at

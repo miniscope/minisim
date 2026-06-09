@@ -32,7 +32,7 @@ cells are interactive and need a live kernel (e.g. the Stage-1 scope sliders for
 NA / magnification / pixel pitch); in a statically-rendered copy they show their
 default state — run the notebook locally to drag them.
 
-## Dependencies beyond core minisim
+## Dependencies beyond core Minisim
 
 `ipywidgets` (sliders), `matplotlib` (figures), and `mediapy` (inline movie
 playback, used by the movie stages; it relies on `ffmpeg`). All are lightweight
