@@ -8,8 +8,8 @@ order biology → optics → motion → sensor.
 
 The minimal runnable chain is ``place_neurons`` → ``cell_activity`` → ``composite``
 → ``sensor``; ``optics`` degrades the footprints, the field effects
-(``neuropil``/``bleaching``/``vignette``/``leakage``, plus the ``vasculature``
-no-op placeholder) layer on top, and ``brain_motion`` is the brain→sensor frame
+(``neuropil``/``bleaching``/``vignette``/``leakage``, plus the absorbing
+``vasculature`` mask) layer on top, and ``brain_motion`` is the brain→sensor frame
 boundary - together the full forward pipeline. The :class:`Step` base and the
 physics helpers
 (:func:`calcium_kernel`, :func:`neuron_footprint`, :func:`bleaching_pool`,

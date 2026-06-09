@@ -592,8 +592,7 @@ class StepSpec(_Base):
 
 # ---------------------------------------------------------------------------
 # Step catalog (cell → tissue → motion → sensor). Fields define the v1 surface;
-# the executable `build()` bodies (and the no-op placeholder steps like
-# vasculature) live in `minisim.steps`.
+# the executable `build()` bodies live in `minisim.steps`.
 # ---------------------------------------------------------------------------
 
 
@@ -893,7 +892,18 @@ class Vasculature(StepSpec):
     static landmark that motion-correction leans on (unlike the cells, whose
     brightness flickers with activity). It is also a tunable *confound*: a vessel
     crossing a soma corrupts its footprint and trace, so dialing vasculature up
-    stress-tests footprint/dynamics extraction.
+    stress-tests footprint/dynamics extraction. That occlusion is scored, not
+    hidden: each cell's footprint-weighted vessel burden is recorded as
+    ``GroundTruth.vessel_overlap_fraction``, and a vessel over a soma dims its peak
+    in the ``detectable`` test - but the footprints (``A_observed``) stay
+    vessel-free, the single-cell optical truth the confound is measured against.
+
+    **v1 simplification:** a single multiplicative attenuation of the already
+    composited movie. Excitation and emission absorption are lumped into one static
+    transmission, and light generated in front of the vessel is not exempted from
+    the shadow (real out-of-plane / in-front fluorescence fills it in); the
+    ``opacity`` floor stands in for that fill rather than modeling it. Good enough
+    for a landmark and an occlusion confound; not a radiative-transfer model.
 
     Off by default: ``enabled=False`` and an empty ``layers`` both make the step a
     no-op, so it must be explicitly turned on with at least one

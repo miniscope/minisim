@@ -821,6 +821,11 @@ def _max_yield_focus(
     when it is within the depth of field of ``F`` **and** clears
     ``DETECT_SNR_THRESHOLD``. Ties in count are broken by total in-focus signal so
     the plane sits where the detectable cells are brightest.
+
+    Vessel occlusion is **not** folded in here: vasculature is a later tissue-domain
+    effect, not yet grown when the focus is chosen. So a vessel over a soma can drop
+    that cell from the realized ``detectable`` set (see ``_is_detectable``) without
+    shifting the chosen plane - a deliberate v1 simplification.
     """
     optics, tissue = acq.optics, acq.tissue
     eff = effective[scored]

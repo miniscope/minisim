@@ -10,8 +10,9 @@ effects that ride on top of the cells:
   movie; the first step to write ``scene.movie``.
 * :class:`NeuropilStep` (``neuropil``) - additive diffuse background, a smooth
   spatial field modulated by a slow temporal envelope.
-* :class:`VasculatureStep` (``vasculature``) - honest no-op placeholder; the
-  absorbing-vessel model is deferred to v1.1.
+* :class:`VasculatureStep` (``vasculature``) - a dark, static absorbing-vessel
+  mask multiplied into the movie (off by default), grown from depth-resolved
+  branching vessel trees; the high-contrast landmark and a tunable confound.
 
 All run before the motion boundary, so a later ``brain_motion`` step translates
 the cells *and* these fields together (they are part of the brain frame), unlike
@@ -731,8 +732,9 @@ def vasculature_mask_field(
         trees = []
         for _ in range(layer.n_roots):
             root, heading = _seed_edge_root(bounds_um, rng)
-            trees.append(grow_vessel_tree(bounds_um, root, heading, growth, rng))
-        trees = [t for t in trees if t.size]
+            tree = grow_vessel_tree(bounds_um, root, heading, growth, rng)
+            if tree.size:
+                trees.append(tree)
         if not trees:
             continue
         path_um = rasterize_vessels(np.vstack(trees), (h, w), px)
@@ -777,8 +779,10 @@ class VasculatureStep(Step["Vasculature"]):
     A *tissue*-domain step run before ``brain_motion``, so the mask is fixed in the
     brain frame and the motion crop carries it rigidly with the cells - the static,
     high-contrast landmark motion correction registers against, and a tunable
-    extraction confound. The static mask is recorded to
-    ``GroundTruth.vasculature_mask``.
+    extraction confound. The mask is stored canvas-sized on ``scene.truth`` (it must
+    align with the canvas-coordinate footprints); ``finalize`` crops it to the FOV
+    for ``GroundTruth.vasculature_mask`` and records each cell's footprint-weighted
+    occlusion as ``GroundTruth.vessel_overlap_fraction``.
 
     A no-op when ``enabled`` is False or ``layers`` is empty (the step ships off),
     leaving the movie and the ground-truth slot untouched. The blur depth comes from

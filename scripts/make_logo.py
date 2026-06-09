@@ -61,7 +61,7 @@ SIMGREEN = LinearSegmentedColormap.from_list(
 def _cell(morph, dendrite_width_um=3.0, **kw):
     """A PlaceNeurons with longer cytosolic dendrites, shared by both concepts."""
     return PlaceNeurons(
-        morphology=morph, soma_radius_um=7.0, n_dendrites=5,
+        morphology=morph, soma_radius_um=7.0,
         dendrite_length_um=38.0, dendrite_width_um=dendrite_width_um, **kw,
     )
 

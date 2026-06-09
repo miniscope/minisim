@@ -25,6 +25,7 @@ from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.patches import FancyArrowPatch, Rectangle
+from pydantic import ValidationError
 from scipy.ndimage import zoom
 from scipy.signal import welch
 
@@ -538,11 +539,23 @@ class VasculaturePanel:
     def draw(self):
         """Regrow the layer from the current sliders and redraw the mask in place."""
         v = {k: s.value for k, s in self.sliders.items()}
-        layer = VesselLayer(
-            depth_um=v["depth_um"], n_roots=int(v["n_roots"]),
-            root_radius_um=v["root_radius_um"], opacity=v["opacity"],
-            branch_prob=v["branch_prob"], tortuosity_deg=v["tortuosity_deg"],
-        )
+        # VesselLayer validates root_radius_um > min_radius_um (default 2.0); the
+        # root-radius slider's minimum keeps this true. If a future range edit lets
+        # the sliders cross, surface it in the plot instead of throwing into the widget.
+        try:
+            layer = VesselLayer(
+                depth_um=v["depth_um"], n_roots=int(v["n_roots"]),
+                root_radius_um=v["root_radius_um"], opacity=v["opacity"],
+                branch_prob=v["branch_prob"], tortuosity_deg=v["tortuosity_deg"],
+            )
+        except ValidationError as err:
+            for ax in (self._ax_t, self._ax_a):
+                ax.clear()
+                ax.set_xticks([])
+                ax.set_yticks([])
+            self._ax_t.set_title(f"invalid vessel settings:\n{err.errors()[0]['msg']}", fontsize=9)
+            self.fig.canvas.draw_idle()
+            return
         spec = Vasculature(enabled=True, layers=[layer])
         # Fixed seed: tuning opacity/depth refines the SAME tree rather than re-rolling it.
         mask = vasculature_mask_field(spec, self.acq, self.shape, self.focal_um,

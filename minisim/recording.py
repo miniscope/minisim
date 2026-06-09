@@ -34,7 +34,7 @@ import zarr
 from numpydantic import NDArray, Shape
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from minisim.footprint import FootprintStack, degrade_footprint
+from minisim.footprint import Footprint, FootprintStack, degrade_footprint
 from minisim.scene import MOVIE_DIMS, Cell, Scene
 from minisim.spec import Acquisition, Spec
 
@@ -59,7 +59,7 @@ _GT_OPTIONAL = (
     "observed_sigma_px", "observed_gain",
     "shifts", "illumination", "vignette", "leakage", "bleaching",
     "neuropil_temporal", "neuropil_spatial", "neuropil_population",
-    "vasculature_mask",
+    "vasculature_mask", "vessel_overlap_fraction",
 )
 
 
@@ -123,6 +123,12 @@ class GroundTruth(BaseModel):
     # The static vessel transmission mask (height, width) in (0, 1] from the
     # vasculature step (cropped to the FOV); None when the step is off / layer-less.
     vasculature_mask: NDArray[Shape["* height, * width"], float] | None = None
+    # Per-cell fraction of footprint-integrated light absorbed by vessels, in [0, 1)
+    # (0 = clear, ->1 = a vessel sits over the whole footprint). The scoreable
+    # confound axis: stratify recall / footprint-correlation by vessel burden. None
+    # when the vasculature step is off. The footprints themselves stay vessel-free
+    # (A_observed is the single-cell optical truth); occlusion lives here, not in A.
+    vessel_overlap_fraction: NDArray[Shape["* unit"], float] | None = None
     # The concrete focal depth (µm) the optics step resolved "auto" to - the plane
     # that maximized recoverable yield. A scalar, so persisted as a group attr (not
     # a dataset) by save/load; None when the optics step did not run.
@@ -205,6 +211,10 @@ class GroundTruth(BaseModel):
             amplitude_per_cell=self.amplitude_per_cell[m],
             in_focus=self.in_focus[m],
             detectable=self.detectable[m],
+            vessel_overlap_fraction=(
+                self.vessel_overlap_fraction[m]
+                if self.vessel_overlap_fraction is not None else None
+            ),
             bleaching=self.bleaching[m] if self.bleaching is not None else None,
             shifts=self.shifts,
             illumination=self.illumination,
@@ -419,8 +429,9 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     the motion margin, records the per-unit optics scalars (so ``A_observed`` can be
     regenerated rather than stored), assembles the per-cell structural truth, sets
     ``detectable`` from the realized optical × illumination peak versus the sensor
-    noise floor, reads the per-effect fields off ``scene.truth``, and downcasts the
-    working movie to ``Output.store_dtype`` for ``observed``.
+    noise floor (folding in vessel transmission, and recording each cell's
+    vessel-occlusion burden), reads the per-effect fields off ``scene.truth``, and
+    downcasts the working movie to ``Output.store_dtype`` for ``observed``.
     """
     acq = scene.acq
     fov_h = acq.image_sensor.n_px_height
@@ -443,9 +454,15 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     illumination = scene.truth.illumination
     vignette = scene.truth.vignette
     photon_field = _combine_fields(illumination, vignette)
+    # The vessel transmission mask, if the vasculature step ran. The canvas-sized
+    # version aligns with the (canvas-coordinate) footprints for the per-cell
+    # overlap integral; the FOV crop is sampled at each cell's position for
+    # detectability, the same frame as photon_field.
+    vasc_mask_canvas = scene.truth.vasculature_mask
+    vasc_mask_fov = _crop_field(vasc_mask_canvas, fov_h, fov_w)
 
     planted_fps, traces, spikes, bleaches = [], [], [], []
-    centers, amplitudes, in_focus, detectable = [], [], [], []
+    centers, amplitudes, in_focus, detectable, overlaps = [], [], [], [], []
     sigmas, gains = [], []
     for cell in scene.cells:
         if cell.footprint_planted is None:
@@ -473,9 +490,16 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         centers.append((z, y_fov_um, x_fov_um))
         amplitudes.append(cell.amplitude if cell.amplitude is not None else float("nan"))
         in_focus.append(ifocus)
+        # A vessel over the cell absorbs part of its light: dim the peak by the
+        # transmission at the cell's position (detectability is a peak test) and
+        # record the footprint-weighted occlusion as the scoreable confound axis.
+        vessel_t = sample_field_at(vasc_mask_fov, y_fov_um, x_fov_um, acq.pixel_size_um)
         detectable.append(
-            _is_detectable(cell, ifocus, y_fov_um, x_fov_um, photon_field, sensor_spec, acq)
+            _is_detectable(
+                cell, ifocus, y_fov_um, x_fov_um, photon_field, sensor_spec, acq, vessel_t
+            )
         )
+        overlaps.append(_vessel_overlap(cell.observed_footprint(), vasc_mask_canvas))
 
     # Optics ran iff any surviving cell carries a sigma; then keep the per-unit
     # scalars so A_observed regenerates. Otherwise None -> A_observed == A_planted.
@@ -492,6 +516,10 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         amplitude_per_cell=np.array(amplitudes, dtype=float),
         in_focus=np.array(in_focus, dtype=bool),
         detectable=np.array(detectable, dtype=bool),
+        # Per-cell vessel occlusion, present only when the vasculature step ran.
+        vessel_overlap_fraction=(
+            np.array(overlaps, dtype=float) if vasc_mask_canvas is not None else None
+        ),
         # Per-cell bleaching envelopes (unit, frame), present only if the bleaching
         # step ran; any cell without one (e.g. added afterward) gets a no-fade row.
         bleaching=(
@@ -517,11 +545,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     # than allocating a full zero buffer only to discard it. The per-cell ground
     # truth (C, S, A, bleaching, ...) is fully populated either way.
     if scene.has_movie:
-        movie = scene.movie.values
-        crop_h = (movie.shape[1] - fov_h) // 2
-        crop_w = (movie.shape[2] - fov_w) // 2
-        if crop_h > 0 or crop_w > 0:
-            movie = movie[:, crop_h : crop_h + fov_h, crop_w : crop_w + fov_w]
+        movie = _center_crop_hw(scene.movie.values, fov_h, fov_w)
         observed_movie = movie.astype(spec.output.store_dtype)
     else:
         observed_movie = np.zeros((0, fov_h, fov_w), dtype=spec.output.store_dtype)
@@ -545,22 +569,21 @@ def _movie_dataarray(values: np.ndarray) -> xr.DataArray:
     )
 
 
+def _center_crop_hw(arr: np.ndarray, h: int, w: int) -> np.ndarray:
+    """Slice the trailing ``(H, W)`` axes of ``arr`` to a centered ``(h, w)`` window."""
+    top = (arr.shape[-2] - h) // 2
+    left = (arr.shape[-1] - w) // 2
+    return arr[..., top : top + h, left : left + w]
+
+
 def _crop_components(stack: np.ndarray | None, h: int, w: int) -> np.ndarray | None:
     """Crop each ``(component, H, W)`` field to the reference FOV (or pass None)."""
-    if stack is None:
-        return None
-    top = (stack.shape[1] - h) // 2
-    left = (stack.shape[2] - w) // 2
-    return stack[:, top : top + h, left : left + w]
+    return None if stack is None else _center_crop_hw(stack, h, w)
 
 
 def _crop_field(field: np.ndarray | None, h: int, w: int) -> np.ndarray | None:
     """Crop a single ``(H, W)`` field to the centered reference FOV (or pass None)."""
-    if field is None:
-        return None
-    top = (field.shape[0] - h) // 2
-    left = (field.shape[1] - w) // 2
-    return field[top : top + h, left : left + w]
+    return None if field is None else _center_crop_hw(field, h, w)
 
 
 def _stack(arrays: list[np.ndarray], empty_shape: tuple[int, ...]) -> np.ndarray:
@@ -630,13 +653,18 @@ def _is_detectable(
     photon_field: np.ndarray | None,
     sensor_spec,
     acq: Acquisition,
+    vessel_transmission: float = 1.0,
 ) -> bool:
     """Whether a cell's realized peak clears the sensor noise floor (and is in focus).
 
     The cell's peak ΔF is dimmed by its optical brightness (depth defocus +
-    scatter) and the illumination/vignette field at its position, scaled to
-    detected electrons by the exposure and QE, then compared to the shot + read
-    noise floor riding on its steady baseline (see :func:`detection_snr`).
+    scatter), the illumination/vignette field at its position, and any vessel
+    transmission there (``vessel_transmission`` in (0, 1], 1.0 = no vessel), scaled
+    to detected electrons by the exposure and QE, then compared to the shot + read
+    noise floor riding on its steady baseline (see :func:`detection_snr`). The
+    vessel term is sampled at the cell's position because detectability is a peak
+    test; the footprint-weighted occlusion is recorded separately as
+    ``vessel_overlap_fraction``.
 
     ``detectable`` requires ``in_focus`` and ``SNR ≥ DETECT_SNR_THRESHOLD``. With
     no activity (no trace) a cell emits no transient and is not detectable; with
@@ -651,8 +679,31 @@ def _is_detectable(
         return False
     brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
     illum = sample_field_at(photon_field, y_fov_um, x_fov_um, acq.pixel_size_um)
-    gain = brightness * illum * sensor_spec.photons_per_unit * acq.image_sensor.quantum_efficiency
+    gain = (
+        brightness * illum * vessel_transmission
+        * sensor_spec.photons_per_unit * acq.image_sensor.quantum_efficiency
+    )
     peak_dF = float(cell.trace.max() - cell.trace.min())
     baseline = float(cell.trace.min())
     snr = detection_snr(peak_dF, baseline, gain, acq.image_sensor.read_noise_e)
     return bool(snr >= DETECT_SNR_THRESHOLD)
+
+
+def _vessel_overlap(footprint: Footprint | None, mask_canvas: np.ndarray | None) -> float:
+    """Footprint-weighted fraction of a cell's light absorbed by vessels, in [0, 1).
+
+    ``mask_canvas`` is the canvas-coordinate transmission mask M in (0, 1]; the
+    occlusion is ``1 − Σ(A·M)/Σ(A)`` over the cell's (canvas-coordinate) footprint
+    patch - 0 where no vessel touches the cell, approaching 1 as a vessel covers
+    the whole footprint. Returns 0.0 when there is no mask or no footprint, so a
+    vessel-free recording reports zero burden for every cell.
+    """
+    if mask_canvas is None or footprint is None or footprint.is_empty:
+        return 0.0
+    y0, x0 = footprint.offset
+    ph, pw = footprint.patch.shape
+    sub = mask_canvas[y0 : y0 + ph, x0 : x0 + pw]
+    total = float(footprint.patch.sum())
+    if total <= 0.0:
+        return 0.0
+    return float(1.0 - (footprint.patch * sub).sum() / total)

@@ -4,7 +4,7 @@ Covers the steps that turn a blank ``Scene`` into a digitized recording - the
 minimal chain ``place_neurons`` → ``cell_activity`` → ``composite`` → ``sensor``,
 the ``optics`` degradation and planted/observed split, and the field
 effects ``neuropil`` / ``bleaching`` / ``vignette`` / ``leakage`` plus the
-``vasculature`` no-op placeholder. Each step is exercised in isolation
+absorbing ``vasculature`` mask. Each step is exercised in isolation
 against a hand-built scene (the primary test substrate) as well as in the
 end-to-end chain, with ``brain_motion`` covered in its own section below.
 """
@@ -1315,15 +1315,18 @@ def test_leakage_gaussian_peaks_at_center():
     assert (movie == movie[0]).all()  # static in time: every frame identical
 
 
-# --- vasculature placeholder ------------------------------------------
+# --- vasculature: disabled is a no-op ---------------------------------
 
 
-def test_vasculature_is_an_honest_noop():
+def test_vasculature_disabled_is_a_noop():
+    # The default Vasculature is enabled=False with no layers, so it draws no RNG
+    # and leaves the movie and the ground-truth slot untouched (the streaming
+    # writer mirrors this guard).
     acq = _acq(n_px=16, duration_s=0.5)
     scene = Scene.ones(acq)
     Vasculature().build(acq, np.random.default_rng(0))(scene)
     assert (scene.movie.values == 1.0).all()  # scene untouched
-    assert scene.truth.neuropil_spatial is None  # no ground-truth contribution
+    assert scene.truth.vasculature_mask is None  # no ground-truth contribution
 
 
 # --- vasculature model core: grow / rasterize / mask ------------------
