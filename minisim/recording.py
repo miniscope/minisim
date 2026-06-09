@@ -59,6 +59,7 @@ _GT_OPTIONAL = (
     "observed_sigma_px", "observed_gain",
     "shifts", "illumination", "vignette", "leakage", "bleaching",
     "neuropil_temporal", "neuropil_spatial", "neuropil_population",
+    "vasculature_mask",
 )
 
 
@@ -119,6 +120,9 @@ class GroundTruth(BaseModel):
     neuropil_temporal: NDArray[Shape["* component, * frame"], float] | None = None
     neuropil_spatial: NDArray[Shape["* component, * height, * width"], float] | None = None
     neuropil_population: NDArray[Shape["* frame"], float] | None = None
+    # The static vessel transmission mask (height, width) in (0, 1] from the
+    # vasculature step (cropped to the FOV); None when the step is off / layer-less.
+    vasculature_mask: NDArray[Shape["* height, * width"], float] | None = None
     # The concrete focal depth (µm) the optics step resolved "auto" to - the plane
     # that maximized recoverable yield. A scalar, so persisted as a group attr (not
     # a dataset) by save/load; None when the optics step did not run.
@@ -209,6 +213,7 @@ class GroundTruth(BaseModel):
             neuropil_temporal=self.neuropil_temporal,
             neuropil_spatial=self.neuropil_spatial,
             neuropil_population=self.neuropil_population,
+            vasculature_mask=self.vasculature_mask,
             focal_depth_um=self.focal_depth_um,
         )
 
@@ -501,6 +506,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         neuropil_temporal=scene.truth.neuropil_temporal,
         neuropil_spatial=_crop_components(scene.truth.neuropil_spatial, fov_h, fov_w),
         neuropil_population=scene.truth.neuropil_population,
+        vasculature_mask=_crop_field(scene.truth.vasculature_mask, fov_h, fov_w),
         focal_depth_um=scene.truth.focal_depth_um,
     )
     # observed is always the sensor FOV: brain_motion already crops the movie,
@@ -546,6 +552,15 @@ def _crop_components(stack: np.ndarray | None, h: int, w: int) -> np.ndarray | N
     top = (stack.shape[1] - h) // 2
     left = (stack.shape[2] - w) // 2
     return stack[:, top : top + h, left : left + w]
+
+
+def _crop_field(field: np.ndarray | None, h: int, w: int) -> np.ndarray | None:
+    """Crop a single ``(H, W)`` field to the centered reference FOV (or pass None)."""
+    if field is None:
+        return None
+    top = (field.shape[0] - h) // 2
+    left = (field.shape[1] - w) // 2
+    return field[top : top + h, left : left + w]
 
 
 def _stack(arrays: list[np.ndarray], empty_shape: tuple[int, ...]) -> np.ndarray:

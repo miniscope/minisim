@@ -31,6 +31,7 @@ from minisim import (
     Scene,
     Sensor,
     Vasculature,
+    VesselLayer,
     Vignette,
 )
 from minisim.footprint import Footprint
@@ -43,6 +44,7 @@ from minisim.steps import (
     LeakageStep,
     NeuropilStep,
     SensorStep,
+    VesselGrowth,
     VignetteStep,
     bleaching_floor,
     bleaching_pool,
@@ -51,17 +53,22 @@ from minisim.steps import (
     combined_falloff_field,
     dark_recovery,
     degrade_footprint,
+    grow_vessel_tree,
     kernel_timing,
+    murray_children,
     neuron_footprint,
     ou_process,
     physical_brain_motion,
     population_envelope,
     radial_falloff,
+    rasterize_vessels,
     resolve_focal_plane,
     sample_neurons,
     shift_and_crop,
     spike_activity_params,
     tau_from_kernel_timing,
+    vasculature_mask_field,
+    vessels_to_mask,
 )
 
 
@@ -1300,6 +1307,163 @@ def test_vasculature_is_an_honest_noop():
     Vasculature().build(acq, np.random.default_rng(0))(scene)
     assert (scene.movie.values == 1.0).all()  # scene untouched
     assert scene.truth.neuropil_spatial is None  # no ground-truth contribution
+
+
+# --- vasculature model core: grow / rasterize / mask ------------------
+
+
+def _growth(**kw):
+    """A VesselGrowth with small, test-friendly defaults; override per test."""
+    base = dict(r0_um=8.0, min_radius_um=1.0, branch_prob=0.1, tortuosity_rad=0.1)
+    base.update(kw)
+    return VesselGrowth(**base)
+
+
+def test_murray_children_conserves_cube_sum():
+    # Murray's law: r1**3 + r2**3 == r_parent**3 for any split fraction.
+    for a in (0.5, 0.7, 0.9):
+        r1, r2 = murray_children(10.0, a)
+        assert r1**3 + r2**3 == pytest.approx(10.0**3)
+        assert r1 >= r2  # the "main" child (a >= 0.5) is the thicker one
+    # symmetric split shrinks each child to 0.5**(1/3) of the parent
+    r1, r2 = murray_children(10.0, 0.5)
+    assert r1 == pytest.approx(r2) == pytest.approx(10.0 * 0.5 ** (1 / 3))
+
+
+def test_grow_vessel_tree_is_deterministic_in_the_rng():
+    bounds, root = (200.0, 200.0), (100.0, 0.0)
+    a = grow_vessel_tree(bounds, root, 0.0, _growth(), np.random.default_rng(7))
+    b = grow_vessel_tree(bounds, root, 0.0, _growth(), np.random.default_rng(7))
+    assert np.array_equal(a, b)  # same seed -> identical tree (streaming relies on it)
+
+
+def test_grow_vessel_tree_unbranched_is_a_constant_radius_path():
+    # branch_prob=0 -> no bifurcation -> no Murray taper: one straight-ish path,
+    # every segment at the root radius, starting at the root.
+    bounds, root, r0 = (200.0, 200.0), (100.0, 0.0), 6.0
+    segs = grow_vessel_tree(
+        bounds, root, 0.0, _growth(r0_um=r0, branch_prob=0.0), np.random.default_rng(1)
+    )
+    assert segs.shape[0] >= 1
+    assert np.allclose(segs[:, 4], r0)  # radius column constant (no branching)
+    assert segs[0, 0] == pytest.approx(root[0]) and segs[0, 1] == pytest.approx(root[1])
+    # segments chain end-to-end: each start == previous end
+    assert np.allclose(segs[1:, :2], segs[:-1, 2:4])
+
+
+def test_grow_vessel_tree_branching_tapers_and_terminates_at_capillary_floor():
+    bounds, root = (400.0, 400.0), (200.0, 0.0)
+    segs = grow_vessel_tree(
+        bounds, root, 0.0,
+        _growth(r0_um=10.0, min_radius_um=2.0, branch_prob=0.4, tortuosity_rad=0.2),
+        np.random.default_rng(3),
+    )
+    radii = segs[:, 4]
+    assert radii.max() == pytest.approx(10.0)  # the trunk is the thickest
+    assert radii.min() >= 2.0  # branches stop at the capillary floor, never thinner
+    assert (radii < 10.0).any()  # tapering did happen (children below the trunk)
+
+
+def test_grow_vessel_tree_respects_the_segment_cap():
+    # A dense brancher in a big canvas would grow forever without the cap.
+    segs = grow_vessel_tree(
+        (1000.0, 1000.0), (500.0, 0.0), 0.0,
+        _growth(r0_um=20.0, min_radius_um=0.1, branch_prob=0.9, max_segments=50),
+        np.random.default_rng(0),
+    )
+    assert segs.shape[0] <= 50
+
+
+def test_rasterize_vessels_chord_peaks_at_diameter_and_is_local():
+    # One horizontal segment of radius 5 µm at 1 µm/px: path length on its axis is
+    # the full chord 2r = 10 µm, and pixels well outside the radius are untouched.
+    seg = np.array([[20.0, 5.0, 20.0, 45.0, 5.0]])  # y const, x 5->45, r=5
+    L = rasterize_vessels(seg, (40, 50), pixel_size_um=1.0)
+    assert L[20, 25] == pytest.approx(10.0, abs=1e-6)  # 2r on the spine
+    assert L[20, 25] >= L[18, 25] >= L[14, 25]  # tapers off the axis
+    assert L[14, 25] == 0.0  # 6 µm off a 5 µm vessel -> outside, no blood
+    assert L[0, 0] == 0.0  # far corner untouched (rasterized locally)
+
+
+def test_rasterize_vessels_overlap_adds_path_length():
+    # Two crossing vessels: where they overlap the light crosses both -> chords add.
+    horiz = np.array([[20.0, 0.0, 20.0, 40.0, 4.0]])
+    vert = np.array([[0.0, 20.0, 40.0, 20.0, 4.0]])
+    both = rasterize_vessels(np.vstack([horiz, vert]), (40, 40), 1.0)
+    one = rasterize_vessels(horiz, (40, 40), 1.0)
+    assert both[20, 20] == pytest.approx(2 * one[20, 20])  # crossing doubles it
+
+
+def test_rasterize_vessels_empty_input_is_blank():
+    L = rasterize_vessels(np.zeros((0, 5)), (10, 12), 1.0)
+    assert L.shape == (10, 12) and not L.any()
+
+
+def test_vessels_to_mask_beer_lambert_floor_and_clear_tissue():
+    L = np.array([[0.0, 1.0, 100.0]])
+    m = vessels_to_mask(L, opacity=0.8, absorption_per_um=0.2)
+    assert m[0, 0] == pytest.approx(1.0)  # no blood -> fully transmissive
+    assert m[0, 2] == pytest.approx(1.0 - 0.8, abs=1e-3)  # thick trunk -> 1-opacity floor
+    assert 1.0 - 0.8 < m[0, 1] < 1.0  # a thin vessel sits between floor and clear
+    # opacity=0 disables the effect regardless of path length
+    assert np.allclose(vessels_to_mask(L, 0.0, 0.2), 1.0)
+
+
+def test_vessels_to_mask_darker_with_more_absorption():
+    L = np.full((4, 4), 5.0)
+    weak = vessels_to_mask(L, 1.0, 0.05)
+    strong = vessels_to_mask(L, 1.0, 0.5)
+    assert (strong < weak).all()  # higher k -> darker shadow at fixed thickness
+
+
+# --- vasculature spec + mask field + step ----------------------------
+
+
+def test_vessel_layer_rejects_capillary_floor_above_trunk():
+    with pytest.raises(ValidationError, match="min_radius_um"):
+        VesselLayer(root_radius_um=5.0, min_radius_um=6.0)
+
+
+def test_vasculature_mask_field_is_deterministic_and_composes_layers():
+    acq = _acq(n_px=48, duration_s=0.2)
+    one = [VesselLayer(depth_um=10.0, n_roots=2, root_radius_um=8.0)]
+    two = [*one, VesselLayer(depth_um=40.0, n_roots=2, root_radius_um=6.0)]
+    spec1, spec2 = Vasculature(enabled=True, layers=one), Vasculature(enabled=True, layers=two)
+    m1a = vasculature_mask_field(spec1, acq, (48, 48), 30.0, np.random.default_rng(5))
+    m1b = vasculature_mask_field(spec1, acq, (48, 48), 30.0, np.random.default_rng(5))
+    np.testing.assert_array_equal(m1a, m1b)  # same seed -> identical mask
+    assert ((m1a > 0) & (m1a <= 1.0)).all() and (m1a < 1.0).any()  # a valid, non-trivial mask
+    m2 = vasculature_mask_field(spec2, acq, (48, 48), 30.0, np.random.default_rng(5))
+    assert m2.mean() <= m1a.mean()  # a second absorbing layer only darkens
+
+
+def test_vasculature_step_applies_a_dark_static_mask_and_records_it():
+    acq = _acq(n_px=48, duration_s=0.3)
+    scene = Scene.ones(acq)
+    spec = Vasculature(
+        enabled=True, layers=[VesselLayer(depth_um=10.0, n_roots=3, root_radius_um=8.0)]
+    )
+    spec.build(acq, np.random.default_rng(0))(scene)
+    mask = scene.truth.vasculature_mask
+    assert mask is not None and mask.shape == scene.canvas_shape
+    assert ((mask > 0) & (mask <= 1.0)).all() and (mask < 1.0).any()  # vessels darkened pixels
+    # the movie started at ones, so a multiplicative static mask leaves every frame
+    # equal to the mask itself (and identical frame-to-frame: spatially static).
+    movie = scene.movie.values
+    for t in range(movie.shape[0]):
+        np.testing.assert_allclose(movie[t], mask)
+
+
+def test_vasculature_step_disabled_or_layerless_is_noop():
+    acq = _acq(n_px=24, duration_s=0.2)
+    for spec in (
+        Vasculature(enabled=False, layers=[VesselLayer()]),  # master switch off
+        Vasculature(enabled=True, layers=[]),  # on but nothing to grow
+    ):
+        scene = Scene.ones(acq)
+        spec.build(acq, np.random.default_rng(0))(scene)
+        assert (scene.movie.values == 1.0).all()
+        assert scene.truth.vasculature_mask is None
 
 
 # --- scene-grid plumbing -----------------------------------

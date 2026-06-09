@@ -842,12 +842,74 @@ class Neuropil(StepSpec):
     population_coupling: float = Field(ge=0, le=1, default=0.7, description="Fraction of the temporal envelope driven by local population activity vs independent slow drift (0=pure drift, 1=pure population).")
 
 
+class VesselLayer(_Base):
+    """One depth's worth of randomly-grown blood vessels - a dark absorbing tree.
+
+    A vessel absorbs both the excitation going in and the emission coming out
+    (haemoglobin), so a layer is a *shadow* cast on the tissue behind it, not a
+    light source. Each layer grows ``n_roots`` branching trees (see
+    :func:`~minisim.steps.tissue.grow_vessel_tree`) entering from the field edges,
+    tapering from ``root_radius_um`` trunks down to ``min_radius_um`` capillaries by
+    Murray's law, then rasterizes them to a Beer-Lambert transmission mask and blurs
+    it by the **defocus + scatter** at this layer's ``depth_um`` (reusing the optics
+    model): a vessel near the focal plane is a crisp dark thread, one far from focus
+    a broad soft shadow. List several layers on :class:`Vasculature` to stack scales
+    and depths (e.g. a shallow large-caliber cortical layer above the cells, plus a
+    deeper fine-capillary bed).
+
+    All lengths are µm; ``depth_um`` shares the cell-``z`` / focal-plane coordinate
+    (0 = surface), so a layer can sit above the cells (shallower) or, less commonly,
+    below them.
+    """
+
+    depth_um: float = Field(ge=0, default=30.0, description="Depth of this vessel layer below the surface, µm (same coord as cell z / focal plane).")
+    n_roots: int = Field(ge=1, default=4, description="Number of vessel trees entering this layer from the field edges.")
+    root_radius_um: float = Field(gt=0, default=22.0, description="Trunk (thickest) vessel radius, µm.")
+    min_radius_um: float = Field(gt=0, default=2.0, description="Capillary floor: a branch terminates once Murray-law tapering drops below this, µm.")
+    opacity: float = Field(gt=0, le=1, default=0.85, description="Peak absorption of a thick trunk in (0, 1]; transmission floors at 1 − opacity (real vessels are never fully black).")
+    absorption_per_um: float = Field(gt=0, default=0.04, description="Beer-Lambert absorption per µm of blood path length: sets the capillary-vs-trunk contrast.")
+    branch_prob: float = Field(ge=0, lt=1, default=0.2, description="Per-step bifurcation probability (a side branch peels off, the main vessel continues).")
+    tortuosity_deg: float = Field(ge=0, default=8.0, description="Std of the per-step heading perturbation, degrees (0 = ruler-straight vessels).")
+    branch_angle_deg: float = Field(ge=0, default=30.0, description="Base heading deviation at a bifurcation, degrees; the thinner child turns more.")
+    branch_area_main: float = Field(gt=0.5, lt=1.0, default=0.7, description="Main child's share of the conserved Murray cube-sum at a bifurcation (0.5 = symmetric, →1 = a thin twig off a barely-thinned trunk).")
+    step_per_radius: float = Field(gt=0, default=1.5, description="Growth step length as a multiple of the current radius.")
+
+    @model_validator(mode="after")
+    def _check_radii(self) -> VesselLayer:
+        if self.min_radius_um >= self.root_radius_um:
+            raise ValueError(
+                f"min_radius_um ({self.min_radius_um}) must be < root_radius_um "
+                f"({self.root_radius_um}); the capillary floor is below the trunk."
+            )
+        return self
+
+
 class Vasculature(StepSpec):
-    """Dark absorbing mask × (slow dilation + cardiac). Placeholder no-op for v1."""
+    """Dark, spatially-static absorbing vessels - a multiplicative shadow on the movie.
+
+    Grows the ``layers`` of branching vessel trees, composites their Beer-Lambert
+    transmission masks multiplicatively, and multiplies the result into the
+    brain-frame movie (``movie *= M``). Because it is a *tissue*-domain effect
+    applied before ``brain_motion``, the vessel pattern is fixed in the brain frame
+    and rides the motion crop exactly with the cells - the high-contrast, temporally
+    static landmark that motion-correction leans on (unlike the cells, whose
+    brightness flickers with activity). It is also a tunable *confound*: a vessel
+    crossing a soma corrupts its footprint and trace, so dialing vasculature up
+    stress-tests footprint/dynamics extraction.
+
+    Off by default: ``enabled=False`` and an empty ``layers`` both make the step a
+    no-op, so it must be explicitly turned on with at least one
+    :class:`VesselLayer`. The static absorbing mask is recorded to
+    ``GroundTruth.vasculature_mask`` (cropped to the FOV) so the confound is
+    scoreable. Temporal pulsation (cardiac / vasomotion) is deliberately deferred -
+    the vessels are static here; only the brightness, not the position, would ever
+    breathe, so the landmark property is unaffected either way.
+    """
 
     domain: ClassVar[str] = "tissue"
     kind: Literal["vasculature"] = "vasculature"
-    enabled: bool = Field(default=False, description="Placeholder; multiplicative absorption lands in v1.1.")
+    enabled: bool = Field(default=False, description="Master switch; with no layers the step is a no-op regardless.")
+    layers: list[VesselLayer] = Field(default_factory=list, description="Vessel layers to grow, each at its own depth/caliber. Empty = no vessels.")
 
 
 class Bleaching(StepSpec):

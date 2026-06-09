@@ -27,6 +27,8 @@ from minisim import (
     PlaceNeurons,
     Sensor,
     Spec,
+    Vasculature,
+    VesselLayer,
     Vignette,
     simulate,
     simulate_video,
@@ -34,11 +36,14 @@ from minisim import (
 from minisim.video import _default_vmax, _iter_count_frames, _to_uint8
 
 
-def _spec(duration_s=1.5, motion=True, sensor=True, neuropil=True, bleaching=True, n_px=48, seed=3):
+def _spec(
+    duration_s=1.5, motion=True, sensor=True, neuropil=True, bleaching=True,
+    vasculature=False, n_px=48, seed=3,
+):
     """A small but complete forward pipeline for streaming tests.
 
-    The optional effects (motion, sensor, neuropil, bleaching) toggle so the
-    bit-for-bit test can sweep a matrix of pipelines, not one fixed shape.
+    The optional effects (motion, sensor, neuropil, bleaching, vasculature) toggle so
+    the bit-for-bit test can sweep a matrix of pipelines, not one fixed shape.
     """
     acq = Acquisition(
         fps=20.0,
@@ -56,6 +61,8 @@ def _spec(duration_s=1.5, motion=True, sensor=True, neuropil=True, bleaching=Tru
     steps += [CellOptics(), Composite()]
     if neuropil:
         steps.append(Neuropil(n_components=2))
+    if vasculature:
+        steps.append(Vasculature(enabled=True, layers=[VesselLayer(depth_um=20.0, n_roots=2)]))
     if motion:
         steps.append(BrainMotion())
     steps += [IlluminationProfile(), Vignette(), Leakage()]
@@ -69,20 +76,22 @@ def _stream(spec, chunk):
 
 
 @pytest.mark.parametrize(
-    "motion,neuropil,bleaching",
+    "motion,neuropil,bleaching,vasculature",
     [
-        (True, True, True),  # the full pipeline
-        (False, True, True),  # no motion -> canvas is the FOV, no shift_and_crop
-        (True, False, True),  # no neuropil
-        (True, True, False),  # no bleaching
-        (False, False, False),  # the minimal count-producing chain
+        (True, True, True, False),  # the full pipeline
+        (False, True, True, False),  # no motion -> canvas is the FOV, no shift_and_crop
+        (True, False, True, False),  # no neuropil
+        (True, True, False, False),  # no bleaching
+        (False, False, False, False),  # the minimal count-producing chain
+        (True, True, True, True),  # + vasculature (an RNG-consuming multiplicative mask)
+        (False, False, False, True),  # vasculature alone over the minimal chain
     ],
 )
-def test_streamed_frames_match_simulate_bit_for_bit(motion, neuropil, bleaching):
+def test_streamed_frames_match_simulate_bit_for_bit(motion, neuropil, bleaching, vasculature):
     # Sweep a matrix of pipelines (not one fixed spec): each RNG-consuming effect
     # toggled, so a draw-order desync in any of them is caught. Sensor stays on so
     # the counts are integer-valued (exact in float32) and the equality is meaningful.
-    spec = _spec(motion=motion, neuropil=neuropil, bleaching=bleaching)
+    spec = _spec(motion=motion, neuropil=neuropil, bleaching=bleaching, vasculature=vasculature)
     observed = simulate(spec).observed
     streamed = _stream(spec, chunk=8)
     assert streamed.shape == observed.shape

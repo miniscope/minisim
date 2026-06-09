@@ -71,6 +71,9 @@ density-sampled (`density_per_mm3` over a `depth_range_um`) or placed at exact
 ```{autopydantic_model} minisim.Vasculature
 ```
 
+```{autopydantic_model} minisim.VesselLayer
+```
+
 ```{autopydantic_model} minisim.Bleaching
 ```
 

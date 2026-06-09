@@ -56,6 +56,7 @@ from minisim.spec import (
     StepSpec,
     Tissue,
     Vasculature,
+    VesselLayer,
     Vignette,
     order_steps,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "SweptSpec",
     "Tissue",
     "Vasculature",
+    "VesselLayer",
     "Vignette",
     "cache_dir",
     "cache_path",

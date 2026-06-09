@@ -121,6 +121,8 @@ class GroundTruthBuilder:
     * ``neuropil_temporal`` / ``neuropil_spatial`` - the diffuse-background
       components; ``neuropil_population`` - the (frame,) population driver that
       modulates them (``None`` when no cells were active to drive it).
+    * ``vasculature_mask`` - the static (height, width) vessel transmission mask
+      from ``vasculature`` (``None`` when the step is off / has no layers).
 
     The steps that fill these slots live in :mod:`minisim.steps`, and
     ``finalize()`` reads them into the frozen ``GroundTruth``.
@@ -133,6 +135,7 @@ class GroundTruthBuilder:
     neuropil_temporal: np.ndarray | None = None
     neuropil_spatial: np.ndarray | None = None
     neuropil_population: np.ndarray | None = None
+    vasculature_mask: np.ndarray | None = None
     # The concrete focal depth the optics step resolved (µm below the surface);
     # the one number "auto" focus turns into, recorded so it is observable.
     focal_depth_um: float | None = None
