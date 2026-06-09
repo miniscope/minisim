@@ -34,6 +34,8 @@ from minisim import (
     PlaceNeurons,
     Sensor,
     Tissue,
+    Vasculature,
+    VesselLayer,
     detection_snr,
     sample_field_at,
 )
@@ -56,6 +58,7 @@ from minisim.steps import (
     neuron_footprint,
     sample_neurons,
     smooth_spatial_field,
+    vasculature_mask_field,
 )
 from minisim.steps.sensor import (
     combined_falloff_field,
@@ -499,6 +502,63 @@ class BleachingSandbox:
         self._ax_b.set(xlabel="time (days)", ylabel="normalized fluorescence  B(t)",
                        ylim=(max(0.0, bb.min() - 0.03), 1.02),
                        title="repeated imaging: recovery (or ratchet-down) across dark gaps")
+        self.fig.canvas.draw_idle()
+
+
+class VasculaturePanel:
+    """Stage-5b vasculature sandbox: tune one vessel layer and see the mask live.
+
+    Grows a single vessel layer from the live slider values via the real
+    :func:`~minisim.steps.vasculature_mask_field` (the same code the pipeline runs),
+    on the committed FOV at a **fixed seed** - so nudging a knob refines the *same*
+    tree instead of re-rolling it. Left panel: the transmission mask (vessels dark);
+    right: the absorbed fraction. The committed focal plane sets the per-depth
+    defocus blur, so the ``depth`` slider visibly sharpens (near focus) or softens
+    (far from it) the shadow, and ``opacity`` / ``trunk radius`` / ``branchiness`` /
+    ``waviness`` shape how dark and dense the vessels read.
+    """
+
+    def __init__(self, sliders, acq, focal_um):
+        self.sliders = sliders
+        self.acq = acq
+        self.focal_um = float(focal_um)
+        self.shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
+        self.fig = plt.figure(figsize=(10.5, 4.7))
+        if hasattr(self.fig.canvas, "header_visible"):
+            self.fig.canvas.header_visible = False
+        gs = self.fig.add_gridspec(1, 2, wspace=0.08, left=0.03, right=0.985, top=0.88, bottom=0.03)
+        self._ax_t = self.fig.add_subplot(gs[0, 0])
+        self._ax_a = self.fig.add_subplot(gs[0, 1])
+
+    @property
+    def canvas(self):
+        """The persistent figure canvas (hand this to ``interactive_panel``)."""
+        return self.fig.canvas
+
+    def draw(self):
+        """Regrow the layer from the current sliders and redraw the mask in place."""
+        v = {k: s.value for k, s in self.sliders.items()}
+        layer = VesselLayer(
+            depth_um=v["depth_um"], n_roots=int(v["n_roots"]),
+            root_radius_um=v["root_radius_um"], opacity=v["opacity"],
+            branch_prob=v["branch_prob"], tortuosity_deg=v["tortuosity_deg"],
+        )
+        spec = Vasculature(enabled=True, layers=[layer])
+        # Fixed seed: tuning opacity/depth refines the SAME tree rather than re-rolling it.
+        mask = vasculature_mask_field(spec, self.acq, self.shape, self.focal_um,
+                                      np.random.default_rng(0))
+        absorbed = 1.0 - mask
+        coverage = 100.0 * float((absorbed > 0.05).mean())
+        self._ax_t.clear()
+        self._ax_a.clear()
+        self._ax_t.imshow(mask, cmap="gray", vmin=float(mask.min()), vmax=1.0)
+        self._ax_t.set_xticks([])
+        self._ax_t.set_yticks([])
+        self._ax_t.set_title(f"transmission (vessels dark) - darkest {float(mask.min()):.2f}", fontsize=10)
+        self._ax_a.imshow(absorbed, cmap="magma", vmin=0.0, vmax=1.0)
+        self._ax_a.set_xticks([])
+        self._ax_a.set_yticks([])
+        self._ax_a.set_title(f"absorbed fraction - covers {coverage:.0f}% of the FOV", fontsize=10)
         self.fig.canvas.draw_idle()
 
 
