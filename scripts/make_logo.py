@@ -242,7 +242,10 @@ def simulate_word(text):
     fill = np.clip(hn, 0, 1) * letter
     a = np.clip(cn + 0.18 * fill, 0, 1)  # bright cells over a faint glyph-shaped glow
     rgba = SIMGREEN(a)
-    rgba[..., 3] = np.clip(a * 1.5, 0, 1)  # glow fades to transparent
+    # opaque across the letters; only the empty background is transparent (soft edge
+    # via smoothstep so there is no dark halo, but the letter bodies are solid).
+    t = np.clip((a - 0.05) / (0.26 - 0.05), 0, 1)
+    rgba[..., 3] = t * t * (3 - 2 * t)
     # the exact glyph box (the text bbox region) inside the full image, so the
     # caller can place it at the same size + baseline as plain text.
     gh, gw = int(round(tmask.shape[0] * scale / ps)), int(round(tmask.shape[1] * scale / ps))
