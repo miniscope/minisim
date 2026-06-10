@@ -1,4 +1,4 @@
-"""Bundled teaching notebooks, plus a CLI to copy them somewhere writable.
+"""Bundled notebooks, plus a CLI to copy them somewhere writable.
 
 ``pip install minisim`` ships the notebooks read-only inside the installed
 package; running them in place is awkward (the install tree is often not
@@ -14,6 +14,13 @@ own::
 The ``list``/``copy`` verbs mirror minian's ``minian notebooks`` CLI, so the two
 sister tools feel the same.
 
+Two *categories* of bundle ship side by side, discovered uniformly: ``training/``
+holds the teaching ladder (``01_anatomy`` …), where each notebook isolates one
+physical effect to *explain* it; ``studio/`` holds production tools (the
+``build_recording`` data generator), which expose every knob at once to *make
+usable simulated data*. A bundle is just a directory containing a ``.ipynb``
+under either category, so adding one needs no CLI change.
+
 No data download is needed: minisim *generates* its recordings from code, so the
 notebooks have no external dataset to fetch (and the movies they write are
 outputs, never packaged inputs).
@@ -24,10 +31,20 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
-# The packaged bundles live under this subpackage, in `training/`.
-_BUNDLES = Path(__file__).resolve().parent / "training"
+# Category roots scanned for bundles, in listing order: the teaching ladder
+# (`training/`) then the data-generation tools (`studio/`). A bundle is any
+# subdirectory of one of these that contains a `.ipynb`; bundle names are unique
+# across categories (the CLI addresses a bundle by name alone), so a new tool is
+# discoverable just by dropping its directory under one of these roots.
+_PACKAGE_DIR = Path(__file__).resolve().parent
+_CATEGORY_ROOTS = (_PACKAGE_DIR / "training", _PACKAGE_DIR / "studio")
+
+# Back-compat alias: the original single training root. Kept because callers and
+# tests reference it directly; new code should iterate `_CATEGORY_ROOTS`.
+_BUNDLES = _CATEGORY_ROOTS[0]
 
 # Generated artifacts a notebook may write next to itself. They are excluded
 # from the wheel (see [tool.pdm.build] in pyproject), but a developer's working
@@ -42,8 +59,33 @@ DEFAULT_DEST = "minisim-notebooks"
 
 
 def bundles_dir() -> Path:
-    """Filesystem path to the packaged notebook bundles (the ``training/`` tree)."""
+    """Filesystem path to the teaching-bundle root (the ``training/`` tree).
+
+    The historical single-category accessor. Bundle *discovery* now spans every
+    category in :data:`_CATEGORY_ROOTS` (training + studio); use :func:`notebooks`
+    for the full set. This still points at ``training/`` for callers that want the
+    teaching ladder specifically.
+    """
     return _BUNDLES
+
+
+def _iter_bundles() -> Iterator[Path]:
+    """Yield every bundle directory across all category roots, in listing order.
+
+    A bundle is a subdirectory of a category root that contains a ``.ipynb``.
+    A category root that does not exist (e.g. a partial install) is skipped.
+    """
+    for root in _CATEGORY_ROOTS:
+        if not root.is_dir():
+            continue
+        for child in sorted(root.iterdir()):
+            if child.is_dir() and any(child.glob("*.ipynb")):
+                yield child
+
+
+def _find_bundle(name: str) -> Path | None:
+    """Return the bundle directory named ``name`` from any category, or ``None``."""
+    return next((b for b in _iter_bundles() if b.name == name), None)
 
 
 def _description(bundle: Path) -> str:
@@ -60,25 +102,23 @@ def _description(bundle: Path) -> str:
 def notebooks() -> dict[str, str]:
     """Map each bundled notebook's name to its one-line description.
 
-    A bundle is any subdirectory of ``training/`` that contains a ``.ipynb``;
-    its name is the directory name (e.g. ``01_anatomy``).
+    A bundle is any subdirectory of a category root (``training/``, ``studio/``)
+    that contains a ``.ipynb``; its name is the directory name (e.g. ``01_anatomy``,
+    ``build_recording``). Teaching bundles list first, then the studio tools.
     """
-    return {
-        child.name: _description(child)
-        for child in sorted(_BUNDLES.iterdir())
-        if child.is_dir() and any(child.glob("*.ipynb"))
-    }
+    return {bundle.name: _description(bundle) for bundle in _iter_bundles()}
 
 
 def copy(name: str, dest: str | Path = DEFAULT_DEST, *, force: bool = False) -> Path:
     """Copy one bundled notebook into ``dest/<name>`` and return that path.
 
-    Generated movies and checkpoints are skipped. Raises ``KeyError`` if ``name``
-    is not a bundled notebook, or ``FileExistsError`` if the target already exists
-    and ``force`` is not set.
+    Looks ``name`` up across every category (training + studio). Generated movies
+    and checkpoints are skipped. Raises ``KeyError`` if ``name`` is not a bundled
+    notebook, or ``FileExistsError`` if the target already exists and ``force`` is
+    not set.
     """
-    src = _BUNDLES / name
-    if not src.is_dir() or not any(src.glob("*.ipynb")):
+    src = _find_bundle(name)
+    if src is None:
         raise KeyError(name)
     target = Path(dest).expanduser() / name
     if target.exists() and not force:

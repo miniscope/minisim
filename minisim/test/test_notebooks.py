@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+import minisim.notebooks as nb
 from minisim.notebooks import (
     _description,
     _print_table,
@@ -12,6 +15,25 @@ from minisim.notebooks import (
     main,
     notebooks,
 )
+
+
+def _make_bundle(category: Path, name: str, *, title: str) -> Path:
+    """Create a fake bundle (dir + one .ipynb + a titled README) under ``category``."""
+    bundle = category / name
+    bundle.mkdir(parents=True)
+    (bundle / f"{name}.ipynb").write_text("{}", encoding="utf-8")
+    (bundle / "README.md").write_text(f"# {title}\n", encoding="utf-8")
+    return bundle
+
+
+@pytest.fixture
+def two_category_roots(tmp_path, monkeypatch):
+    """Point bundle discovery at a temp training/ + studio/ pair with one bundle each."""
+    training, studio = tmp_path / "training", tmp_path / "studio"
+    _make_bundle(training, "01_anatomy", title="Anatomy lesson")
+    _make_bundle(studio, "build_recording", title="Build a recording")
+    monkeypatch.setattr(nb, "_CATEGORY_ROOTS", (training, studio))
+    return training, studio
 
 
 def test_bundles_dir_ships_the_anatomy_notebook():
@@ -117,3 +139,34 @@ def test_cli_requires_a_subcommand():
     with pytest.raises(SystemExit) as exc:
         main([])
     assert exc.value.code != 0
+
+
+# -- multi-category discovery (training/ + studio/) -------------------------
+
+
+def test_discovery_spans_both_categories_training_first(two_category_roots):
+    """`notebooks()` finds bundles in every category root, teaching ladder first."""
+    names = list(notebooks())
+    assert names == ["01_anatomy", "build_recording"]  # training listed before studio
+
+
+def test_copy_finds_a_studio_bundle_by_name(two_category_roots, tmp_path):
+    """A studio-category bundle is addressable by name alone, like a training one."""
+    out = copy("build_recording", tmp_path / "dest")
+    assert out == tmp_path / "dest" / "build_recording"
+    assert (out / "build_recording.ipynb").is_file()
+
+
+def test_missing_category_root_is_skipped_not_fatal(tmp_path, monkeypatch):
+    """A category root that does not exist (partial install) is silently skipped."""
+    training = tmp_path / "training"
+    _make_bundle(training, "01_anatomy", title="Anatomy lesson")
+    monkeypatch.setattr(nb, "_CATEGORY_ROOTS", (training, tmp_path / "studio"))
+    assert list(notebooks()) == ["01_anatomy"]
+
+
+def test_real_install_ships_the_studio_category():
+    """The packaged tree carries the studio/ category beside training/."""
+    studio = bundles_dir().parent / "studio"
+    assert studio.is_dir(), "studio/ category root not shipped"
+    assert (studio / "build_recording" / "README.md").is_file()
