@@ -28,6 +28,8 @@ from minisim import (
     Recording,
     Sensor,
     Spec,
+    Vasculature,
+    VesselLayer,
     Vignette,
     cache_dir,
     cache_path,
@@ -75,6 +77,7 @@ def _full_spec(seed=11, **output_kw):
             CellOptics(),
             Composite(),
             Neuropil(n_components=2),
+            Vasculature(enabled=True, layers=[VesselLayer(depth_um=20.0, n_roots=2)]),
             BrainMotion(model="walk", walk_step_um=0.3, max_shift_um=2.0),
             Vignette(falloff=0.6),
             Leakage(profile="gaussian", level=0.1),
@@ -109,7 +112,8 @@ def test_minimal_recording_keeps_optional_fields_none(tmp_path):
     rec = simulate(_minimal_spec())
     rec.save(tmp_path / "r.zarr")
     back = Recording.load(tmp_path / "r.zarr").ground_truth
-    for name in ("shifts", "vignette", "leakage", "bleaching", "neuropil_temporal", "neuropil_spatial"):
+    for name in ("shifts", "vignette", "leakage", "bleaching", "neuropil_temporal",
+                 "neuropil_spatial", "vasculature_mask", "vessel_overlap_fraction"):
         assert getattr(back, name) is None
 
 
@@ -117,7 +121,8 @@ def test_save_load_roundtrips_optional_fields_present(tmp_path):
     rec = simulate(_full_spec())
     rec.save(tmp_path / "r.zarr")
     gt, back = rec.ground_truth, Recording.load(tmp_path / "r.zarr").ground_truth
-    for name in ("shifts", "vignette", "leakage", "bleaching", "neuropil_temporal", "neuropil_spatial"):
+    for name in ("shifts", "vignette", "leakage", "bleaching", "neuropil_temporal",
+                 "neuropil_spatial", "vasculature_mask", "vessel_overlap_fraction"):
         assert getattr(back, name) is not None, name
         np.testing.assert_array_equal(getattr(back, name), getattr(gt, name))
     # the resolved "auto" focus is a scalar attr, not a dataset; it round-trips too

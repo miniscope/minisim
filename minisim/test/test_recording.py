@@ -32,6 +32,7 @@ from minisim import (
     sample_field_at,
 )
 from minisim.footprint import Footprint, FootprintStack
+from minisim.recording import _vessel_overlap
 from minisim.scene import Cell
 
 
@@ -263,6 +264,48 @@ def test_detectable_subset_keeps_only_detectable_units():
     assert sub.n_units == 1
     assert sub.detectable.all()
     assert isinstance(sub, GroundTruth)
+
+
+def test_vessel_occlusion_dims_detectability_and_records_overlap():
+    # A bright, in-focus cell is detectable in the clear; drop an opaque vessel over
+    # it and its peak no longer clears the floor, while its footprint-weighted
+    # occlusion is recorded as the scoreable confound axis.
+    acq = _acq(n_px=16)
+    nf = acq.n_frames
+    trace = np.ones(nf)
+    trace[nf // 2] = 5.0
+    spec = _detect_spec(acq)
+
+    def _scene():
+        s = Scene.zeros(acq)
+        s.cells.append(
+            Cell(center_um=(0.0, 8.0, 8.0), footprint_planted=_dot((16, 16), 8, 8),
+                 trace=trace, in_focus=True, optical_brightness=1.0)
+        )
+        return s
+
+    clear = finalize(_scene(), spec).ground_truth
+    assert clear.detectable.tolist() == [True]
+    assert clear.vessel_overlap_fraction is None  # vasculature step absent -> no field
+
+    occluded = _scene()
+    mask = np.ones((16, 16))
+    mask[8, 8] = 1e-3  # near-opaque vessel right over the cell
+    occluded.truth.vasculature_mask = mask
+    gt = finalize(occluded, spec).ground_truth
+    assert gt.detectable.tolist() == [False]  # vessel knocked it below the floor
+    assert gt.vessel_overlap_fraction[0] == pytest.approx(1.0 - 1e-3)
+
+
+def test_vessel_overlap_is_footprint_weighted():
+    # _vessel_overlap weights transmission by the footprint, so a vessel covering
+    # only part of a multi-pixel footprint occludes only that fraction.
+    fp = Footprint.from_dense(np.array([[1.0, 3.0], [0.0, 0.0]]))  # weights 1 and 3
+    mask = np.array([[0.0, 1.0], [1.0, 1.0]])  # opaque over the weight-1 pixel only
+    # surviving = (1*0 + 3*1)/(1+3) = 0.75 -> overlap 0.25
+    assert _vessel_overlap(fp, mask) == pytest.approx(0.25)
+    assert _vessel_overlap(fp, None) == 0.0  # no mask -> no occlusion
+    assert _vessel_overlap(None, mask) == 0.0  # no footprint -> no occlusion
 
 
 # --- snapshots / stage -----------------------------------------------------

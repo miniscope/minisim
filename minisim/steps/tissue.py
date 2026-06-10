@@ -10,8 +10,9 @@ effects that ride on top of the cells:
   movie; the first step to write ``scene.movie``.
 * :class:`NeuropilStep` (``neuropil``) - additive diffuse background, a smooth
   spatial field modulated by a slow temporal envelope.
-* :class:`VasculatureStep` (``vasculature``) - honest no-op placeholder; the
-  absorbing-vessel model is deferred to v1.1.
+* :class:`VasculatureStep` (``vasculature``) - a dark, static absorbing-vessel
+  mask multiplied into the movie (off by default), grown from depth-resolved
+  branching vessel trees; the high-contrast landmark and a tunable confound.
 
 All run before the motion boundary, so a later ``brain_motion`` step translates
 the cells *and* these fields together (they are part of the brain frame), unlike
@@ -27,6 +28,7 @@ coordinates with (composite emits ``C·B``; neuropil fades with the population `
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -450,22 +452,353 @@ class BleachingStep(Step["Bleaching"]):
 
 
 # ---------------------------------------------------------------------------
-# vasculature (placeholder)
+# vasculature
 # ---------------------------------------------------------------------------
+#
+# A blood vessel is an *absorber*, not an emitter: haemoglobin soaks up both the
+# excitation going in (~470 nm) and the emission coming out (~525 nm), so a vessel
+# casts a dark shadow on everything optically behind it. The vasculature effect is
+# therefore a multiplicative mask M(y, x) in (0, 1] (1 = clear tissue, → 0 = opaque
+# trunk) applied to the brain-frame movie. It is built in three pure stages, each
+# individually testable: *grow* a branching vessel tree, *rasterize* it into a
+# blood-path-length map, then map that to a transmission mask by Beer-Lambert.
+#
+# Everything here works in micrometres (the physical domain), except the rasterizer
+# which bridges µm → the pixel grid; that keeps the absorption coefficient a true
+# per-µm quantity, independent of magnification/pixel size.
+
+# Murray's-law exponent: a parent vessel's cross-sectional "flow capacity" Σ rⁱ is
+# conserved across a bifurcation with i ≈ 3 (minimum-work principle, Murray 1926).
+# So a symmetric split shrinks each child to r·0.5^(1/3) ≈ 0.794·r - the natural
+# trunk→capillary taper.
+_MURRAY_EXPONENT = 3.0
+
+
+@dataclass(frozen=True)
+class VesselGrowth:
+    """Growth knobs for one vessel tree - the runtime bundle the spec builds.
+
+    Plain (non-pydantic) params consumed by :func:`grow_vessel_tree`; the future
+    ``VesselLayer`` spec converts its µm/per-layer fields into one of these. All
+    lengths are µm; angles radians.
+
+    Attributes
+    ----------
+    r0_um
+        Root (thickest) vessel radius - the trunk entering the field.
+    min_radius_um
+        A branch terminates once Murray's-law tapering drops it below this; the
+        capillary floor.
+    branch_prob
+        Per-step probability of a bifurcation. A side branch peels off and the
+        main vessel continues (asymmetric split, see ``branch_area_main``).
+    tortuosity_rad
+        Std of the Gaussian heading perturbation applied each step - sets how much
+        a vessel wanders (0 = ruler-straight).
+    step_per_radius
+        Step length as a multiple of the current radius, so thick trunks advance
+        in coarse strides and capillaries in fine ones (keeps the rasterized line
+        smooth relative to its width).
+    branch_area_main
+        The main child's share of the conserved Σ r³ at a bifurcation, in (0.5, 1):
+        0.5 is a symmetric split, → 1 a thin twig peeling off a barely-thinned
+        trunk. The side child takes the rest.
+    branch_angle_rad
+        Base heading deviation at a bifurcation; the thinner child turns *more*
+        (scaled by the radius ratio), the realistic "sharp little offshoot" look.
+    max_segments
+        Hard cap on segments per tree - a safety bound on total work, not a
+        physical parameter (well above any realistic tree).
+    """
+
+    r0_um: float
+    min_radius_um: float
+    branch_prob: float
+    tortuosity_rad: float
+    step_per_radius: float = 2.0
+    branch_area_main: float = 0.7
+    branch_angle_rad: float = 0.5
+    max_segments: int = 2000
+
+
+def murray_children(r_parent: float, area_fraction: float) -> tuple[float, float]:
+    """Child radii at a bifurcation under Murray's law: ``r1³ + r2³ = r_parent³``.
+
+    ``area_fraction`` ``a`` in (0, 1) is the main child's share of the conserved
+    cube-sum, so ``r1 = r_parent·a^(1/3)`` and ``r2 = r_parent·(1−a)^(1/3)``. At
+    ``a = 0.5`` the split is symmetric (each child ``0.794·r_parent``); nearer 1 a
+    thin twig peels off a trunk that barely thins. The exponent is
+    :data:`_MURRAY_EXPONENT` (≈ 3, the minimum-work value). Returns
+    ``(r_main, r_side)`` with ``r_main ≥ r_side`` whenever ``a ≥ 0.5``.
+    """
+    inv = 1.0 / _MURRAY_EXPONENT
+    r_main = r_parent * area_fraction**inv
+    r_side = r_parent * (1.0 - area_fraction) ** inv
+    return r_main, r_side
+
+
+def grow_vessel_tree(
+    bounds_um: tuple[float, float],
+    root_um: tuple[float, float],
+    heading_rad: float,
+    growth: VesselGrowth,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Grow one branching vessel tree; return its segments as ``(n, 5)`` µm rows.
+
+    Stochastic recursive branching. A branch advances step by step from ``root_um``
+    along ``heading_rad`` (image convention: ``dy = sin θ``, ``dx = cos θ``), the
+    heading drifting by a Gaussian ``tortuosity_rad`` each step so the vessel curves
+    rather than runs straight. With probability ``branch_prob`` per step it
+    *bifurcates*: a side branch peels off (pushed onto a stack to grow later) while
+    the main vessel continues, the two radii set by :func:`murray_children` and the
+    thinner child deviating more. A branch ends when its radius falls below
+    ``min_radius_um`` (it has tapered to a capillary) or it leaves ``bounds_um`` (it
+    has crossed the canvas) - the boundary-crossing segment is kept, so the vessel
+    reaches the edge. ``bounds_um`` is the canvas extent ``(H_um, W_um)``; roots are
+    seeded at/over an edge by the caller so trees grow *into* the field, the way real
+    vessels enter from the side.
+
+    Each row is ``(y0, x0, y1, x1, radius)`` in µm - a straight sub-segment with a
+    constant radius, the unit the rasterizer turns into a capsule. Returns
+    ``(0, 5)`` if the root is already sub-threshold. Deterministic in ``rng``: the
+    draws run step-then-branch in a fixed order, so the same seed yields the same
+    tree (the streaming writer relies on this).
+    """
+    h_um, w_um = bounds_um
+    segments: list[tuple[float, float, float, float, float]] = []
+    # DFS over branches: each stack entry is one branch's start state. The main
+    # vessel is grown inline; side branches are deferred so a single root expands
+    # into the whole tree without recursion.
+    stack: list[tuple[float, float, float, float]] = [
+        (root_um[0], root_um[1], heading_rad, growth.r0_um)
+    ]
+    while stack and len(segments) < growth.max_segments:
+        y, x, theta, r = stack.pop()
+        while r >= growth.min_radius_um and len(segments) < growth.max_segments:
+            step = growth.step_per_radius * r
+            ny, nx = y + step * math.sin(theta), x + step * math.cos(theta)
+            segments.append((y, x, ny, nx, r))
+            y, x = ny, nx
+            if not (0.0 <= y <= h_um and 0.0 <= x <= w_um):
+                break  # left the canvas; keep the crossing segment, end the branch
+            theta += float(rng.normal(0.0, growth.tortuosity_rad))
+            if rng.random() < growth.branch_prob:
+                r_main, r_side = murray_children(r, growth.branch_area_main)
+                side = -1.0 if rng.random() < 0.5 else 1.0  # peel left or right
+                # The thinner child turns more (its momentum is smaller): scale the
+                # base angle by the radius ratio, so a fine offshoot leaves sharply
+                # while the trunk barely bends.
+                ratio = r / r_side if r_side > _EPS else 1.0
+                stack.append((y, x, theta + side * growth.branch_angle_rad * ratio, r_side))
+                theta -= side * growth.branch_angle_rad  # main bends slightly the other way
+                r = r_main
+    if not segments:
+        return np.zeros((0, 5), dtype=float)
+    return np.asarray(segments, dtype=float)
+
+
+def rasterize_vessels(
+    segments_um: np.ndarray, shape_px: tuple[int, int], pixel_size_um: float
+) -> np.ndarray:
+    """Rasterize vessel segments into a blood-path-length map ``L(y, x)``, in µm.
+
+    Each segment is a capsule: a cylinder of radius ``r`` about its axis. A pixel at
+    lateral distance ``d`` from the axis sees the light pass through a blood *chord*
+    of length ``2·√(r² − d²)`` (the straight path through a circular cross-section),
+    and 0 outside the radius - so the map peaks at ``2r`` over a thick trunk's spine
+    and tapers smoothly to its edge, giving round soft borders before any optical
+    blur. Overlapping segments **add** their chords (stacked vessels absorb more).
+
+    Works per segment over its own bounding box (grown by the radius, clipped to the
+    canvas), not the whole canvas, so cost scales with vessel area. ``segments_um``
+    is the ``(n, 5)`` array from :func:`grow_vessel_tree` (µm); ``shape_px`` the
+    output ``(H, W)`` and ``pixel_size_um`` the µm-per-pixel scale used to place the
+    µm geometry on the grid and to convert the chord back to µm. An empty input
+    yields an all-zero map.
+    """
+    h, w = int(shape_px[0]), int(shape_px[1])
+    out = np.zeros((h, w), dtype=float)
+    if segments_um.size == 0:
+        return out
+    inv = 1.0 / pixel_size_um
+    for y0, x0, y1, x1, r_um in segments_um:
+        # endpoints and radius in pixels
+        py0, px0, py1, px1, r_px = y0 * inv, x0 * inv, y1 * inv, x1 * inv, r_um * inv
+        ymin = max(int(math.floor(min(py0, py1) - r_px)), 0)
+        ymax = min(int(math.ceil(max(py0, py1) + r_px)), h - 1)
+        xmin = max(int(math.floor(min(px0, px1) - r_px)), 0)
+        xmax = min(int(math.ceil(max(px0, px1) + r_px)), w - 1)
+        if ymin > ymax or xmin > xmax:
+            continue  # segment lies entirely off-canvas
+        yy, xx = np.mgrid[ymin : ymax + 1, xmin : xmax + 1]
+        # distance from each pixel to the segment (not the infinite line): project
+        # onto the axis, clamp the parameter to [0, 1] so the caps are round.
+        vy, vx = py1 - py0, px1 - px0
+        len2 = vy * vy + vx * vx
+        wy, wx = yy - py0, xx - px0
+        t = np.clip((wy * vy + wx * vx) / len2, 0.0, 1.0) if len2 > _EPS else 0.0
+        dy, dx = wy - t * vy, wx - t * vx
+        d2 = dy * dy + dx * dx
+        inside = d2 < r_px * r_px
+        chord_px = np.zeros_like(d2)
+        chord_px[inside] = 2.0 * np.sqrt(r_px * r_px - d2[inside])
+        out[ymin : ymax + 1, xmin : xmax + 1] += chord_px * pixel_size_um
+    return out
+
+
+def vessels_to_mask(
+    path_length_um: np.ndarray, opacity: float, absorption_per_um: float
+) -> np.ndarray:
+    """Beer-Lambert transmission mask from a blood-path-length map - in ``[1−opacity, 1]``.
+
+    Light crossing ``L`` µm of blood is attenuated by ``exp(−absorption_per_um·L)``
+    (Beer-Lambert), so the absorbed fraction is ``1 − exp(−k·L)``, scaling from 0
+    (clear tissue) toward 1 (an infinitely thick trunk). ``opacity`` caps that
+    darkest absorption in (0, 1]: real vessels never read fully black, because
+    out-of-plane and in-front fluorescence fills their shadow in, so
+
+        ``M = 1 − opacity·(1 − exp(−k·L))``
+
+    floors the transmission at ``1 − opacity``. ``k`` (``absorption_per_um``) sets
+    how fast darkness ramps with thickness - the contrast between fine capillaries
+    and thick trunks - while ``opacity`` sets the floor. With ``opacity = 0`` or an
+    all-zero map the mask is all ones (no vessels), and the result multiplies the
+    brain-frame movie.
+    """
+    absorbed = opacity * (1.0 - np.exp(-absorption_per_um * path_length_um))
+    return 1.0 - absorbed
+
+
+def _seed_edge_root(
+    bounds_um: tuple[float, float], rng: np.random.Generator
+) -> tuple[tuple[float, float], float]:
+    """A root point on a random field edge with an inward heading.
+
+    Real vessels enter the field from the side, so roots are seeded on one of the
+    four ``bounds_um = (H_um, W_um)`` edges with a heading that points into the
+    canvas (image convention ``dy = sin θ``, ``dx = cos θ``). The inward heading is
+    drawn from a wedge so trees fan in at varied angles rather than all running
+    straight across. Returns ``((y, x), heading_rad)``.
+    """
+    h_um, w_um = bounds_um
+    side = int(rng.integers(4))
+    if side == 0:  # top edge -> grow downward (dy > 0)
+        return (0.0, float(rng.uniform(0.0, w_um))), float(rng.uniform(0.25, 0.75) * math.pi)
+    if side == 1:  # bottom edge -> grow upward (dy < 0)
+        return (h_um, float(rng.uniform(0.0, w_um))), float(rng.uniform(1.25, 1.75) * math.pi)
+    if side == 2:  # left edge -> grow rightward (dx > 0)
+        return (float(rng.uniform(0.0, h_um)), 0.0), float(rng.uniform(-0.4, 0.4) * math.pi)
+    return (float(rng.uniform(0.0, h_um)), w_um), float(rng.uniform(0.6, 1.4) * math.pi)  # right -> left
+
+
+def vasculature_mask_field(
+    spec, acq, shape: tuple[int, int], focal_um: float, rng: np.random.Generator
+) -> np.ndarray:
+    """The composite vessel transmission mask ``M(y, x)`` in (0, 1] for a spec.
+
+    The RNG-consuming generation half of :class:`VasculatureStep`, factored out so
+    the step *and* the streaming video writer build the **identical** mask from the
+    same RNG draws (the same pattern as :func:`neuropil_components`). For each
+    :class:`~minisim.spec.VesselLayer`, in list order: seed ``n_roots`` edge roots
+    and :func:`grow_vessel_tree` them, :func:`rasterize_vessels` the segments to a
+    blood-path-length map, :func:`vessels_to_mask` that to a Beer-Lambert
+    transmission mask, then **blur** the mask by the defocus + scatter σ at the
+    layer's ``depth_um`` (the optics model: a vessel near ``focal_um`` stays sharp,
+    one far from focus softens). The per-layer masks compose **multiplicatively**
+    (stacked vessels absorb more), starting from an all-ones (clear) field.
+
+    ``shape`` is the canvas ``(h, w)`` in pixels (margin-enlarged, so the mask covers
+    the same tissue the cells do and moves with it under motion). The draws run in a
+    fixed order - per layer, per root: edge/heading then the tree's own draws - so
+    the same RNG yields the same mask. The blur uses the on-axis focal plane (field
+    curvature over a whole layer is a second-order effect, ignored here, unlike the
+    per-cell curvature in ``optics``).
+    """
+    h, w = int(shape[0]), int(shape[1])
+    px = acq.pixel_size_um
+    bounds_um = (h * px, w * px)
+    mask = np.ones((h, w), dtype=float)
+    for layer in spec.layers:
+        growth = VesselGrowth(
+            r0_um=layer.root_radius_um,
+            min_radius_um=layer.min_radius_um,
+            branch_prob=layer.branch_prob,
+            tortuosity_rad=math.radians(layer.tortuosity_deg),
+            step_per_radius=layer.step_per_radius,
+            branch_area_main=layer.branch_area_main,
+            branch_angle_rad=math.radians(layer.branch_angle_deg),
+        )
+        trees = []
+        for _ in range(layer.n_roots):
+            root, heading = _seed_edge_root(bounds_um, rng)
+            tree = grow_vessel_tree(bounds_um, root, heading, growth, rng)
+            if tree.size:
+                trees.append(tree)
+        if not trees:
+            continue
+        path_um = rasterize_vessels(np.vstack(trees), (h, w), px)
+        layer_mask = vessels_to_mask(path_um, layer.opacity, layer.absorption_per_um)
+        # Defocus + scatter blur at this layer's depth (diffraction is the floor):
+        # the same σ the optics step uses, so a vessel's shadow softens with its
+        # distance from focus exactly as a cell's footprint does.
+        sigma_um = math.hypot(
+            acq.optics.diffraction_sigma_um,
+            acq.tissue.scatter_sigma_um(layer.depth_um),
+            acq.optics.defocus_sigma_um(layer.depth_um, focal_um),
+        )
+        layer_mask = gaussian_filter(layer_mask, sigma_um / px, mode="nearest")
+        mask *= layer_mask
+    return mask
+
+
+def vasculature_focal(scene: Scene, acq) -> float:
+    """The focal depth (µm) the vessel blur uses - the optics step's value, or a fallback.
+
+    Prefers the concrete plane the ``optics`` step resolved into
+    ``scene.truth.focal_depth_um`` (so "auto" focus stays consistent with the cells).
+    If ``optics`` did not run, falls back to :func:`resolve_focal_plane` on the cells
+    (a numeric ``focal_depth_in_tissue_um`` as-is; "auto" → the geometric median
+    depth, or the surface with no cells), so the step is still valid in a minimal
+    chain. Both the step and the streaming writer call this, so they blur identically.
+    """
+    focal = scene.truth.focal_depth_um
+    if focal is not None:
+        return float(focal)
+    from minisim.steps.cell import resolve_focal_plane
+
+    return resolve_focal_plane(scene.cells, acq.focal_depth_in_tissue_um)
 
 
 class VasculatureStep(Step["Vasculature"]):
-    """Honest no-op placeholder - the absorbing-vessel model is deferred to v1.1.
+    """Multiply a dark, static vessel-absorption mask into the brain-frame movie.
 
-    The dark, pulsating vasculature mask (a multiplicative absorber driven by slow
-    dilation + cardiac motion) is registered in the v1 catalog so the spec surface
-    is stable, but its body is not implemented yet. It leaves the scene untouched
-    rather than raising, so a spec that lists ``vasculature`` runs end-to-end with
-    the effect simply absent (the ground-truth slot stays ``None``).
+    Grows the spec's :class:`~minisim.spec.VesselLayer` trees into a single
+    transmission mask :func:`vasculature_mask_field` and applies it multiplicatively
+    (``movie *= M``): vessels absorb the light from everything optically behind them.
+    A *tissue*-domain step run before ``brain_motion``, so the mask is fixed in the
+    brain frame and the motion crop carries it rigidly with the cells - the static,
+    high-contrast landmark motion correction registers against, and a tunable
+    extraction confound. The mask is stored canvas-sized on ``scene.truth`` (it must
+    align with the canvas-coordinate footprints); ``finalize`` crops it to the FOV
+    for ``GroundTruth.vasculature_mask`` and records each cell's footprint-weighted
+    occlusion as ``GroundTruth.vessel_overlap_fraction``.
+
+    A no-op when ``enabled`` is False or ``layers`` is empty (the step ships off),
+    leaving the movie and the ground-truth slot untouched. The blur depth comes from
+    :func:`vasculature_focal` (the resolved focal plane).
     """
 
     name = "vasculature"
     domain = "tissue"
+    consumes_rng = True  # vessel-tree growth in vasculature_mask_field
 
     def __call__(self, scene: Scene) -> None:
-        return  # no-op: deferred to v1.1
+        spec = self.spec
+        if not spec.enabled or not spec.layers:
+            return  # off: no draws, no mask (the streaming writer mirrors this guard)
+        _, h, w = scene.movie.values.shape
+        focal = vasculature_focal(scene, self.acq)
+        mask = vasculature_mask_field(spec, self.acq, (h, w), focal, self.rng)
+        scene.movie.values[:] *= mask
+        scene.truth.vasculature_mask = mask

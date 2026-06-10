@@ -38,7 +38,11 @@ from minisim.spec import Spec
 from minisim.steps import STEP_FOR_KIND
 from minisim.steps.motion import brain_motion_shifts, shift_and_crop
 from minisim.steps.sensor import leakage_field
-from minisim.steps.tissue import neuropil_components
+from minisim.steps.tissue import (
+    neuropil_components,
+    vasculature_focal,
+    vasculature_mask_field,
+)
 
 # Frames rendered+digitized per chunk. The dense footprint stack `A` is re-read by
 # the composite contraction once per chunk, so fewer/larger chunks cut that memory
@@ -147,6 +151,7 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
     neuropil = None  # (amplitude, spatial (k,Hc,Wc), temporal (k,frame))
     shifts = None  # (frame, 2) px, or None when there is no motion
     leak = None  # additive FOV field, or None
+    vasc_mask = None  # static (Hc,Wc) vessel transmission mask, or None when off
 
     # Walk the steps in order, consuming the RNG exactly as simulate() would: run the
     # cell-domain steps (they fill scene.cells), and for the RNG-consuming non-cell
@@ -155,9 +160,10 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
     # or the stream silently desyncs from simulate(). The else-branch enforces that
     # against Step.consumes_rng: a new RNG-consuming step added to the catalog without
     # being taught here raises loudly instead of corrupting the stream. Composite,
-    # vasculature, illumination_profile, and vignette draw no RNG (their fields are
-    # deterministic, already folded into photon_field), so they are applied in the
-    # chunk loop and ignored here.
+    # illumination_profile, and vignette draw no RNG (their fields are deterministic,
+    # already folded into photon_field), so they are applied in the chunk loop and
+    # ignored here. Vasculature *does* draw (vessel-tree growth), so it has its own
+    # branch above that reproduces the draws and builds the mask.
     for step_spec in spec.steps:
         # Branch on step_spec.kind (not a local copy) so the discriminated union
         # narrows step_spec to the concrete spec type inside each branch.
@@ -172,6 +178,16 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
                     step_spec, acq, scene.cells, canvas_shape, n_frames, rng
                 )
             neuropil = (step_spec.amplitude, spatial, temporal)
+        elif step_spec.kind == "vasculature":
+            # Mirror VasculatureStep's guard exactly: when off it draws no RNG, so
+            # the stream must not draw either. When on, build the same mask from the
+            # same draws (cells + resolved focal are ready: the cell steps ran above).
+            if step_spec.enabled and step_spec.layers:
+                with measure(perf, "vasculature_setup"):
+                    focal = vasculature_focal(scene, acq)
+                    vasc_mask = vasculature_mask_field(
+                        step_spec, acq, canvas_shape, focal, rng
+                    )
         elif step_spec.kind == "brain_motion":
             with measure(perf, "motion_setup"):
                 shifts = brain_motion_shifts(step_spec, acq, n_frames, rng)
@@ -187,8 +203,8 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
                 "replay this step's RNG draws in order (and extend the bit-for-bit "
                 "test) before adding it to a streamed spec."
             )
-        # else: a deterministic non-cell step (composite / vasculature /
-        # illumination_profile / vignette) -- no RNG, applied in the chunk loop.
+        # else: a deterministic non-cell step (composite / illumination_profile /
+        # vignette) -- no RNG, applied in the chunk loop.
 
     # The cells are now fully populated; rebuild the dense footprint stack (sparse
     # in storage) and per-cell emission (clean calcium dimmed by bleaching when
@@ -219,6 +235,12 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
                 canvas += amp * np.tensordot(
                     temporal[:, t0:t1], spatial, axes=([0], [0])
                 ) / spatial.shape[0]
+        if vasc_mask is not None:
+            # Multiplicative vessel shadow, in the brain frame before the motion crop
+            # (broadcasts the static (Hc,Wc) mask over the chunk's frames) - exactly
+            # where VasculatureStep applies it, so it rides motion with the tissue.
+            with measure(perf, "vasculature"):
+                canvas *= vasc_mask
         # Motion crop (shift_and_crop) when there is motion; otherwise the canvas is
         # already the sensor FOV (no margin), so it passes through unchanged.
         if shifts is not None:

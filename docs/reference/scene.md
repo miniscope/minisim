@@ -7,15 +7,18 @@ built {py:class}`~minisim.Scene` into a {py:class}`~minisim.Recording`.
 
 ## Scene
 
-```{autoclass} minisim.Scene
+```{eval-rst}
+.. autoclass:: minisim.Scene
 ```
 
 ## Cell
 
-```{autoclass} minisim.Cell
+```{eval-rst}
+.. autoclass:: minisim.Cell
 ```
 
 ## GroundTruthBuilder
 
-```{autoclass} minisim.GroundTruthBuilder
+```{eval-rst}
+.. autoclass:: minisim.GroundTruthBuilder
 ```

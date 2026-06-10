@@ -2,15 +2,18 @@
 
 ## Recording
 
-```{autopydantic_model} minisim.Recording
+```{eval-rst}
+.. autopydantic_model:: minisim.Recording
 ```
 
 ## GroundTruth
 
-```{autopydantic_model} minisim.GroundTruth
+```{eval-rst}
+.. autopydantic_model:: minisim.GroundTruth
 ```
 
 ## finalize
 
-```{autofunction} minisim.finalize
+```{eval-rst}
+.. autofunction:: minisim.finalize
 ```

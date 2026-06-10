@@ -8,8 +8,8 @@ order biology → optics → motion → sensor.
 
 The minimal runnable chain is ``place_neurons`` → ``cell_activity`` → ``composite``
 → ``sensor``; ``optics`` degrades the footprints, the field effects
-(``neuropil``/``bleaching``/``vignette``/``leakage``, plus the ``vasculature``
-no-op placeholder) layer on top, and ``brain_motion`` is the brain→sensor frame
+(``neuropil``/``bleaching``/``vignette``/``leakage``, plus the absorbing
+``vasculature`` mask) layer on top, and ``brain_motion`` is the brain→sensor frame
 boundary - together the full forward pipeline. The :class:`Step` base and the
 physics helpers
 (:func:`calcium_kernel`, :func:`neuron_footprint`, :func:`bleaching_pool`,
@@ -54,14 +54,21 @@ from minisim.steps.tissue import (
     CompositeStep,
     NeuropilStep,
     VasculatureStep,
+    VesselGrowth,
     bleaching_floor,
     bleaching_pool,
     dark_recovery,
+    grow_vessel_tree,
+    murray_children,
     neuropil_components,
     neuropil_envelope,
     ou_process,
     population_envelope,
+    rasterize_vessels,
     smooth_spatial_field,
+    vasculature_focal,
+    vasculature_mask_field,
+    vessels_to_mask,
 )
 
 #: The declarative spec→step mapping, keyed by ``StepSpec.kind``. This single
@@ -100,6 +107,7 @@ __all__ = [
     "SensorStep",
     "Step",
     "VasculatureStep",
+    "VesselGrowth",
     "VignetteStep",
     "bleaching_floor",
     "bleaching_pool",
@@ -110,8 +118,10 @@ __all__ = [
     "dark_recovery",
     "degrade_footprint",
     "falloff_center_px",
+    "grow_vessel_tree",
     "kernel_timing",
     "leakage_field",
+    "murray_children",
     "neuron_footprint",
     "neuropil_components",
     "neuropil_envelope",
@@ -120,10 +130,14 @@ __all__ = [
     "population_envelope",
     "radial_falloff",
     "radius_grid",
+    "rasterize_vessels",
     "resolve_focal_plane",
     "sample_neurons",
     "shift_and_crop",
     "smooth_spatial_field",
     "spike_activity_params",
     "tau_from_kernel_timing",
+    "vasculature_focal",
+    "vasculature_mask_field",
+    "vessels_to_mask",
 ]

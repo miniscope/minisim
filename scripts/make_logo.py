@@ -38,14 +38,19 @@ from minisim import (
     Output,
     PlaceNeurons,
     Spec,
+    Vasculature,
+    VesselLayer,
     Vignette,
     simulate,
 )
 from minisim.notebooks._support import GCAMP
+from minisim.steps import vasculature_mask_field
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "_static" / "logo"
 OUT.mkdir(parents=True, exist_ok=True)
 SEED = 3
+VASC_SEED = 9  # vessels seeded independently of the cells, so the layout can be rerolled
+               # without disturbing the M / neuropil (which stay on SEED)
 MORPH = "cytosolic"  # soma + proximal dendrites, for both concepts
 
 matplotlib.rcParams["font.sans-serif"] = ["Segoe UI", "Arial", "Helvetica", "DejaVu Sans"]
@@ -61,7 +66,7 @@ SIMGREEN = LinearSegmentedColormap.from_list(
 def _cell(morph, dendrite_width_um=3.0, **kw):
     """A PlaceNeurons with longer cytosolic dendrites, shared by both concepts."""
     return PlaceNeurons(
-        morphology=morph, soma_radius_um=7.0, n_dendrites=5,
+        morphology=morph, soma_radius_um=7.0,
         dendrite_length_um=38.0, dendrite_width_um=dendrite_width_um, **kw,
     )
 
@@ -77,7 +82,7 @@ acq_M = Acquisition(
 )
 FOV = PX * acq_M.pixel_size_um
 MBOX = (0.26, 0.74, 0.23, 0.77)  # x0, x1, y0, y1 (fraction of FOV)
-STROKE_W_UM = 17.0  # thickness of the M strokes
+STROKE_W_UM = 32.0  # thickness of the M strokes
 DISC_R0, DISC_R1 = 0.44, 0.495  # circular cutoff: solid inside R0, faded by R1
 CROP = (int(0.005 * PX), int(0.995 * PX))
 
@@ -129,13 +134,30 @@ def make_mark():
     cells = np.asarray(rec.stage("cells_only").values).max(0)
     haze = np.clip((np.asarray(rec.stage("neuropil").values) - np.asarray(rec.stage("cells_only").values)).mean(0), 0, None)
     vfield = np.asarray(gt.illumination) * np.asarray(gt.vignette)  # the round falloff
+    # A single thick vessel arcing across the FOV, sitting ABOVE the cells (z=26,
+    # shallower than the M's 35-110 um) so it reads as a soft shadow laid over the
+    # mark. Grown with its OWN seed (VASC_SEED), decoupled from the recording, so the
+    # vessel layout can be rerolled without changing the M or the neuropil.
+    vlayer = VesselLayer(depth_um=26.0, n_roots=2, root_radius_um=30.0, min_radius_um=4.0,
+                         opacity=0.72, branch_prob=0.08, tortuosity_deg=10.0)
+    vasc = vasculature_mask_field(
+        Vasculature(enabled=True, layers=[vlayer]), acq_M, (PX, PX),
+        gt.focal_depth_um, np.random.default_rng(VASC_SEED),
+    )
     disc = disc_mask()
 
     cn = np.clip(cells / (np.percentile(cells, 99.6) + 1e-9), 0, 1)
-    hn = haze / (np.percentile(haze[disc > 0.5], 90) + 1e-9)
-    combined = (cn + 0.28 * np.clip(hn, 0, 1)) * vfield * disc  # neuropil structure, then round it
+    hn = np.clip(haze / (np.percentile(haze[disc > 0.5], 90) + 1e-9), 0, 1)
+    # Layering: the cells live WITHIN the neuropil (one tissue field - a strong haze
+    # base with the cells as brighter inclusions, not stark dots over a dim void), and
+    # the vessels sit ON TOP, shadowing the whole tissue multiplicatively. Then the
+    # falloff fields and the round disc shape the FOV.
+    tissue = 0.5 * hn + 0.85 * cn  # neuropil base (dimmer), cells embedded as highlights
+    combined = tissue * vasc * vfield * disc
     combined = combined / (np.percentile(combined, 99.7) + 1e-9)
-    arr = np.clip(combined, 0, 1)[CROP[0] : CROP[1], CROP[0] : CROP[1]]
+    # pull the white point down a touch so fewer cell cores blow out to flat white -
+    # most cells keep their green gradation instead of saturating.
+    arr = np.clip(combined * 0.82, 0, 1)[CROP[0] : CROP[1], CROP[0] : CROP[1]]
     # save the bare circular mark on black
     fig, ax = plt.subplots(figsize=(6, 6), dpi=200)
     ax.imshow(arr, cmap=GCAMP, vmin=0, vmax=1, interpolation="nearest")
@@ -194,7 +216,7 @@ def _text_mapping(mask, fov_w, fov_h):
     return scale, (fov_w - mw * scale) / 2, (fov_h - mh * scale) / 2
 
 
-def sample_text(mask, scale, ox, oy, spacing_px=7, jitter=2.0, depth=(30.0, 72.0)):
+def sample_text(mask, scale, ox, oy, spacing_px=8, jitter=2.0, depth=(30.0, 72.0)):
     mh, mw = mask.shape
     rng = np.random.default_rng(SEED)
     pts = []
@@ -223,10 +245,19 @@ def simulate_word(text):
     steps = [
         _cell(MORPH, positions_um=pos), CellActivity(), CellOptics(), Composite(),
         Neuropil(spatial_sigma_um=18.0, n_components=6, amplitude=0.25),
+        # vessels threading across the whole 'sim' region (near the cell plane, so they
+        # read as distinct branches): inside the glyphs they shadow the green, and over
+        # the empty background they show as faint translucent dark-green vasculature.
+        Vasculature(enabled=True, layers=[
+            VesselLayer(depth_um=45.0, n_roots=4, root_radius_um=22.0, min_radius_um=2.5,
+                        opacity=0.78, branch_prob=0.14, tortuosity_deg=16.0),
+        ]),
     ]
     rec = simulate(Spec(acquisition=acq, seed=SEED, output=Output(save_intermediates=True), steps=steps))
+    gt = rec.ground_truth
     cells = np.asarray(rec.stage("cells_only").values).max(0)
     haze = np.clip((np.asarray(rec.stage("neuropil").values) - np.asarray(rec.stage("cells_only").values)).mean(0), 0, None)
+    vasc = np.asarray(gt.vasculature_mask) if gt.vasculature_mask is not None else 1.0
 
     # a soft letter-shaped mask at sim resolution, so neuropil fills only the glyphs
     lm = zoom(tmask.astype(float), scale / ps, order=1)
@@ -240,10 +271,13 @@ def simulate_word(text):
     sel = letter > 0.3
     hn = haze / (np.percentile(haze[sel], 88) + 1e-9) if sel.any() else haze
     fill = np.clip(hn, 0, 1) * letter
-    a = np.clip(cn + 0.18 * fill, 0, 1)  # bright cells over a faint glyph-shaped glow
-    rgba = SIMGREEN(a)
-    # opaque across the letters; only the empty background is transparent (soft edge
-    # via smoothstep so there is no dark halo, but the letter bodies are solid).
+    a = np.clip(cn + 0.11 * fill, 0, 1)  # bright cells over a faint glyph-shaped glow
+    shaded = np.clip(a * vasc, 0, 1)  # vessels darken the green WITHIN the letters
+    rgba = SIMGREEN(shaded)
+    # opaque across the letters only; the empty background stays transparent, so the
+    # vessels are confined to the glyphs (no faint vasculature showing outside them).
+    # Alpha comes from the vessel-free intensity, so vessels darken the color without
+    # punching holes in the letters.
     t = np.clip((a - 0.05) / (0.26 - 0.05), 0, 1)
     rgba[..., 3] = t * t * (3 - 2 * t)
     # the exact glyph box (the text bbox region) inside the full image, so the

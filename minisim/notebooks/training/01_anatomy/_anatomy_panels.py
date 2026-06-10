@@ -25,6 +25,7 @@ from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.patches import FancyArrowPatch, Rectangle
+from pydantic import ValidationError
 from scipy.ndimage import zoom
 from scipy.signal import welch
 
@@ -34,6 +35,8 @@ from minisim import (
     PlaceNeurons,
     Sensor,
     Tissue,
+    Vasculature,
+    VesselLayer,
     detection_snr,
     sample_field_at,
 )
@@ -56,6 +59,7 @@ from minisim.steps import (
     neuron_footprint,
     sample_neurons,
     smooth_spatial_field,
+    vasculature_mask_field,
 )
 from minisim.steps.sensor import (
     combined_falloff_field,
@@ -132,13 +136,12 @@ class ImagingSandbox:
         sliders,
         *,
         morphology: str = "cytosolic",
-        n_dendrites: int = 4,
-        dendrite_len_um: float = 45.0,
+        dendrite_len_um: float = 24.0,
         dendrite_width_um: float = 3.0,
     ) -> None:
         self.sliders = sliders
         self._patches = self._build_ref_patches(
-            morphology, n_dendrites, dendrite_len_um, dendrite_width_um
+            morphology, dendrite_len_um, dendrite_width_um
         )
         # Build the figure ONCE; the fixed-range (0-255) colorbar is created once so
         # it never accumulates across redraws.
@@ -157,15 +160,20 @@ class ImagingSandbox:
         return self.fig.canvas
 
     @staticmethod
-    def _build_ref_patches(morphology, n_dendrites, dendrite_len_um, dendrite_width_um):
-        """The five sharp reference footprints on the fixed fine grid (one per cell)."""
+    def _build_ref_patches(morphology, dendrite_len_um, dendrite_width_um):
+        """The five sharp reference footprints on the fixed fine grid (one per cell).
+
+        Cytosolic cells draw a random number of branched proximal dendrites per cell
+        (from the fixed seed below), so the five reference shapes differ from one
+        another the way real neurons do.
+        """
         rng = np.random.default_rng(0)  # fixed seed: identical shapes every build
         n = int(round(2 * PATCH_HALF_UM / REF_PX_UM))
         c = (n - 1) / 2.0  # each cell sits at the center of its own patch
         return [
             neuron_footprint(
                 (n, n), (c, c), SOMA_UM / REF_PX_UM, 0.35, rng,
-                morphology=morphology, n_dendrites=n_dendrites,
+                morphology=morphology,
                 dendrite_length_px=dendrite_len_um / REF_PX_UM,
                 dendrite_width_px=dendrite_width_um / REF_PX_UM,
             )
@@ -495,6 +503,75 @@ class BleachingSandbox:
         self._ax_b.set(xlabel="time (days)", ylabel="normalized fluorescence  B(t)",
                        ylim=(max(0.0, bb.min() - 0.03), 1.02),
                        title="repeated imaging: recovery (or ratchet-down) across dark gaps")
+        self.fig.canvas.draw_idle()
+
+
+class VasculaturePanel:
+    """Stage-5b vasculature sandbox: tune one vessel layer and see the mask live.
+
+    Grows a single vessel layer from the live slider values via the real
+    :func:`~minisim.steps.vasculature_mask_field` (the same code the pipeline runs),
+    on the committed FOV at a **fixed seed** - so nudging a knob refines the *same*
+    tree instead of re-rolling it. Left panel: the transmission mask (vessels dark);
+    right: the absorbed fraction. The committed focal plane sets the per-depth
+    defocus blur, so the ``depth`` slider visibly sharpens (near focus) or softens
+    (far from it) the shadow, and ``opacity`` / ``trunk radius`` / ``branchiness`` /
+    ``waviness`` shape how dark and dense the vessels read.
+    """
+
+    def __init__(self, sliders, acq, focal_um):
+        self.sliders = sliders
+        self.acq = acq
+        self.focal_um = float(focal_um)
+        self.shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
+        self.fig = plt.figure(figsize=(10.5, 4.7))
+        if hasattr(self.fig.canvas, "header_visible"):
+            self.fig.canvas.header_visible = False
+        gs = self.fig.add_gridspec(1, 2, wspace=0.08, left=0.03, right=0.985, top=0.88, bottom=0.03)
+        self._ax_t = self.fig.add_subplot(gs[0, 0])
+        self._ax_a = self.fig.add_subplot(gs[0, 1])
+
+    @property
+    def canvas(self):
+        """The persistent figure canvas (hand this to ``interactive_panel``)."""
+        return self.fig.canvas
+
+    def draw(self):
+        """Regrow the layer from the current sliders and redraw the mask in place."""
+        v = {k: s.value for k, s in self.sliders.items()}
+        # VesselLayer validates root_radius_um > min_radius_um (default 2.0); the
+        # root-radius slider's minimum keeps this true. If a future range edit lets
+        # the sliders cross, surface it in the plot instead of throwing into the widget.
+        try:
+            layer = VesselLayer(
+                depth_um=v["depth_um"], n_roots=int(v["n_roots"]),
+                root_radius_um=v["root_radius_um"], opacity=v["opacity"],
+                branch_prob=v["branch_prob"], tortuosity_deg=v["tortuosity_deg"],
+            )
+        except ValidationError as err:
+            for ax in (self._ax_t, self._ax_a):
+                ax.clear()
+                ax.set_xticks([])
+                ax.set_yticks([])
+            self._ax_t.set_title(f"invalid vessel settings:\n{err.errors()[0]['msg']}", fontsize=9)
+            self.fig.canvas.draw_idle()
+            return
+        spec = Vasculature(enabled=True, layers=[layer])
+        # Fixed seed: tuning opacity/depth refines the SAME tree rather than re-rolling it.
+        mask = vasculature_mask_field(spec, self.acq, self.shape, self.focal_um,
+                                      np.random.default_rng(0))
+        absorbed = 1.0 - mask
+        coverage = 100.0 * float((absorbed > 0.05).mean())
+        self._ax_t.clear()
+        self._ax_a.clear()
+        self._ax_t.imshow(mask, cmap="gray", vmin=float(mask.min()), vmax=1.0)
+        self._ax_t.set_xticks([])
+        self._ax_t.set_yticks([])
+        self._ax_t.set_title(f"transmission (vessels dark) - darkest {float(mask.min()):.2f}", fontsize=10)
+        self._ax_a.imshow(absorbed, cmap="magma", vmin=0.0, vmax=1.0)
+        self._ax_a.set_xticks([])
+        self._ax_a.set_yticks([])
+        self._ax_a.set_title(f"absorbed fraction - covers {coverage:.0f}% of the FOV", fontsize=10)
         self.fig.canvas.draw_idle()
 
 
