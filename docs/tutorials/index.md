@@ -38,6 +38,12 @@ recording from code as the notebook runs.
 Working from a clone of the repository instead? Open it directly at
 [`minisim/notebooks/training/01_anatomy/01_anatomy.ipynb`](https://github.com/miniscope/minisim/blob/main/minisim/notebooks/training/01_anatomy/01_anatomy.ipynb).
 
+:::{seealso}
+To *generate* a recording rather than learn the physics, the
+{doc}`build_recording studio <../howto/build_recording>` exposes every knob at
+once and writes the tuned recording (with its ground truth) to disk.
+:::
+
 The stages mirror the forward chain described in {doc}`../concepts`:
 
 1. Place neurons and generate calcium activity (the clean signal).

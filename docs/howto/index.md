@@ -11,4 +11,5 @@ populations
 benchmark
 sweep
 video
+build_recording
 ```
