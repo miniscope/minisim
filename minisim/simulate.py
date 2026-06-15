@@ -43,8 +43,10 @@ def simulate(
     already the canonical pipeline order, since ``Spec`` sorts the list on
     construction, so the order a caller listed them in is irrelevant - optionally
     snapshots each movie stage, and finalizes. ``until`` stops after the named
-    stage (a ``step.name``, e.g. ``"vignette"``); an ``until`` that matches no
-    step raises rather than silently running the whole pipeline.
+    stage: it matches either a ``step.name`` (e.g. ``"vignette"``) or the step's
+    spec ``kind`` (e.g. ``"composite"``, whose stage name is the less obvious
+    ``"cells_only"``), so both spellings work. An ``until`` that matches no step
+    raises rather than silently running the whole pipeline.
 
     Pass a :class:`~minisim.perf.PerfTracker` as ``perf`` to record per-step (and
     ``finalize``) wall time; it is a no-op when ``None`` (the default), so an
@@ -65,7 +67,7 @@ def simulate(
         stage_names.append(step.name)
         if spec.output.save_intermediates and step.domain != "cell":
             scene.snapshots[step.name] = scene.movie.copy()
-        if until is not None and step.name == until:
+        if until is not None and until in (step.name, step_spec.kind):
             stopped = True
             break
 

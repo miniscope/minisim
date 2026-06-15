@@ -32,7 +32,7 @@ Working from a clone instead? Open it directly at
 The notebook is three panels that all read and write **one shared configuration**,
 so the file you generate is exactly what you previewed. Run the cells top to bottom.
 
-1. **Anatomy & scope** — every non-activity knob (optics, image sensor, tissue
+1. **Anatomy & scope** - every non-activity knob (optics, image sensor, tissue
    scatter, cell placement, and the optical confounds: vasculature, illumination
    falloff, vignette, stray-light glow, brain motion). The live preview is a
    max-projection of a short full-pipeline render. To stay responsive it renders a
@@ -43,27 +43,27 @@ so the file you generate is exactly what you previewed. Run the cells top to bot
    side-view dot count. A readout reports the field of view, pixel size, expected
    neurons over the full FOV, the resolved focus, and the preview-window detectable
    count. A side-view schematic below shows where each layer sits in depth across
-   the FOV (cell band — its density visible in the dots — focal surface, and
+   the FOV (cell band - its density visible in the dots - focal surface, and
    vasculature), with the focal surface bowing shallower at the edges when field
    curvature is on. **Preset** buttons seed the whole panel from a real
    configuration. This panel takes a moment to redraw after each slider change (it
    re-runs the optics, recomputing every cell footprint's depth-dependent blur and
    dimming, which is also why it renders a cell-budgeted window); panels 2 and 3 are
    fast.
-2. **Neural activity** — the calcium model (firing gate, rates, kinetics, and the
+2. **Neural activity** - the calcium model (firing gate, rates, kinetics, and the
    cell-to-cell brightness spread), previewed as the clean ground-truth traces `C`
    with spike ticks `S`. `Quiet` / `Moderate` / `Active` presets set typical levels.
-3. **Generate** — set the duration, frame rate, and seed, then write the recording
+3. **Generate** - set the duration, frame rate, and seed, then write the recording
    at the full field of view.
 
 ## Presets
 
 The anatomy panel ships three starting points, applied with one click:
 
-- **Generic 1p scope** — the library defaults.
-- **Miniscope V4 — CA1** — a Miniscope V4 imaging a dense, thin hippocampal CA1
+- **Generic 1p scope** - the library defaults.
+- **Miniscope V4 - CA1** - a Miniscope V4 imaging a dense, thin hippocampal CA1
   pyramidal band, with milder vasculature.
-- **Miniscope V4 — cortex L2/3** — a V4 imaging sparser neocortical layer 2/3
+- **Miniscope V4 - cortex L2/3** - a V4 imaging sparser neocortical layer 2/3
   cells, with thick vessels sitting on top of the band.
 
 The V4 optics (NA, sensor format, pixel pitch, working distance) are the real

@@ -9,6 +9,7 @@ the {doc}`basics <../quickstart>`.
 examples
 populations
 benchmark
+use_in_test_suite
 sweep
 video
 build_recording

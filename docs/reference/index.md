@@ -1,7 +1,8 @@
 # API reference
 
-Generated from the package. Everything documented here is importable directly
-from the top level (`from minisim import ...`).
+Generated from the package. Most things documented here are importable directly
+from the top level (`from minisim import ...`); the testing helpers live in the
+`minisim.testing` submodule.
 
 ```{toctree}
 :maxdepth: 2
@@ -11,6 +12,7 @@ simulate
 recording
 scene
 metrics
+testing
 caching
 ```
 
@@ -38,4 +40,6 @@ caching
   - The exact generators (footprints, traces, spikes, optical fields).
 * - {mod}`metrics <minisim.metrics>`
   - Score recovered cells, traces, spikes, and motion against truth.
+* - {py:func}`~minisim.testing.make_recording` / {py:func}`~minisim.testing.score`
+  - One-call CI fixture and recovery scorecard (in `minisim.testing`).
 ```
