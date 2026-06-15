@@ -62,15 +62,20 @@ _GT_OPTIONAL = (
     "vasculature_mask", "vessel_overlap_fraction",
 )
 
+# Step kinds whose snapshot key differs from the kind, so Recording.stage() (and
+# the until= argument of simulate()) accept either spelling. composite is the only
+# step whose stage name (`cells_only`) is not its kind.
+_STAGE_ALIASES = {"composite": "cells_only"}
+
 
 class GroundTruth(BaseModel):
     """The per-recording truth: structural targets + per-cell and per-effect fields.
 
     The **planted vs observed footprint split is load-bearing**: ``A_observed`` is
-    what CNMF can actually recover (tests match against it), while ``A_planted`` is
-    the ideal, optics-free target that quantifies the irreducible limit. Both are
-    exposed as dense ``(unit, height, width)`` arrays via properties, but neither is
-    *stored* dense:
+    the optically degraded footprint - the recoverable target an analysis pipeline's
+    estimate is matched against - while ``A_planted`` is the ideal, optics-free
+    footprint that quantifies the irreducible limit. Both are exposed as dense
+    ``(unit, height, width)`` arrays via properties, but neither is *stored* dense:
 
     * Footprints are stored sparse, as canvas-coordinate patches in :attr:`planted`
       (a :class:`~minisim.footprint.FootprintStack`); :attr:`fov_offset` /
@@ -155,7 +160,7 @@ class GroundTruth(BaseModel):
 
     @property
     def A_observed(self) -> np.ndarray:
-        """The optically degraded footprints CNMF could recover, dense ``(unit, H, W)``.
+        """The optically degraded footprints - the recoverable target, dense ``(unit, H, W)``.
 
         Regenerated (and memoized) from the planted footprints and the per-unit
         ``observed_sigma_px`` / ``observed_gain`` scalars, then cropped to the FOV -
@@ -248,13 +253,19 @@ class Recording(BaseModel):
     snapshots: dict[str, xr.DataArray] = Field(default_factory=dict)
 
     def stage(self, name: str) -> xr.DataArray:
-        """Return the snapshot taken after the named stage."""
-        if name not in self.snapshots:
+        """Return the snapshot taken after the named stage.
+
+        Accepts a stage name (the snapshot key) or the equivalent step ``kind``:
+        ``stage("composite")`` resolves to the ``"cells_only"`` snapshot, matching
+        the ``until=`` argument of :func:`~minisim.simulate`.
+        """
+        key = _STAGE_ALIASES.get(name, name)
+        if key not in self.snapshots:
             raise KeyError(
                 f"Stage '{name}' unavailable. Set Output.save_intermediates=True, "
                 f"or pick from {sorted(self.snapshots)}."
             )
-        return self.snapshots[name]
+        return self.snapshots[key]
 
     def save(self, path: str | Path) -> None:
         """Persist this recording to a self-contained zarr directory at ``path``.

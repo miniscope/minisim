@@ -46,14 +46,14 @@ Minisim's surface is small. Almost everything you do is:
                                     (recovery scores)
 ```
 
-- {py:class}`~minisim.Spec` — a fully typed, validated description of a
+- {py:class}`~minisim.Spec` - a fully typed, validated description of a
   recording: an {py:class}`~minisim.Acquisition` (optics, sensor, tissue,
   sampling), a `seed`, and an ordered list of `steps`. It is reproducible: the
   same `Spec` always yields the same recording, and `spec.cache_key()` is a
   stable hash of its JSON form.
-- {py:class}`~minisim.Recording` — the result: `observed` (the movie),
+- {py:class}`~minisim.Recording` - the result: `observed` (the movie),
   `ground_truth`, and optional per-stage `snapshots`.
-- The {doc}`metrics <reference/metrics>` — functions that score recovered
+- The {doc}`metrics <reference/metrics>` - functions that score recovered
   cells, traces, spikes, and motion against the ground truth.
 
 ## Steps and the pipeline

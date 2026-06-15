@@ -48,9 +48,9 @@ simulate_video(spec, "small.avi", codec="mjpeg", fps=30)
 
 ## Useful arguments
 
-- `chunk_frames` — frames rendered per write; tune for the memory/throughput
+- `chunk_frames` - frames rendered per write; tune for the memory/throughput
   trade-off.
-- `fps` — playback frame rate of the file (defaults to the spec's acquisition fps).
-- `progress` — set `False` to silence the progress bar.
+- `fps` - playback frame rate of the file (defaults to the spec's acquisition fps).
+- `progress` - set `False` to silence the progress bar.
 
 See {py:func}`~minisim.simulate_video` in the reference for the full signature.

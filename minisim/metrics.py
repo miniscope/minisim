@@ -178,15 +178,20 @@ def spike_precision_recall(
     return SpikeScore(precision=precision, recall=recall)
 
 
-def shift_rmse(shifts_est, shifts_true) -> float:
+def shift_rmse(shifts_est, shifts_true, *, correction: bool = False) -> float:
     """Root-mean-square error (pixels) between two ``(frame, 2)`` shift trajectories.
 
-    Pure RMSE over all frames and both axes - the caller must put both arrays in
-    the **same sign convention**. A motion-*correction* estimate is the negation
-    of the applied ``GroundTruth.shifts``, so negate one before comparing.
+    Pure RMSE over all frames and both axes. Both arrays must be in the **same sign
+    convention**: a motion-*correction* estimate is the negation of the applied
+    ``GroundTruth.shifts``. Pass ``correction=True`` to negate ``shifts_est`` before
+    comparing (the common case, since a motion-correction pipeline emits the shift
+    it would apply to undo the motion); leave it ``False`` to compare two
+    trajectories already in the same convention.
     """
     e = np.asarray(shifts_est, dtype=float)
     t = np.asarray(shifts_true, dtype=float)
+    if correction:
+        e = -e
     return float(np.sqrt(np.mean((e - t) ** 2)))
 
 
@@ -255,7 +260,10 @@ def _energy_masks(A: np.ndarray, energy_frac: float) -> np.ndarray:
     """
     if not 0.0 < energy_frac <= 1.0:
         raise ValueError(f"energy_frac must be in (0, 1], got {energy_frac}.")
-    flat = np.clip(A, 0.0, None).reshape(A.shape[0], -1)
+    # Flatten each footprint to its pixel count, keeping a 0-row (recovered-nothing)
+    # stack valid.
+    n_pix = int(np.prod(A.shape[1:]))
+    flat = np.clip(A, 0.0, None).reshape(A.shape[0], n_pix)
     masks = np.zeros(flat.shape, dtype=bool)
     for i, f in enumerate(flat):
         total = f.sum()
@@ -274,8 +282,9 @@ def _iou_matrix(masks_est: np.ndarray, masks_true: np.ndarray) -> np.ndarray:
     Intersections come from a single mask-vs-mask matmul (footprints flattened to
     rows); unions are ``area_est + area_true − intersection``.
     """
-    e = masks_est.reshape(masks_est.shape[0], -1).astype(np.float32)
-    t = masks_true.reshape(masks_true.shape[0], -1).astype(np.float32)
+    # Flatten each mask to its pixel count, keeping a 0-row stack valid.
+    e = masks_est.reshape(masks_est.shape[0], int(np.prod(masks_est.shape[1:]))).astype(np.float32)
+    t = masks_true.reshape(masks_true.shape[0], int(np.prod(masks_true.shape[1:]))).astype(np.float32)
     intersection = e @ t.T  # (n_est, n_true)
     area_e = e.sum(axis=1)[:, None]
     area_t = t.sum(axis=1)[None, :]

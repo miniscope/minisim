@@ -30,7 +30,7 @@ from minisim.footprint import Footprint, degrade_footprint
 from minisim.spec import Acquisition
 
 # Movie axis order, matching the convention used by 1p analysis pipelines (e.g.
-# minian) so a simulated recording is a drop-in for a real one.
+# minian), so a recording's axes line up with what those pipelines expect.
 MOVIE_DIMS = ("frame", "height", "width")
 
 
@@ -46,7 +46,7 @@ class Cell:
     * ``center_um`` - set by ``place_neurons`` (the cell exists once it has a
       location). Placement is now purely spatial; brightness is not set here.
     * ``footprint_planted`` - the sharp, peak-normalized soma mask, also from
-      ``place_neurons``; the ideal CNMF target.
+      ``place_neurons``; the ideal, optics-free target.
     * ``trace`` / ``spikes`` / ``amplitude`` - the noise-free calcium trace
       ``C``, spike train ``S``, and the per-cell brightness/expression gain that
       scales the whole trace, all from ``cell_activity``. The gain is biology

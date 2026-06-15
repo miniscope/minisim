@@ -24,9 +24,9 @@ A_est, C_est, S_est = run_my_pipeline(movie)
 
 Recovery is only meaningful once you know which estimated cell corresponds to
 which true cell. {py:func}`~minisim.hungarian_match` solves the optimal
-one-to-one assignment by spatial overlap (IoU). Match against `A_observed` (what
-is actually recoverable through the optics), not `A_planted` (the optics-free
-ideal).
+one-to-one assignment by spatial overlap (IoU). Match against `A_observed` (the
+optically degraded footprint, the recoverable target through the optics), not
+`A_planted` (the optics-free ideal).
 
 ```python
 from minisim import hungarian_match
@@ -46,6 +46,13 @@ a cell too deep or too dim to appear in the movie is not a fair miss. Use
 det = gt.detectable_subset()
 match = hungarian_match(A_est, det.A_observed)
 print(f"recall over detectable cells: {match.recall():.2f}")
+```
+
+```{note}
+Detectability is decided by a peak-SNR cut ({py:data}`~minisim.DETECT_SNR_THRESHOLD`,
+currently 3.0). That threshold is provisional: it has not yet been calibrated
+against the recovery behavior of a real pipeline, so it sets the recall
+denominator but should be read as a sensible default rather than a settled value.
 ```
 
 ## 3. Score the recovered traces and spikes

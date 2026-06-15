@@ -33,7 +33,7 @@ fields), which makes Minisim useful for:
   the image, via interactive notebooks.
 - **Testing** analysis code with reproducible, parameterized fixtures.
 
-📖 **Full documentation: [minisim.readthedocs.io](https://minisim.readthedocs.io/)** — concepts,
+📖 **Full documentation: [minisim.readthedocs.io](https://minisim.readthedocs.io/)** - concepts,
 quickstart, how-to guides, and the API reference.
 
 ## Install
@@ -87,9 +87,10 @@ truth = rec.ground_truth      # cells, traces, spikes, optical fields
 ## Relationship to minian
 
 Minisim is the forward (generative) counterpart to minian's inverse (analysis)
-pipeline. The dependency is strictly one-directional: Minisim never imports
-minian. minian uses Minisim as a test dependency to supply ground-truth fixtures
-for its recovery tests.
+pipeline. The dependency is designed to be strictly one-directional: Minisim
+never imports minian. The intended integration is for minian to use Minisim as a
+test dependency, supplying ground-truth fixtures for its recovery tests; that
+wiring is planned, not yet in place.
 
 ## License
 

@@ -826,7 +826,7 @@ class Composite(StepSpec):
     """Composite ``Σ_i degraded_footprint_i × trace_i`` into the movie.
 
     The built step's snapshot name is ``"cells_only"``. The planted (sharp)
-    ``A``/``C`` remain the ideal CNMF target in ground truth.
+    ``A``/``C`` remain the ideal, optics-free target in ground truth.
     """
 
     domain: ClassVar[str] = "tissue"
