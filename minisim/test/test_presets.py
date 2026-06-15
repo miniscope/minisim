@@ -127,6 +127,34 @@ def test_build_spec_simulates_end_to_end():
     np.testing.assert_array_equal(rec.observed, np.round(rec.observed))  # integer counts
 
 
+def test_positions_um_round_trip_to_centers_um_under_motion():
+    # The optical-center frame exists so that the input positions_um come back
+    # unchanged as GroundTruth.centers_um - including under a motion margin, which
+    # grows the canvas (the frame is margin-invariant). This is the whole reason
+    # for the frame, so lock it: place exact cells near the axis, add brain motion,
+    # and check they round-trip. (generic_1p's ~96 um FOV keeps the cells central.)
+    positions = [(120.0, 0.0, -5.0), (120.0, 0.0, 5.0)]
+    cells = NeuronPopulation(positions_um=positions, soma_radius_um=4.0)
+    spec = build_spec(
+        presets.generic_1p(),
+        presets.cortex_l23(),
+        duration_s=1.0,
+        fps=20.0,
+        seed=1,
+        populations=[cells],
+        extra_steps=[BrainMotion(motion_amplitude_um=3.0)],
+    )
+    rec = simulate(spec)
+    assert rec.ground_truth.n_units == len(positions)
+    # order-independent compare (lexsort by z, y, x) so this does not depend on the
+    # cell ordering finalize happens to emit
+    got = np.asarray(rec.ground_truth.centers_um, dtype=float)
+    want = np.asarray(positions, dtype=float)
+    got = got[np.lexsort((got[:, 2], got[:, 1], got[:, 0]))]
+    want = want[np.lexsort((want[:, 2], want[:, 1], want[:, 0]))]
+    np.testing.assert_allclose(got, want, atol=1e-6)
+
+
 def test_build_spec_is_a_valid_sweep_base():
     base = build_spec(presets.miniscope_v4(), presets.ca1(), duration_s=1.0)
     specs = list(sweep(base, {"acquisition.focal_depth_in_tissue_um": [140.0, 150.0, 160.0]}))

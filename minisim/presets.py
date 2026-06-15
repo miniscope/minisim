@@ -14,10 +14,11 @@ fields:
 
 The two compose: :func:`build_spec` assembles any scope × any region into a
 validated :class:`~minisim.Spec`, so you can swap the scope or the region
-independently and override the rest with :func:`~minisim.sweep`. This is the
-single source of truth for the V4 optics/sensor numbers and the standard-region
-anatomy; the ``build_recording`` studio reads its presets from here, so the
-notebook and tests can never drift apart.
+independently and override the rest with :func:`~minisim.sweep`. This module is
+the source of truth for the V4 optics/sensor *values* and the standard-region
+anatomy: the ``build_recording`` studio reads those numbers from here, and a
+parity test (``test_studio_presets_match_library_presets``) fails if the studio
+and the library ever drift apart.
 
 The Miniscope V4 optics/sensor numbers are confirmed by D. Aharoni; the
 region anatomy (CA1 pyramidal band, neocortex L2/3) follows the same values the

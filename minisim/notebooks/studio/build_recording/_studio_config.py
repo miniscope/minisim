@@ -17,10 +17,11 @@ toggles so the config spans a bare cells-only movie up to the full forward chain
 :data:`STUDIO_PRESETS` seeds the whole config from a named, realistic starting
 point (a generic scope, or a Miniscope V4 imaging a particular brain region).
 The physical numbers behind those presets - the V4 optics/sensor and the
-standard-region anatomy - are the single source of truth in
-:mod:`minisim.presets`; the studio reads them from there and adds only its own
-presentation choices (the vignette/glow look, neuropil/motion defaults), so the
-notebook and the library presets can never drift apart.
+standard-region anatomy - have their source of truth in :mod:`minisim.presets`;
+the studio reads them from there and adds only its own presentation choices (the
+vignette/glow look, neuropil/motion defaults). A parity test
+(``test_studio_presets_match_library_presets``) fails if the studio's numbers
+ever drift from the library presets.
 """
 
 from __future__ import annotations
