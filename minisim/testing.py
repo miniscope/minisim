@@ -14,14 +14,13 @@ collapses each into one:
   correlation, spike precision/recall, optional motion error) in one call,
   returning a :class:`Report`.
 
-Both are thin wrappers over the public API; the a-la-carte metrics
-(:func:`~minisim.hungarian_match`, :func:`~minisim.trace_pearson`, ...) remain the
-foundation, for the cases this 90%-path does not cover.
+Both are thin wrappers over the public API, built on the a-la-carte metrics
+(:func:`~minisim.hungarian_match`, :func:`~minisim.trace_pearson`, ...), which stay
+available for anything they do not cover.
 
-**Dependency direction.** minisim never imports an analysis pipeline, so importing
-``minisim.testing`` as a *test-only* dependency of such a pipeline cannot create an
-import cycle. See the how-to guide ``docs/howto/use_in_test_suite.md`` for the
-recommended ``pytest`` wiring.
+**Dependency direction.** minisim depends only on its own stack, so a pipeline can
+take ``minisim.testing`` as a *test-only* dependency. See the how-to guide
+``docs/howto/use_in_test_suite.md`` for the recommended ``pytest`` wiring.
 """
 
 from __future__ import annotations
@@ -122,8 +121,7 @@ def make_recording(
 
     Defaults are tuned for CI: a 128 px FOV at 1 µm/px (128 µm), six cells at
     50 µm depth, two seconds at 20 fps, with a lively, brightly-exposed default
-    activity/sensor so every placed cell reliably fires and is *detectable*
-    (a flat or too-dim cell would otherwise be an unfair recall miss). Shrink
+    activity/sensor so every placed cell reliably fires and is *detectable*. Shrink
     ``n_px`` / ``duration_s`` for an even faster fixture, or raise ``n_cells`` for
     a denser one.
 
@@ -185,9 +183,8 @@ def make_recording(
                 )
             ]
         ),
-        # Lively + brightly exposed by default: every cell reliably fires a
-        # transient in the short clip and clears the sensor noise floor, so the
-        # cells are detectable (a flat or too-dim cell is not a fair recall miss).
+        # Lively + brightly exposed by default: every cell fires a transient in the
+        # short clip and clears the sensor noise floor, so all cells are detectable.
         activity or CellActivity(p_quiescent_to_active=0.05),
         CellOptics(),
         Composite(),
@@ -310,6 +307,9 @@ def score(
     gt = ground_truth.detectable_subset() if restrict_to_detectable else ground_truth
     match = hungarian_match(estimate.A, gt.A_observed)
     matched = match.matched_pairs(iou_threshold)
+    n_matched = len(matched)
+    recall = n_matched / match.n_true if match.n_true else 0.0
+    precision = n_matched / match.n_est if match.n_est else 0.0
 
     if estimate.C is not None and match.pairing:
         r = trace_pearson(estimate.C, gt.C, match.pairing)
@@ -332,9 +332,9 @@ def score(
     return Report(
         n_true=match.n_true,
         n_est=match.n_est,
-        n_matched=len(matched),
-        recall=match.recall(iou_threshold),
-        precision=match.precision(iou_threshold),
+        n_matched=n_matched,
+        recall=recall,
+        precision=precision,
         mean_iou=match.mean_iou,
         trace_corr=trace_corr,
         spike_precision=spike_precision,

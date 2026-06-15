@@ -260,8 +260,8 @@ def _energy_masks(A: np.ndarray, energy_frac: float) -> np.ndarray:
     """
     if not 0.0 < energy_frac <= 1.0:
         raise ValueError(f"energy_frac must be in (0, 1], got {energy_frac}.")
-    # Flatten with an explicit pixel count rather than -1, so an empty (0, H, W)
-    # stack (a pipeline that recovered nothing) reshapes instead of raising.
+    # Flatten each footprint to its pixel count, keeping a 0-row (recovered-nothing)
+    # stack valid.
     n_pix = int(np.prod(A.shape[1:]))
     flat = np.clip(A, 0.0, None).reshape(A.shape[0], n_pix)
     masks = np.zeros(flat.shape, dtype=bool)
@@ -282,7 +282,7 @@ def _iou_matrix(masks_est: np.ndarray, masks_true: np.ndarray) -> np.ndarray:
     Intersections come from a single mask-vs-mask matmul (footprints flattened to
     rows); unions are ``area_est + area_true − intersection``.
     """
-    # Explicit pixel count (not -1) so a 0-row stack flattens instead of raising.
+    # Flatten each mask to its pixel count, keeping a 0-row stack valid.
     e = masks_est.reshape(masks_est.shape[0], int(np.prod(masks_est.shape[1:]))).astype(np.float32)
     t = masks_true.reshape(masks_true.shape[0], int(np.prod(masks_true.shape[1:]))).astype(np.float32)
     intersection = e @ t.T  # (n_est, n_true)
