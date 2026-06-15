@@ -64,13 +64,14 @@ correlation is ~0; anything above that is optical blur bleeding one cell into th
 other's ROI.
 
 ```python
-from dataclasses import replace
-
 import numpy as np
 import pandas as pd
 
-from minisim import NeuronPopulation, Sensor, simulate, sweep
-from minisim.presets import build_spec, cortex_l23, miniscope_v4
+from minisim import (
+    Acquisition, CellActivity, CellOptics, Composite, NeuronPopulation,
+    PlaceNeurons, Sensor, Spec, Tissue, simulate, sweep,
+)
+from minisim.presets import miniscope_v4
 
 DEPTHS_UM, ROI_DIAM_UM = (100.0, 110.0), 20.0
 FOCAL_PLANES_UM = [85.0, 95.0, 105.0, 115.0, 125.0]
@@ -93,18 +94,25 @@ def roi_trace(observed, acq, y_um, x_um):     # brute-force extraction: mean of 
     return observed[:, mask].mean(axis=1)
 
 
-# Keep every V4 optic (NA, magnification, pixel pitch, field curvature); crop the
-# sensor to 128 px so the grid runs in seconds. The focal plane and the cell pair
-# are placeholders here - the sweep overrides both per grid point. cortex_l23()
-# (its 100-200 um band is where these cells sit) is used only for its tissue
-# scatter model: the population is overridden and vasculature is off.
+# This test is region-independent: cells are placed explicitly and there are no
+# vessels, so the only tissue property in play is the scatter model - set it
+# directly rather than pull in a CA1/cortex region preset. We still take the
+# realistic V4 optics + sensor from its scope preset (just cropped to 128 px so
+# the grid runs in seconds). focal_depth and the cell pair are placeholders, both
+# overridden by the sweep.
 v4 = miniscope_v4()
 small = v4.image_sensor.model_copy(update={"n_px_height": 128, "n_px_width": 128})
-base = build_spec(
-    replace(v4, image_sensor=small), cortex_l23(),
-    duration_s=60.0, fps=10.0, seed=0,       # 60 s so the true correlation settles to ~0
-    populations=[two_cells(0.0)],
-    sensor=Sensor(photons_per_unit=250.0), include_vasculature=False,
+base = Spec(
+    acquisition=Acquisition(
+        optics=v4.optics, image_sensor=small, tissue=Tissue(),
+        fps=10.0, duration_s=60.0,           # 60 s so the true correlation settles to ~0
+    ),
+    seed=0,
+    steps=[
+        PlaceNeurons(populations=[two_cells(0.0)]),
+        CellActivity(), CellOptics(), Composite(),
+        Sensor(photons_per_unit=250.0),
+    ],
 )
 
 rows = []

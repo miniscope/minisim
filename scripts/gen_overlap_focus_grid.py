@@ -24,7 +24,6 @@ Run from the repo root: .venv/Scripts/python.exe scripts/gen_overlap_focus_grid.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import matplotlib
@@ -34,8 +33,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from minisim import NeuronPopulation, Sensor, simulate, sweep
-from minisim.presets import build_spec, cortex_l23, miniscope_v4
+from minisim import (
+    Acquisition,
+    CellActivity,
+    CellOptics,
+    Composite,
+    NeuronPopulation,
+    PlaceNeurons,
+    Sensor,
+    Spec,
+    Tissue,
+    simulate,
+    sweep,
+)
+from minisim.presets import miniscope_v4
 
 # ---- the experiment knobs ---------------------------------------------------
 FOCAL_PLANES_UM = [85.0, 95.0, 105.0, 115.0, 125.0]
@@ -87,19 +98,27 @@ def roi_trace(observed: np.ndarray, acq, y_um: float, x_um: float) -> np.ndarray
 
 
 # ---- SETUP: one base spec, swept over (focal plane x separation) ------------
-# keep all the V4 optics, just crop the sensor; focal + populations are overridden
-# per grid point by the sweep below, so their values here are placeholders. The
-# region (cortex L2/3, whose 100-200 um band is where these cells sit) is used only
-# for its tissue scatter model: its population is overridden and vasculature is off.
-base = build_spec(
-    replace(_V4, image_sensor=_SMALL_SENSOR),
-    cortex_l23(),
-    duration_s=DURATION_S,
-    fps=FPS,
+# This test is independent of brain region: the population is placed explicitly and
+# there are no vessels, so the only tissue property in play is the depth-dependent
+# scatter model - set it directly rather than pull in a CA1/cortex region preset.
+# We still take the realistic V4 optics + sensor from its scope preset (just cropped).
+# focal_depth and the cell pair are placeholders, overridden by the sweep below.
+base = Spec(
+    acquisition=Acquisition(
+        optics=_V4.optics,
+        image_sensor=_SMALL_SENSOR,
+        tissue=Tissue(),
+        fps=FPS,
+        duration_s=DURATION_S,
+    ),
     seed=0,
-    populations=[two_cells(0.0)],
-    sensor=Sensor(photons_per_unit=PHOTONS_PER_UNIT),
-    include_vasculature=False,
+    steps=[
+        PlaceNeurons(populations=[two_cells(0.0)]),
+        CellActivity(),
+        CellOptics(),
+        Composite(),
+        Sensor(photons_per_unit=PHOTONS_PER_UNIT),
+    ],
 )
 AXES = {
     "acquisition.focal_depth_in_tissue_um": FOCAL_PLANES_UM,  # scalar axis
