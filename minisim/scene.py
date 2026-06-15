@@ -68,8 +68,11 @@ class Cell:
       illumination falloff, judged against the sensor noise floor) assembled in
       ``finalize()``.
 
-    ``center_um`` is ``(z, y, x)`` in µm (depth first); pixel coordinates are a
-    conversion away via ``acq.um_to_px`` and are not stored, to avoid drift.
+    ``center_um`` is ``(z, y, x)`` in µm (depth first). ``z`` is depth below the
+    tissue surface (0 = surface); ``y, x`` are lateral in the **optical-center
+    frame** - the optical axis is ``(0, 0)``, ``+y`` down and ``+x`` right (image
+    convention), so the frame is invariant to the motion margin. Pixel coordinates
+    are a conversion away via ``acq.um_to_index`` and are not stored, to avoid drift.
     """
 
     center_um: tuple[float, float, float]

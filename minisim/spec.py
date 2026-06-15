@@ -442,6 +442,20 @@ class Acquisition(_Base):
         """Convert a physical distance (µm) to pixels."""
         return um / self.pixel_size_um
 
+    def um_to_index(self, y_um: float, x_um: float, shape: tuple[int, int]) -> tuple[float, float]:
+        """Array ``(row, col)`` for an optical-center µm position on a centered grid.
+
+        Lateral positions live in the **optical-center frame**: the optical axis
+        is ``(0, 0)`` µm, ``+y`` points down (increasing row) and ``+x`` right
+        (increasing column), matching the image array. Both the canvas and the
+        sensor FOV are centered on that axis, so this one map serves either by
+        passing its own ``shape`` - ``(row, col) = grid_center + (y, x)/pixel_size``.
+        Returns floats (sub-pixel); callers round/clip as needed. (Depth ``z`` is
+        not lateral - it stays measured from the tissue surface, ``0`` = surface.)
+        """
+        inv = 1.0 / self.pixel_size_um
+        return ((shape[0] - 1) / 2.0 + y_um * inv, (shape[1] - 1) / 2.0 + x_um * inv)
+
     def s_to_frame(self, s: float) -> float:
         """Convert a duration (seconds) to a (fractional) frame count."""
         return s * self.fps
@@ -651,14 +665,16 @@ class NeuronPopulation(_Base):
     )
     positions_um: list[tuple[float, float, float]] | None = Field(
         default=None,
-        description="Explicit soma centers as (z, y, x) µm tuples - depth, row, column - "
-        "in the tissue frame (origin = canvas top-left, the same coordinates the "
-        "sampled centers and ground-truth positions use; note the depth-first order, "
-        "matching Cell.center_um rather than x,y,z). When given, these exact positions "
-        "are placed instead of density-sampling, so the distribution fields "
-        "(density_per_mm3, depth_range_um, min_distance_um) are ignored; the shape "
-        "fields (soma_radius_um, irregularity, morphology, dendrites) still apply to "
-        "each placed cell.",
+        description="Explicit soma centers as (z, y, x) µm tuples - depth first, "
+        "matching Cell.center_um (not x,y,z). z is depth below the tissue surface "
+        "(0 = surface); y, x are lateral in the optical-center frame: the optical "
+        "axis is (0, 0), +y down and +x right (image convention), so a cell at "
+        "(z, 0, 0) sits dead-center regardless of the motion margin, and these are "
+        "the same coordinates GroundTruth.centers_um reports back. When given, these "
+        "exact positions are placed instead of density-sampling, so the distribution "
+        "fields (density_per_mm3, depth_range_um, min_distance_um) are ignored; the "
+        "shape fields (soma_radius_um, irregularity, morphology, dendrites) still "
+        "apply to each placed cell.",
     )
 
     @field_validator("depth_range_um")
@@ -723,7 +739,16 @@ class PlaceNeurons(StepSpec, NeuronPopulation):
             return self
         if not self.populations:
             raise ValueError("populations must list at least one NeuronPopulation, or be None.")
-        clash = sorted(self.model_fields_set & set(NeuronPopulation.model_fields))
+        # Flag step-level population fields left at a *non-default* value (they would
+        # be silently ignored alongside `populations`). Comparing against the defaults
+        # rather than `model_fields_set` keeps this stable across a serialization
+        # round-trip: `model_dump()` marks every field as set, so a `model_fields_set`
+        # check would spuriously fire whenever a populations-based spec is re-validated
+        # (by `sweep()`, a cache/JSON reload, ...), making such a spec impossible to use.
+        step_defaults = NeuronPopulation()
+        clash = sorted(
+            f for f in NeuronPopulation.model_fields if getattr(self, f) != getattr(step_defaults, f)
+        )
         if clash:
             raise ValueError(
                 f"place_neurons sets both populations and step-level population "

@@ -114,8 +114,9 @@ def test_place_neurons_centers_in_bounds():
     for cell in scene.cells:
         z, y, x = cell.center_um
         assert 10.0 <= z <= 80.0
-        assert 0.0 <= y <= fov_h
-        assert 0.0 <= x <= fov_w
+        # optical-center frame: lateral coords span [-fov/2, +fov/2] about the axis.
+        assert -fov_h / 2.0 <= y <= fov_h / 2.0
+        assert -fov_w / 2.0 <= x <= fov_w / 2.0
 
 
 def test_place_neurons_footprint_is_peak_normalized():
@@ -332,6 +333,15 @@ def test_populations_and_step_level_fields_cannot_mix():
 def test_empty_populations_list_is_rejected():
     with pytest.raises(ValueError, match="at least one"):
         PlaceNeurons(populations=[])
+
+
+def test_populations_spec_survives_serialization_round_trip():
+    # A populations-based step must round-trip through model_dump()/model_validate()
+    # unchanged - a dump marks every field "set", so the both-set guard must compare
+    # against defaults, not model_fields_set, or sweep()/cache reload would reject it.
+    step = PlaceNeurons(populations=[NeuronPopulation(soma_radius_um=5.0, positions_um=[(1.0, 2.0, 3.0)])])
+    restored = PlaceNeurons.model_validate(step.model_dump())
+    assert restored.populations == step.populations
 
 
 def test_cytosolic_morphology_adds_dendrites_beyond_soma():
@@ -676,18 +686,17 @@ def test_resolve_focal_plane_auto_accounts_for_field_curvature():
     # effective depth. With curvature, off-axis cells read deeper, so auto sits
     # deeper than the plain median z -- and falls back to median z without optics.
     acq = _acq(n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0))
-    px = acq.pixel_size_um
-    axis = (100 * px, 100 * px)  # canvas center (n_px=200) in µm
     radii = (0.0, 20.0, 40.0, 60.0, 80.0)
-    cells = [Cell(center_um=(100.0, axis[0], axis[1] + r)) for r in radii]
+    # Optical axis is the frame origin (0, 0), so field radius is just |x| here.
+    cells = [Cell(center_um=(100.0, 0.0, r)) for r in radii]
     expected = float(np.median([100.0 + acq.optics.focal_curvature_shift_um(r) for r in radii]))
 
     assert resolve_focal_plane(cells, "auto") == 100.0  # no optics -> plain median z
-    curv = resolve_focal_plane(cells, "auto", acq.optics, axis)
+    curv = resolve_focal_plane(cells, "auto", acq.optics)
     assert curv == pytest.approx(expected)
     assert curv > 100.0  # curvature pulls the focus deeper to recover off-axis cells
     flat = Optics(magnification=8.0)  # field_curvature_radius_um=None
-    assert resolve_focal_plane(cells, "auto", flat, axis) == 100.0  # flat field -> median z
+    assert resolve_focal_plane(cells, "auto", flat) == 100.0  # flat field -> median z
 
 
 def _scored_cell(z, y_um=25.0, x_um=25.0, lo=0.0, hi=100.0):
@@ -700,16 +709,13 @@ def test_resolve_focal_plane_auto_maximizes_detectable_yield_not_median():
     # median depth sits in the empty gap (~42 µm), but the focus that recovers the
     # MOST cells is the one parked on the cluster -- yield, not the median.
     acq = _acq(focal_depth_in_tissue_um="auto")  # na 0.45 -> DOF ~3.4 µm
-    axis = (25.0, 25.0)
     cluster = [_scored_cell(z) for z in (20.0, 21.0, 22.0, 23.0, 24.0)]
     sparse = [_scored_cell(z) for z in (60.0, 80.0, 100.0, 120.0, 140.0)]
     cells = cluster + sparse
     sensor = Sensor(photons_per_unit=300.0)  # bright -> every in-focus cell detectable
 
-    assert resolve_focal_plane(cells, "auto", acq.optics, axis) == 42.0  # geometric median
-    focus = resolve_focal_plane(
-        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor
-    )
+    assert resolve_focal_plane(cells, "auto", acq.optics) == 42.0  # geometric median
+    focus = resolve_focal_plane(cells, "auto", acq.optics, acq=acq, sensor_spec=sensor)
     assert 20.0 <= focus <= 24.0  # parked on the dense cluster
     assert focus < 40.0  # ...nowhere near the median gap
 
@@ -719,16 +725,13 @@ def test_resolve_focal_plane_auto_focuses_shallower_when_scatter_dims_deep_cells
     # them (~74 µm). Scatter attenuation dims the deep cluster below the SNR floor,
     # so only the shallow cells are recoverable -- auto focus moves shallow.
     acq = _acq(focal_depth_in_tissue_um="auto")
-    axis = (25.0, 25.0)
     shallow = [_scored_cell(z, lo=20.0, hi=28.0) for z in (22.0, 24.0, 26.0)]
     deep = [_scored_cell(z, lo=20.0, hi=28.0) for z in (122.0, 124.0, 126.0)]
     cells = shallow + deep
     sensor = Sensor(photons_per_unit=70.0)  # tuned: shallow clears the floor, deep does not
 
-    assert resolve_focal_plane(cells, "auto", acq.optics, axis) == 74.0  # geometric median
-    focus = resolve_focal_plane(
-        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor
-    )
+    assert resolve_focal_plane(cells, "auto", acq.optics) == 74.0  # geometric median
+    focus = resolve_focal_plane(cells, "auto", acq.optics, acq=acq, sensor_spec=sensor)
     assert focus < 50.0  # pulled to the recoverable shallow cluster, off the median
     assert 20.0 <= focus <= 28.0
 
@@ -740,18 +743,19 @@ def test_resolve_focal_plane_auto_shifts_when_vignette_removes_edge_cells():
     # corner cells below the floor, dropping them from the vote, so the focus
     # snaps back to the on-axis cluster. The plane moves once you account for it.
     acq = _acq(n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0))
-    axis = (100.0, 100.0)  # canvas center in µm (n_px=200, 1 µm/px)
-    center = [Cell(center_um=(80.0, 100.0, 100.0), trace=np.array([20.0, 28.0])) for _ in range(5)]
-    edge = [Cell(center_um=(80.0, 10.0, 10.0), trace=np.array([20.0, 28.0])) for _ in range(8)]
+    # Optical-center frame (n_px=200, 1 µm/px): the axis is (0, 0); the FOV corner
+    # is ~(-90, -90), a large field radius.
+    center = [Cell(center_um=(80.0, 0.0, 0.0), trace=np.array([20.0, 28.0])) for _ in range(5)]
+    edge = [Cell(center_um=(80.0, -90.0, -90.0), trace=np.array([20.0, 28.0])) for _ in range(8)]
     cells = center + edge
     sensor = Sensor(photons_per_unit=200.0)
     strong = combined_falloff_field(acq, None, Vignette(falloff=0.01, exponent=1.0))
 
     focus_none = resolve_focal_plane(
-        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor, photon_field=None
+        cells, "auto", acq.optics, acq=acq, sensor_spec=sensor, photon_field=None
     )
     focus_vig = resolve_focal_plane(
-        cells, "auto", acq.optics, axis, acq=acq, sensor_spec=sensor, photon_field=strong
+        cells, "auto", acq.optics, acq=acq, sensor_spec=sensor, photon_field=strong
     )
     assert focus_none > 90.0  # edge group (deeper effective depth) wins the count
     assert focus_vig < 84.0  # vignette kills the edge cells -> back to the center cluster
@@ -858,20 +862,19 @@ def test_field_curvature_blurs_off_axis_cells():
         ),
         focal_depth_in_tissue_um=100.0,
     )
-    px = acq.pixel_size_um
     z = 100.0
 
     def cell_at(y_um, x_um):
         fp = Footprint.from_dense(
             neuron_footprint(
-                (npx, npx), (y_um / px, x_um / px), acq.um_to_px(4.0), 0.0,
+                (npx, npx), acq.um_to_index(y_um, x_um, (npx, npx)), acq.um_to_px(4.0), 0.0,
                 np.random.default_rng(0),
             )
         )
         return Cell(center_um=(z, y_um, x_um), footprint_planted=fp)
 
-    center = cell_at(npx * px / 2, npx * px / 2)  # on axis (r = 0)
-    corner = cell_at(10.0, 10.0)                  # near a corner (large r)
+    center = cell_at(0.0, 0.0)        # on axis (r = 0)
+    corner = cell_at(-90.0, -90.0)    # near a corner (large r)
     scene = Scene.zeros(acq)
     scene.cells += [center, corner]
     CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
@@ -1215,8 +1218,8 @@ def test_illumination_drives_bleaching_faster_at_the_bright_center():
     def end_B(with_illum):
         scene = Scene.zeros(acq, rng=np.random.default_rng(0))
         scene.cells = [
-            Cell(center_um=(0.0, 32 * px, 32 * px), trace=trace.copy()),  # FOV center
-            Cell(center_um=(0.0, 2 * px, 2 * px), trace=trace.copy()),    # near a corner
+            Cell(center_um=(0.0, 0.0, 0.0), trace=trace.copy()),              # optical axis
+            Cell(center_um=(0.0, -30 * px, -30 * px), trace=trace.copy()),    # near a corner
         ]
         step = BleachingStep(Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2))
         if with_illum:
@@ -1231,22 +1234,18 @@ def test_illumination_drives_bleaching_faster_at_the_bright_center():
     assert c_off == pytest.approx(e_off, rel=1e-9)  # equal without illumination (same trace)
 
 
-def test_bleaching_illumination_dose_subtracts_the_motion_margin():
-    # Regression: the illumination field is sensor-FOV sized, but cells live in
-    # canvas coords (enlarged by the motion margin). The dose must be sampled at the
-    # canvas -> FOV mapped position, exactly as optics/finalize do. A cell sitting at
-    # the canvas position of the FOV center must therefore receive the same dose with
-    # or without a margin; the buggy version (no margin subtraction) sampled it off
-    # toward the dim edge and bleached it less.
+def test_bleaching_illumination_dose_is_margin_invariant():
+    # The illumination field is sensor-FOV sized; cells live in the optical-center
+    # frame whose origin is the FOV center, which is invariant to the motion margin.
+    # A cell at the optical axis (0, 0) therefore gets the same bright-center dose -
+    # and bleaches to the same end-B - with or without a margin (no canvas->FOV
+    # bookkeeping needed any more; the frame handles it by construction).
     acq = _acq(n_px=64, duration_s=120.0, fps=10.0)
-    px = acq.pixel_size_um
     trace = np.full(acq.n_frames, 1.5)
 
     def center_end_B(margin_px):
         scene = Scene.zeros(acq, rng=np.random.default_rng(0), margin_px=margin_px)
-        # Canvas position of the FOV center shifts by the margin.
-        c = (margin_px + 32) * px
-        scene.cells = [Cell(center_um=(0.0, c, c), trace=trace.copy())]
+        scene.cells = [Cell(center_um=(0.0, 0.0, 0.0), trace=trace.copy())]
         step = BleachingStep(Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2))
         step.illumination = IlluminationProfile(falloff=0.2, exponent=2.0)
         step(scene)

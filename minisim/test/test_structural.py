@@ -118,9 +118,9 @@ def test_strong_vignette_concentrates_detection_centrally():
     rec = simulate(spec)
     gt = rec.ground_truth
     acq = rec.spec.acquisition
+    # centers are in the optical-center frame, so radius from the axis is just |yx|.
     yx = gt.centers_um[:, 1:] / acq.pixel_size_um
-    center = np.array([acq.image_sensor.n_px_height, acq.image_sensor.n_px_width]) / 2.0
-    r = np.linalg.norm(yx - center, axis=1)
+    r = np.linalg.norm(yx, axis=1)
     inner = r < np.median(r)
     assert gt.detectable[inner].mean() > gt.detectable[~inner].mean()
 

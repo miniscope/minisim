@@ -101,8 +101,9 @@ def plot_population(ax_top, ax_side, centers_um, fov_um, *, depth_max,
         pc.set_edgecolor("white")
         pc.set_linewidth(0.2)
         ax_top.add_collection(pc)
-    ax_top.set_xlim(0, fov_w)
-    ax_top.set_ylim(0, fov_h)
+    # optical-center frame: the axis (0, 0) is the FOV center, so axes span ±fov/2.
+    ax_top.set_xlim(-fov_w / 2, fov_w / 2)
+    ax_top.set_ylim(-fov_h / 2, fov_h / 2)
     ax_top.invert_yaxis()
     ax_top.set_aspect("equal")
     suffix = f"  |  GCaMP: {morph_label}" if morph_label else ""
@@ -113,7 +114,7 @@ def plot_population(ax_top, ax_side, centers_um, fov_um, *, depth_max,
     ax_side.axhspan(lo, max(hi, lo), color="0.88", zorder=0)
     if len(centers):
         ax_side.scatter(x, z, c=z, cmap="viridis", vmin=0, vmax=depth_max, s=9)
-    ax_side.set_xlim(0, fov_w)
+    ax_side.set_xlim(-fov_w / 2, fov_w / 2)
     ax_side.set_ylim(0, depth_max)
     ax_side.invert_yaxis()
     ax_side.set(title="side view: depth distribution", xlabel="x (um)", ylabel="depth z (um)")
@@ -198,7 +199,9 @@ def build_dashboard_frames(movie, gt, picks, colors, t, vmax, px_um, downsample=
                            left=0.015, right=0.985, top=0.93, bottom=0.13)
     axts = []
     for i, u in enumerate(picks):
-        cy, cx = gt.centers_um[u, 1] / px_um, gt.centers_um[u, 2] / px_um
+        # optical-center frame -> FOV pixel: the axis (0, 0) is the movie center.
+        cy = (movie.shape[1] - 1) / 2.0 + gt.centers_um[u, 1] / px_um
+        cx = (movie.shape[2] - 1) / 2.0 + gt.centers_um[u, 2] / px_um
         hw = 26
         y0, y1 = max(int(cy) - hw, 0), min(int(cy) + hw, movie.shape[1])
         x0, x1 = max(int(cx) - hw, 0), min(int(cx) + hw, movie.shape[2])

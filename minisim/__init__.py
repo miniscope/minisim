@@ -24,6 +24,7 @@ from minisim.metrics import (
     trace_pearson,
 )
 from minisim.perf import PerfTracker
+from minisim.presets import Region, Scope, build_spec
 from minisim.recording import (
     DETECT_SNR_THRESHOLD,
     GroundTruth,
@@ -86,7 +87,9 @@ __all__ = [
     "PerfTracker",
     "PlaceNeurons",
     "Recording",
+    "Region",
     "Scene",
+    "Scope",
     "Sensor",
     "Spec",
     "SpecWarning",
@@ -97,6 +100,7 @@ __all__ = [
     "Vasculature",
     "VesselLayer",
     "Vignette",
+    "build_spec",
     "cache_dir",
     "cache_path",
     "detection_snr",

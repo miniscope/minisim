@@ -437,17 +437,15 @@ class BleachingStep(Step["Bleaching"]):
         shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
         center = falloff_center_px(shape, acq, self.illumination.center_offset_um)
         field = radial_falloff(shape, center, self.illumination.falloff, self.illumination.exponent)
-        px = acq.pixel_size_um
-        # Cells live in canvas coords; the field is the sensor FOV, so subtract the
-        # motion-margin offset before indexing - the same canvas -> FOV mapping
-        # finalize() and _photon_budget_at() apply. Without motion the margin is 0.
-        canvas_h, canvas_w = scene.canvas_shape
-        margin_y_um = (canvas_h - shape[0]) // 2 * px
-        margin_x_um = (canvas_w - shape[1]) // 2 * px
-        ys = np.array([cell.center_um[1] for cell in scene.cells])
-        xs = np.array([cell.center_um[2] for cell in scene.cells])
-        iy = np.clip(np.round((ys - margin_y_um) / px), 0, shape[0] - 1).astype(int)
-        ix = np.clip(np.round((xs - margin_x_um) / px), 0, shape[1] - 1).astype(int)
+        # Cells live in the optical-center frame whose origin is the FOV center, so
+        # each maps to a FOV pixel via um_to_index - no motion-margin bookkeeping.
+        rows, cols = [], []
+        for cell in scene.cells:
+            r, c = acq.um_to_index(cell.center_um[1], cell.center_um[2], shape)
+            rows.append(r)
+            cols.append(c)
+        iy = np.clip(np.round(rows), 0, shape[0] - 1).astype(int)
+        ix = np.clip(np.round(cols), 0, shape[1] - 1).astype(int)
         return field[iy, ix]
 
 

@@ -188,15 +188,17 @@ def test_finalize_drops_pure_margin_cells():
     canvas = 20 + 2 * margin
     nf = acq.n_frames
     scene = Scene.zeros(acq, margin_px=margin)
-    # one cell inside the FOV, one entirely in the top margin (rows < margin).
+    # one cell at the FOV center (canvas center pixel = margin + 10), one entirely
+    # in the top margin (rows < margin). Footprint pixels are explicit; center_um is
+    # the optical-center frame (origin = FOV center), invariant to the margin.
     scene.cells += [
         Cell(
-            center_um=(0.0, margin + 10.0, margin + 10.0),
+            center_um=(0.0, 0.0, 0.0),
             footprint_planted=_dot((canvas, canvas), margin + 10, margin + 10),
             trace=np.ones(nf),
         ),
         Cell(
-            center_um=(0.0, 2.0, 10.0),
+            center_um=(0.0, -100.0, 0.0),  # dropped anyway; coordinate is moot
             footprint_planted=_dot((canvas, canvas), 2, 10),
             trace=np.ones(nf),
         ),
@@ -205,8 +207,8 @@ def test_finalize_drops_pure_margin_cells():
     gt = finalize(scene, Spec(acquisition=acq, steps=minimal)).ground_truth
     assert gt.n_units == 1  # the margin-only cell was dropped
     assert gt.A_planted.shape == (1, 20, 20)
-    # surviving cell's center is in FOV coordinates (canvas 16 -> FOV 10).
-    np.testing.assert_allclose(gt.centers_um[0], [0.0, 10.0, 10.0])
+    # surviving cell's center is in the optical-center frame: the FOV center is (0, 0).
+    np.testing.assert_allclose(gt.centers_um[0], [0.0, 0.0, 0.0])
 
 
 # --- detectability ---------------------------------------------------------
@@ -279,7 +281,7 @@ def test_vessel_occlusion_dims_detectability_and_records_overlap():
     def _scene():
         s = Scene.zeros(acq)
         s.cells.append(
-            Cell(center_um=(0.0, 8.0, 8.0), footprint_planted=_dot((16, 16), 8, 8),
+            Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=_dot((16, 16), 8, 8),
                  trace=trace, in_focus=True, optical_brightness=1.0)
         )
         return s
@@ -337,10 +339,11 @@ def test_detection_snr_formula_and_edges():
 
 def test_sample_field_at_clamps_and_handles_none():
     field = np.arange(12.0).reshape(3, 4)  # value == 4*row + col at 1 um/px
-    assert sample_field_at(field, 1.0, 2.0, 1.0) == field[1, 2]
+    # optical-center frame: (0, 0) µm is the field center pixel ((h-1)/2, (w-1)/2).
+    assert sample_field_at(field, 0.0, 0.0, 1.0) == field[1, 2]
     # positions past the edge clamp to the nearest pixel rather than wrapping/erroring.
     assert sample_field_at(field, 99.0, 99.0, 1.0) == field[2, 3]
-    assert sample_field_at(field, -5.0, -5.0, 1.0) == field[0, 0]
+    assert sample_field_at(field, -99.0, -99.0, 1.0) == field[0, 0]
     # a non-unit pixel size scales the position; an absent field is the identity 1.0.
-    assert sample_field_at(field, 2.0, 2.0, 2.0) == field[1, 1]
+    assert sample_field_at(field, 2.0, 0.0, 2.0) == field[2, 2]
     assert sample_field_at(None, 0.0, 0.0, 1.0) == 1.0

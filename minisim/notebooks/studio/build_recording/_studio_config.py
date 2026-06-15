@@ -16,11 +16,12 @@ toggles so the config spans a bare cells-only movie up to the full forward chain
 
 :data:`STUDIO_PRESETS` seeds the whole config from a named, realistic starting
 point (a generic scope, or a Miniscope V4 imaging a particular brain region).
-
-.. note::
-   The Miniscope V4 optics/sensor numbers below are physically-reasonable
-   placeholders marked ``TODO(confirm)``; replace them with the real V4 datasheet
-   values. They are deliberately *not* presented as authoritative.
+The physical numbers behind those presets - the V4 optics/sensor and the
+standard-region anatomy - have their source of truth in :mod:`minisim.presets`;
+the studio reads them from there and adds only its own presentation choices (the
+vignette/glow look, neuropil/motion defaults). A parity test
+(``test_studio_presets_match_library_presets``) fails if the studio's numbers
+ever drift from the library presets.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from minisim import (
     Vasculature,
     VesselLayer,
     Vignette,
+    presets,
 )
 from minisim.spec import Output
 
@@ -387,30 +389,51 @@ def _generic() -> StudioConfig:
     return StudioConfig()
 
 
-# Shared Miniscope V4 optics/sensor (confirmed by D. Aharoni). The magnification
-# is set so the 608 px x 4.8 um sensor yields the V4's ~1.0 mm field of view
-# (FOV = n_px * pitch / mag); NA 0.3 GRIN objective. The V4 has moderate emission
-# vignetting and a center-weighted excitation glow, so both region presets enable
-# the vignette + illumination falloff + a gaussian leakage glow.
-_V4_NA = 0.3
-_V4_N_PX = 608
-_V4_PIXEL_PITCH_UM = 4.8
-_V4_MAGNIFICATION = 2.9  # -> FOV = 608 * 4.8 / 2.9 ~ 1.0 mm
-_V4_FWD_UM = 700.0
+def _stamp_scope(cfg: StudioConfig, scope: presets.Scope) -> None:
+    """Copy a :class:`minisim.presets.Scope`'s optics/sensor onto the flat ``cfg``."""
+    cfg.na = scope.optics.na
+    cfg.magnification = scope.optics.magnification
+    cfg.emission_nm = scope.optics.emission_nm
+    cfg.field_curvature_radius_um = scope.optics.field_curvature_radius_um
+    cfg.n_px_height = scope.image_sensor.n_px_height
+    cfg.n_px_width = scope.image_sensor.n_px_width
+    cfg.pixel_pitch_um = scope.image_sensor.pixel_pitch_um
+    cfg.front_working_distance_um = scope.front_working_distance_um
+    cfg.focal_depth_um = scope.focal_depth_in_tissue_um
 
 
-def _miniscope_v4_optics(cfg: StudioConfig) -> None:
-    """Stamp the shared, confirmed V4 optics/sensor + its vignette/glow onto ``cfg``."""
-    cfg.na = _V4_NA
-    cfg.magnification = _V4_MAGNIFICATION
-    cfg.emission_nm = 525.0
-    cfg.field_curvature_radius_um = 2500.0
-    cfg.n_px_height = _V4_N_PX
-    cfg.n_px_width = _V4_N_PX
-    cfg.pixel_pitch_um = _V4_PIXEL_PITCH_UM
-    cfg.front_working_distance_um = _V4_FWD_UM
-    cfg.focal_depth_um = "auto"  # track the placed layer, as the anatomy notebook does
-    # Moderate vignetting + center-illumination glow (V4 characteristic).
+def _stamp_region(cfg: StudioConfig, region: presets.Region) -> None:
+    """Copy a :class:`minisim.presets.Region`'s population/tissue/vessels onto ``cfg``."""
+    pop = region.population
+    cfg.density_per_mm3 = pop.density_per_mm3
+    cfg.soma_radius_um = pop.soma_radius_um
+    cfg.irregularity = pop.irregularity
+    cfg.morphology = pop.morphology
+    cfg.dendrite_length_um = pop.dendrite_length_um
+    cfg.dendrite_width_um = pop.dendrite_width_um
+    cfg.depth_lo_um, cfg.depth_hi_um = pop.depth_range_um
+    cfg.min_distance_um = pop.min_distance_um
+    cfg.scatter_mfp_excitation_um = region.tissue.scatter_mfp_excitation_um
+    cfg.scatter_mfp_emission_um = region.tissue.scatter_mfp_emission_um
+    cfg.scatter_blur_per_um = region.tissue.scatter_blur_per_um
+    cfg.vasculature_enabled = region.vasculature is not None
+    if region.vasculature is not None:
+        layer = region.vasculature.layers[0]
+        cfg.vessel_depth_um = layer.depth_um
+        cfg.vessel_n_roots = layer.n_roots
+        cfg.vessel_root_radius_um = layer.root_radius_um
+        cfg.vessel_opacity = layer.opacity
+        cfg.vessel_branch_prob = layer.branch_prob
+        cfg.vessel_tortuosity_deg = layer.tortuosity_deg
+
+
+def _v4_look(cfg: StudioConfig) -> None:
+    """Add the V4's characteristic vignette + center-illumination glow (studio look).
+
+    The V4 has moderate emission vignetting and a center-weighted excitation glow.
+    These are *presentation* choices the studio layers on top of the physical
+    :func:`minisim.presets.miniscope_v4` scope, not part of the scope's spec.
+    """
     cfg.illumination_enabled = True
     cfg.illumination_falloff = 0.7
     cfg.vignette_enabled = True
@@ -420,56 +443,23 @@ def _miniscope_v4_optics(cfg: StudioConfig) -> None:
     cfg.leakage_level = 0.08  # gentle center glow; higher buries cells under the bloom
 
 
-def _miniscope_v4_ca1() -> StudioConfig:
-    """Miniscope V4 imaging hippocampal CA1 through an implanted GRIN lens.
-
-    CA1 reads as a thin pyramidal band (the anatomy notebook's CA1 preset:
-    density 45000/mm3 over a ~140-160 um slab, soma radius 5 um, cytosolic GCaMP).
-    Vasculature is on but *less pronounced* than cortex - thinner, lower-contrast
-    vessels (D. Aharoni).
-    """
-    cfg = StudioConfig(
-        density_per_mm3=45000.0,
-        soma_radius_um=5.0,
-        morphology="cytosolic",
-        depth_lo_um=140.0,
-        depth_hi_um=160.0,
-        neuropil_amplitude=0.4,
-        vasculature_enabled=True,
-        vessel_depth_um=120.0,  # just above the 140-160 um pyramidal band
-        vessel_root_radius_um=14.0,  # thinner than cortex
-        vessel_opacity=0.65,  # less pronounced
-        vessel_n_roots=3,
-    )
-    _miniscope_v4_optics(cfg)
+def _miniscope_v4_region(region: presets.Region) -> StudioConfig:
+    """A studio config for the Miniscope V4 imaging a standard region preset."""
+    cfg = StudioConfig(neuropil_amplitude=0.4)
+    _stamp_scope(cfg, presets.miniscope_v4())
+    _stamp_region(cfg, region)
+    _v4_look(cfg)
     return cfg
+
+
+def _miniscope_v4_ca1() -> StudioConfig:
+    """Miniscope V4 imaging hippocampal CA1 (see :func:`minisim.presets.ca1`)."""
+    return _miniscope_v4_region(presets.ca1())
 
 
 def _miniscope_v4_cortex_l23() -> StudioConfig:
-    """Miniscope V4 imaging neocortex layer 2/3 (standard cytosolic GCaMP).
-
-    L2/3 excitatory cells expressing cytosolic GCaMP, spread through a deeper,
-    thicker cortical band than CA1, so depth-dependent scatter and defocus matter
-    more. Vasculature is *thick and on top of the cells* (D. Aharoni): a shallow
-    layer of large-caliber, high-contrast vessels above the imaged band.
-    """
-    cfg = StudioConfig(
-        density_per_mm3=8000.0,  # sparse labeled cells (anatomy notebook's cortex band)
-        soma_radius_um=6.0,
-        morphology="cytosolic",
-        depth_lo_um=100.0,
-        depth_hi_um=200.0,
-        neuropil_amplitude=0.4,
-        vasculature_enabled=True,
-        vessel_depth_um=80.0,  # sits above the 100-200 um cell band
-        vessel_root_radius_um=25.0,  # thick trunks
-        vessel_opacity=0.9,  # pronounced, high-contrast
-        vessel_n_roots=2,
-        vessel_branch_prob=0.15,
-        vessel_tortuosity_deg=5.0,
-    )
-    _miniscope_v4_optics(cfg)
-    return cfg
+    """Miniscope V4 imaging neocortex L2/3 (see :func:`minisim.presets.cortex_l23`)."""
+    return _miniscope_v4_region(presets.cortex_l23())
 
 
 # name -> factory (factories, not instances, so each press yields a fresh config).
