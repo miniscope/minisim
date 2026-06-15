@@ -98,11 +98,9 @@ def roi_trace(observed: np.ndarray, acq, y_um: float, x_um: float) -> np.ndarray
 
 
 # ---- SETUP: one base spec, swept over (focal plane x separation) ------------
-# This test is independent of brain region: the population is placed explicitly and
-# there are no vessels, so the only tissue property in play is the depth-dependent
-# scatter model - set it directly rather than pull in a CA1/cortex region preset.
-# We still take the realistic V4 optics + sensor from its scope preset (just cropped).
-# focal_depth and the cell pair are placeholders, overridden by the sweep below.
+# V4 optics, the cropped sensor, a default Tissue scatter model, and the standard
+# cell chain. focal_depth and the cell pair here are placeholders that the sweep
+# overrides per grid point.
 base = Spec(
     acquisition=Acquisition(
         optics=_V4.optics,

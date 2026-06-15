@@ -94,12 +94,9 @@ def roi_trace(observed, acq, y_um, x_um):     # brute-force extraction: mean of 
     return observed[:, mask].mean(axis=1)
 
 
-# This test is region-independent: cells are placed explicitly and there are no
-# vessels, so the only tissue property in play is the scatter model - set it
-# directly rather than pull in a CA1/cortex region preset. We still take the
-# realistic V4 optics + sensor from its scope preset (just cropped to 128 px so
-# the grid runs in seconds). focal_depth and the cell pair are placeholders, both
-# overridden by the sweep.
+# V4 optics with the sensor cropped to 128 px (so the grid runs in seconds), a
+# default Tissue scatter model, and the standard cell chain. focal_depth and the
+# cell pair here are placeholders that the sweep overrides per grid point.
 v4 = miniscope_v4()
 small = v4.image_sensor.model_copy(update={"n_px_height": 128, "n_px_width": 128})
 base = Spec(
