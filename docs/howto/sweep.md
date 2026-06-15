@@ -70,7 +70,7 @@ import numpy as np
 import pandas as pd
 
 from minisim import NeuronPopulation, Sensor, simulate, sweep
-from minisim.presets import build_spec, ca1, miniscope_v4
+from minisim.presets import build_spec, cortex_l23, miniscope_v4
 
 DEPTHS_UM, ROI_DIAM_UM = (100.0, 110.0), 20.0
 FOCAL_PLANES_UM = [85.0, 95.0, 105.0, 115.0, 125.0]
@@ -95,11 +95,13 @@ def roi_trace(observed, acq, y_um, x_um):     # brute-force extraction: mean of 
 
 # Keep every V4 optic (NA, magnification, pixel pitch, field curvature); crop the
 # sensor to 128 px so the grid runs in seconds. The focal plane and the cell pair
-# are placeholders here - the sweep overrides both per grid point.
+# are placeholders here - the sweep overrides both per grid point. cortex_l23()
+# (its 100-200 um band is where these cells sit) is used only for its tissue
+# scatter model: the population is overridden and vasculature is off.
 v4 = miniscope_v4()
 small = v4.image_sensor.model_copy(update={"n_px_height": 128, "n_px_width": 128})
 base = build_spec(
-    replace(v4, image_sensor=small), ca1(),
+    replace(v4, image_sensor=small), cortex_l23(),
     duration_s=60.0, fps=10.0, seed=0,       # 60 s so the true correlation settles to ~0
     populations=[two_cells(0.0)],
     sensor=Sensor(photons_per_unit=250.0), include_vasculature=False,

@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from minisim import NeuronPopulation, Sensor, simulate, sweep
-from minisim.presets import build_spec, ca1, miniscope_v4
+from minisim.presets import build_spec, cortex_l23, miniscope_v4
 
 # ---- the experiment knobs ---------------------------------------------------
 FOCAL_PLANES_UM = [85.0, 95.0, 105.0, 115.0, 125.0]
@@ -88,10 +88,12 @@ def roi_trace(observed: np.ndarray, acq, y_um: float, x_um: float) -> np.ndarray
 
 # ---- SETUP: one base spec, swept over (focal plane x separation) ------------
 # keep all the V4 optics, just crop the sensor; focal + populations are overridden
-# per grid point by the sweep below, so their values here are placeholders.
+# per grid point by the sweep below, so their values here are placeholders. The
+# region (cortex L2/3, whose 100-200 um band is where these cells sit) is used only
+# for its tissue scatter model: its population is overridden and vasculature is off.
 base = build_spec(
     replace(_V4, image_sensor=_SMALL_SENSOR),
-    ca1(),
+    cortex_l23(),
     duration_s=DURATION_S,
     fps=FPS,
     seed=0,
