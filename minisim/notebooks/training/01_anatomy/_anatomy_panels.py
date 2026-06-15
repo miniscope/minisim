@@ -712,11 +712,12 @@ class IlluminationPanel:
         self.ctr = falloff_center_px(self.hw, acq8, (0.0, 0.0))
         self.px = acq8.pixel_size_um
         self.qe, self.read = acq8.image_sensor.quantum_efficiency, acq8.image_sensor.read_noise_e
-        cen = ((self.hw[0] - 1) / 2.0 * self.px, (self.hw[1] - 1) / 2.0 * self.px)  # FOV center, um
         self.incells = [c for c in sc.cells if c.in_focus and c.trace is not None]
         self.rmax = math.hypot((self.hw[0] - 1) / 2.0, (self.hw[1] - 1) / 2.0) * self.px
         self.rprof = np.linspace(0.0, self.rmax, 200)
-        self.rad_cells = np.array([math.hypot(c.center_um[1] - cen[0], c.center_um[2] - cen[1])
+        # cells are in the optical-center frame (origin = optical axis = FOV center),
+        # so distance from center is just hypot(y, x)
+        self.rad_cells = np.array([math.hypot(c.center_um[1], c.center_um[2])
                                    for c in self.incells])
         self.fig = plt.figure(figsize=(11.0, 3.7))
         if hasattr(self.fig.canvas, "header_visible"):
@@ -804,8 +805,8 @@ class SensorPanel:
         self.glow = np.exp(-(radius_grid(self.hw, ((self.hw[0] - 1) / 2.0, (self.hw[1] - 1) / 2.0)) ** 2)
                            / (2.0 * sig_px ** 2))
         cells = [c for c in sc.cells if c.in_focus and c.trace is not None]
-        cen = ((self.hw[0] - 1) / 2.0 * self.px, (self.hw[1] - 1) / 2.0 * self.px)
-        self.rad = np.array([math.hypot(c.center_um[1] - cen[0], c.center_um[2] - cen[1]) for c in cells])
+        # optical-center frame: distance from FOV center is hypot(y, x)
+        self.rad = np.array([math.hypot(c.center_um[1], c.center_um[2]) for c in cells])
         self.fcell = np.array([sample_field_at(self.field, c.center_um[1], c.center_um[2], self.px)
                                for c in cells])
         self.bright = np.array([c.optical_brightness if c.optical_brightness is not None else 1.0
