@@ -472,13 +472,15 @@ class AnatomyPanel:
         rng = np.random.default_rng(0)
         n_expected = c.estimated_cell_count()
         n_dots = int(min(n_expected, 1500))  # capped for legibility/speed at high density
-        ax.scatter(rng.uniform(0, fov_w, n_dots), rng.uniform(lo, max(hi, lo + 0.1), n_dots),
+        ax.scatter(rng.uniform(-fov_w / 2, fov_w / 2, n_dots),
+                   rng.uniform(lo, max(hi, lo + 0.1), n_dots),
                    s=5, color="#2ca02c", alpha=0.45, edgecolors="none", label="cells")
 
         # focal surface: a field-curvature curve (shallower off-axis) or a flat plane.
-        xs = np.linspace(0, fov_w, 120)
+        # x is the optical-center frame, so the field radius is |x| (the axis is 0).
+        xs = np.linspace(-fov_w / 2, fov_w / 2, 120)
         optics = c.optics()
-        z_focal = resolved_focal - np.array([optics.focal_curvature_shift_um(x - fov_w / 2) for x in xs])
+        z_focal = resolved_focal - np.array([optics.focal_curvature_shift_um(x) for x in xs])
         flabel = "focal (curved)" if c.field_curvature_radius_um else "focal plane"
         ax.plot(xs, z_focal, color="#1f77b4", lw=1.6, label=flabel)
 
@@ -487,8 +489,8 @@ class AnatomyPanel:
             ax.axhline(c.vessel_depth_um, color="#8B0000", lw=1.4, ls="--", label="vessels")
 
         ax.axhline(0.0, color="0.4", lw=1.0)  # tissue surface
-        ax.text(fov_w * 0.99, 1.0, "tissue surface", ha="right", va="top", fontsize=6.5, color="0.4")
-        ax.set_xlim(0, fov_w)
+        ax.text(fov_w / 2 * 0.99, 1.0, "tissue surface", ha="right", va="top", fontsize=6.5, color="0.4")
+        ax.set_xlim(-fov_w / 2, fov_w / 2)
         ax.set_ylim(z_max, -0.04 * z_max)  # depth increases downward; surface near top
         ax.set_xlabel("position across FOV (um)", fontsize=8)
         ax.set_ylabel("depth z (um)", fontsize=8)

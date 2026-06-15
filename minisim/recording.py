@@ -103,6 +103,8 @@ class GroundTruth(BaseModel):
     S: NDArray[Shape["* unit, * frame"], float]
 
     # per-cell physical attributes -----------------------------------------
+    # (z, y, x) µm: z is depth below the surface; y, x are lateral in the
+    # optical-center frame (origin = optical axis / FOV center, +y down, +x right).
     centers_um: NDArray[Shape["* unit, 3"], float]
     # Per-cell brightness/expression gain (the clean input). NaN for a cell whose
     # ``cell_activity`` step has not run. SNR is deliberately absent: noise is a
@@ -184,9 +186,10 @@ class GroundTruth(BaseModel):
     def depth_um(self) -> np.ndarray:
         """Per-cell depth ``z`` (µm) - the first column of ``centers_um``.
 
-        Exposed as a derived view rather than stored, to avoid drift. Lateral
-        pixel coordinates are likewise ``centers_um[:, 1:] / pixel_size_um`` using
-        the owning ``Recording.spec.acquisition``.
+        Exposed as a derived view rather than stored, to avoid drift. The lateral
+        ``centers_um[:, 1:]`` are in the optical-center frame, so pixel coordinates
+        are ``acq.um_to_index(y, x, fov_shape)`` (origin = FOV center), using the
+        owning ``Recording.spec.acquisition``.
         """
         return self.centers_um[:, 0]
 
@@ -472,9 +475,10 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         # flickers in transiently, not a recoverable unit.
         if cell.footprint_planted.crop(margin_h, margin_w, fov_h, fov_w).is_empty:
             continue
+        # Optical-center frame: the origin is the optical axis for both the canvas
+        # and the (centered-crop) FOV, so a cell's coordinates need no margin
+        # adjustment - they are already FOV-relative, motion margin or not.
         z, y_um, x_um = cell.center_um
-        y_fov_um = y_um - margin_h * acq.pixel_size_um
-        x_fov_um = x_um - margin_w * acq.pixel_size_um
 
         trace = cell.trace if cell.trace is not None else np.zeros(n_frames)
         spike = cell.spikes if cell.spikes is not None else np.zeros(n_frames)
@@ -487,17 +491,15 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         traces.append(trace)
         spikes.append(spike)
         bleaches.append(cell.bleach)
-        centers.append((z, y_fov_um, x_fov_um))
+        centers.append((z, y_um, x_um))
         amplitudes.append(cell.amplitude if cell.amplitude is not None else float("nan"))
         in_focus.append(ifocus)
         # A vessel over the cell absorbs part of its light: dim the peak by the
         # transmission at the cell's position (detectability is a peak test) and
         # record the footprint-weighted occlusion as the scoreable confound axis.
-        vessel_t = sample_field_at(vasc_mask_fov, y_fov_um, x_fov_um, acq.pixel_size_um)
+        vessel_t = sample_field_at(vasc_mask_fov, y_um, x_um, acq.pixel_size_um)
         detectable.append(
-            _is_detectable(
-                cell, ifocus, y_fov_um, x_fov_um, photon_field, sensor_spec, acq, vessel_t
-            )
+            _is_detectable(cell, ifocus, y_um, x_um, photon_field, sensor_spec, acq, vessel_t)
         )
         overlaps.append(_vessel_overlap(cell.observed_footprint(), vasc_mask_canvas))
 
@@ -607,19 +609,20 @@ def sample_field_at(
 ) -> float:
     """Value of a static FOV field at a µm position, with edge-clamped indexing.
 
-    Converts a ``(y_um, x_um)`` FOV-frame position to the nearest pixel (rounded
-    and clipped to the field bounds) and returns ``field`` there. ``field`` is a
-    sensor-FOV-sized array such as the combined illumination × vignette photon
-    budget; an absent field (``None``) returns ``1.0``, the multiplicative
-    identity, so callers can treat "no field" and "uniform field" alike. The one
-    sampler shared by detectability (:func:`_is_detectable`) and the teaching
-    notebook's per-cell SNR panels, so both read the field the same way.
+    Converts an optical-center ``(y_um, x_um)`` position (origin = FOV center,
+    ``+y`` down, ``+x`` right) to the nearest pixel (rounded and clipped to the
+    field bounds) and returns ``field`` there. ``field`` is a sensor-FOV-sized
+    array such as the combined illumination × vignette photon budget; an absent
+    field (``None``) returns ``1.0``, the multiplicative identity, so callers can
+    treat "no field" and "uniform field" alike. The one sampler shared by
+    detectability (:func:`_is_detectable`) and the teaching notebook's per-cell SNR
+    panels, so both read the field the same way.
     """
     if field is None:
         return 1.0
     h, w = field.shape
-    iy = int(np.clip(round(y_um / pixel_size_um), 0, h - 1))
-    ix = int(np.clip(round(x_um / pixel_size_um), 0, w - 1))
+    iy = int(np.clip(round((h - 1) / 2.0 + y_um / pixel_size_um), 0, h - 1))
+    ix = int(np.clip(round((w - 1) / 2.0 + x_um / pixel_size_um), 0, w - 1))
     return float(field[iy, ix])
 
 
@@ -648,8 +651,8 @@ def detection_snr(peak_dF, baseline, gain, read_e):
 def _is_detectable(
     cell: Cell,
     in_focus: bool,
-    y_fov_um: float,
-    x_fov_um: float,
+    y_um: float,
+    x_um: float,
     photon_field: np.ndarray | None,
     sensor_spec,
     acq: Acquisition,
@@ -678,7 +681,7 @@ def _is_detectable(
     if not in_focus:
         return False
     brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
-    illum = sample_field_at(photon_field, y_fov_um, x_fov_um, acq.pixel_size_um)
+    illum = sample_field_at(photon_field, y_um, x_um, acq.pixel_size_um)
     gain = (
         brightness * illum * vessel_transmission
         * sensor_spec.photons_per_unit * acq.image_sensor.quantum_efficiency

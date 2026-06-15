@@ -345,7 +345,10 @@ def optics_reveal_figure(gt, *, px_um, dof_um, morph_label=""):
     a_planted, a_observed = gt.A_planted, gt.A_observed
     peak_ratio = float(a_observed.max() / a_planted.max())
     i_cell = int(np.argmax(a_observed.reshape(a_observed.shape[0], -1).max(axis=1)))
-    cy, cx = gt.centers_um[i_cell, 1:] / px_um
+    # optical-center frame -> FOV pixel: the axis (0, 0) is the footprint-array center.
+    h_fov, w_fov = a_observed.shape[1:]
+    cy = (h_fov - 1) / 2.0 + gt.centers_um[i_cell, 1] / px_um
+    cx = (w_fov - 1) / 2.0 + gt.centers_um[i_cell, 2] / px_um
     focal_um = float(gt.focal_depth_um)
     fig = plt.figure(figsize=(10, 7.6))
     if hasattr(fig.canvas, "header_visible"):

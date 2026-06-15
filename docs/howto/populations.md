@@ -44,18 +44,21 @@ the physical case.
 ## Place cells at exact positions
 
 A population can also be placed at explicit centers instead of being
-density-sampled: set `positions_um` to a list of `(z, y, x)` µm tuples - depth,
-row, column, in the tissue frame (origin = canvas top-left, the same coordinates
-the ground truth reports back). Note the **depth-first** order, matching
-`Cell.center_um` rather than `x, y, z`.
+density-sampled: set `positions_um` to a list of `(z, y, x)` µm tuples. Note the
+**depth-first** order, matching `Cell.center_um` rather than `x, y, z`. `z` is
+depth below the tissue surface (0 = surface); `y, x` are lateral in the
+**optical-center frame** - the optical axis is `(0, 0)`, `+y` down and `+x` right
+(image convention). So `(z, 0, 0)` is dead-center in the FOV regardless of the
+motion margin, and these are the same coordinates the ground truth
+(`GroundTruth.centers_um`) reports back.
 
 ```python
 PlaceNeurons(
     morphology="cytosolic",
     soma_radius_um=8.0,
     positions_um=[
-        (120.0, 128.0, 128.0),   # (z=depth, y=row, x=col)
-        (120.0, 60.0, 60.0),
+        (120.0, 0.0, 0.0),       # (z=depth, y, x) - on the optical axis (FOV center)
+        (120.0, -60.0, 80.0),    # 60 µm up, 80 µm right of center
     ],
 )
 ```

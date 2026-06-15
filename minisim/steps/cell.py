@@ -350,8 +350,8 @@ def _sample_centers(
     def draw() -> tuple[float, float, float]:
         return (
             rng.uniform(z_lo, z_hi),
-            rng.uniform(0.0, fov_h_um),
-            rng.uniform(0.0, fov_w_um),
+            rng.uniform(-fov_h_um / 2.0, fov_h_um / 2.0),
+            rng.uniform(-fov_w_um / 2.0, fov_w_um / 2.0),
         )
 
     if min_distance_um <= 0:
@@ -414,9 +414,9 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
         # Fill whatever canvas the scene movie defines, not the bare sensor: a
         # motion margin enlarges the canvas beyond the sensor FOV so
         # that real, simulated tissue moves into view at the edges. At margin 0
-        # the canvas equals the sensor FOV. Cell positions are in canvas/tissue
-        # coordinates (origin = canvas top-left); the FOV crop offset is applied
-        # at finalize.
+        # the canvas equals the sensor FOV. Cell positions are in the
+        # optical-center frame (origin = optical axis, +y down, +x right), which is
+        # invariant to the motion margin; um_to_index maps them onto the canvas grid.
         shape = scene.canvas_shape  # (height, width) of the canvas, no movie alloc
         fov_h_um = shape[0] * acq.pixel_size_um
         fov_w_um = shape[1] * acq.pixel_size_um
@@ -440,7 +440,7 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
             footprint = Footprint.from_dense(
                 neuron_footprint(
                     shape,
-                    (acq.um_to_px(y), acq.um_to_px(x)),
+                    acq.um_to_index(y, x, shape),
                     acq.um_to_px(pop.soma_radius_um),
                     pop.irregularity,
                     rng,
@@ -734,12 +734,10 @@ def resolve_focal_plane(
     cells: list[Cell],
     focal_depth_in_tissue_um: float | str,
     optics: Optics | None = None,
-    axis_yx: tuple[float, float] | None = None,
     *,
     acq: Acquisition | None = None,
     sensor_spec=None,
     photon_field: np.ndarray | None = None,
-    fov_offset_um: tuple[float, float] = (0.0, 0.0),
 ) -> float:
     """Resolve ``Acquisition.focal_depth_in_tissue_um`` to a concrete focal depth, µm.
 
@@ -751,19 +749,21 @@ def resolve_focal_plane(
     Each cell at field radius ``r`` focuses at ``focal_eff = focal − shift(r)``
     (off-axis cells focus shallower under field curvature), so defocus is
     ``σ = NA·|z − focal_eff| = NA·|e − focal|`` in the cell's **effective depth**
-    ``e = z + shift(r)``. For a candidate focal the per-cell detection SNR folds in
-    the defocus peak-drop, scatter attenuation, the illumination × vignette photon
-    budget at the cell's lateral position, and the shot + read noise floor (the
-    same :func:`~minisim.recording.detection_snr` ``finalize`` uses). The scan
-    picks the focal with the most detectable cells, ties broken by total in-focus
-    signal. Because scatter dims deep cells and the falloff fields dim edge cells,
-    this lands shallower / re-centered versus a naive blur optimum - and shifts
-    once you account for vignetting, which is the point.
+    ``e = z + shift(r)``. The radius is ``r = hypot(y, x)`` straight off the cell's
+    optical-center coordinates (the optical axis is the frame origin). For a
+    candidate focal the per-cell detection SNR folds in the defocus peak-drop,
+    scatter attenuation, the illumination × vignette photon budget at the cell's
+    lateral position, and the shot + read noise floor (the same
+    :func:`~minisim.recording.detection_snr` ``finalize`` uses). The scan picks the
+    focal with the most detectable cells, ties broken by total in-focus signal.
+    Because scatter dims deep cells and the falloff fields dim edge cells, this
+    lands shallower / re-centered versus a naive blur optimum - and shifts once you
+    account for vignetting, which is the point.
 
     The yield scan needs both ``acq`` (for the optics/sensor physics) and a
     ``sensor_spec`` (the noise floor that defines "recoverable"); ``photon_field``
-    is the optional pre-built illumination × vignette product (FOV-sized, mapped
-    via ``fov_offset_um`` from the canvas to the sensor FOV). **Without a sensor**
+    is the optional pre-built illumination × vignette product (FOV-sized, sampled
+    at each cell's optical-center position). **Without a sensor**
     there is no floor, so ``"auto"`` falls back to the geometric optimum: the focal
     that minimizes total defocus ``Σ NA·|e − focal|`` is the **median effective
     depth** (median ``z`` when no curvature info is supplied). An empty scene falls
@@ -775,13 +775,11 @@ def resolve_focal_plane(
     if not cells:
         return 0.0
     depths = np.array([cell.center_um[0] for cell in cells], dtype=float)
-    if optics is not None and axis_yx is not None and optics.field_curvature_radius_um is not None:
-        axis_y, axis_x = axis_yx
+    if optics is not None and optics.field_curvature_radius_um is not None:
+        # Field radius is the distance from the optical axis = the frame origin.
         shifts = np.array(
             [
-                optics.focal_curvature_shift_um(
-                    math.hypot(cell.center_um[1] - axis_y, cell.center_um[2] - axis_x)
-                )
+                optics.focal_curvature_shift_um(math.hypot(cell.center_um[1], cell.center_um[2]))
                 for cell in cells
             ],
             dtype=float,
@@ -797,9 +795,7 @@ def resolve_focal_plane(
     scored = [i for i, cell in enumerate(cells) if cell.trace is not None]
     if not scored:
         return float(np.median(effective))  # nothing to detect -> geometric optimum
-    return _max_yield_focus(
-        cells, scored, effective, acq, sensor_spec, photon_field, fov_offset_um
-    )
+    return _max_yield_focus(cells, scored, effective, acq, sensor_spec, photon_field)
 
 
 def _max_yield_focus(
@@ -809,7 +805,6 @@ def _max_yield_focus(
     acq: Acquisition,
     sensor_spec,
     photon_field: np.ndarray | None,
-    fov_offset_um: tuple[float, float],
 ) -> float:
     """Scan candidate focal planes; return the one maximizing detectable-cell yield.
 
@@ -837,7 +832,7 @@ def _max_yield_focus(
         [tissue.scatter_sigma_um(zi) ** 2 for zi in z]
     )
     atten = np.array([tissue.attenuation(zi) for zi in z])
-    illum = _photon_budget_at(cells, scored, photon_field, acq, fov_offset_um)
+    illum = _photon_budget_at(cells, scored, photon_field, acq)
     qe = acq.image_sensor.quantum_efficiency
     read_e = acq.image_sensor.read_noise_e
     gain_const = atten * optics.collection_efficiency * illum * sensor_spec.photons_per_unit * qe
@@ -871,26 +866,23 @@ def _photon_budget_at(
     scored: list[int],
     photon_field: np.ndarray | None,
     acq: Acquisition,
-    fov_offset_um: tuple[float, float],
 ) -> np.ndarray:
     """Illumination × vignette factor at each scored cell's sensor-FOV position.
 
-    All ones when no field was supplied. The cells live in canvas coordinates; the
-    field is the sensor FOV, so subtract the motion-margin ``fov_offset_um`` before
-    indexing - the same canvas → FOV mapping ``finalize`` applies.
+    All ones when no field was supplied. The field is the sensor FOV; cells live in
+    the optical-center frame whose origin is the FOV center, so each cell maps to a
+    FOV pixel via :meth:`~minisim.Acquisition.um_to_index` (no margin bookkeeping).
     """
     if photon_field is None:
         return np.ones(len(scored))
     h, w = photon_field.shape
-    px = acq.pixel_size_um
-    iy = np.clip(
-        np.round((np.array([cells[i].center_um[1] for i in scored]) - fov_offset_um[0]) / px),
-        0, h - 1,
-    ).astype(int)
-    ix = np.clip(
-        np.round((np.array([cells[i].center_um[2] for i in scored]) - fov_offset_um[1]) / px),
-        0, w - 1,
-    ).astype(int)
+    rows, cols = [], []
+    for i in scored:
+        r, c = acq.um_to_index(cells[i].center_um[1], cells[i].center_um[2], (h, w))
+        rows.append(r)
+        cols.append(c)
+    iy = np.clip(np.round(rows), 0, h - 1).astype(int)
+    ix = np.clip(np.round(cols), 0, w - 1).astype(int)
     return photon_field[iy, ix]
 
 
@@ -924,7 +916,7 @@ class CellOpticsStep(Step["CellOptics"]):
     total defocus, i.e. the median curvature-corrected effective depth; see
     :func:`resolve_focal_plane`). When ``Optics.field_curvature_radius_um`` is set,
     each cell's effective focal depth is that plane minus the field-curvature
-    sagitta at its distance from the optical axis (canvas center), so off-axis cells
+    sagitta at its distance from the optical axis (the frame origin), so off-axis cells
     focus shallower and blur out toward the edges - the sharp-center/soft-edge look
     of an un-flattened miniscope. Cells without a planted footprint are skipped.
     """
@@ -948,30 +940,20 @@ class CellOpticsStep(Step["CellOptics"]):
 
     def __call__(self, scene: Scene) -> None:
         acq = self.acq
-        # Optical axis = canvas center (the sensor FOV is a centered crop of the
-        # canvas). Off-axis cells focus shallower by the field-curvature sagitta,
-        # so each cell sees its own focal depth (no footprint warping: the
-        # curvature over one soma is negligible vs the ~mm curvature radius).
-        h, w = scene.canvas_shape  # canvas dims without forcing a movie buffer
-        axis_y = h * acq.pixel_size_um / 2.0
-        axis_x = w * acq.pixel_size_um / 2.0
-        # "auto" focus maximizes recoverable yield: pass the optics + axis (so it
-        # folds in field curvature) and the sensor/photon-field context (so it
-        # weights cells by the brightness their image actually gets). The canvas →
-        # FOV offset lets the field be sampled at each cell's sensor position.
-        fov_off = (
-            (h - acq.image_sensor.n_px_height) / 2.0 * acq.pixel_size_um,
-            (w - acq.image_sensor.n_px_width) / 2.0 * acq.pixel_size_um,
-        )
+        # Optical axis = the optical-center frame origin (0, 0), so a cell's field
+        # radius is just hypot(y, x). Off-axis cells focus shallower by the
+        # field-curvature sagitta, so each cell sees its own focal depth (no
+        # footprint warping: the curvature over one soma is negligible vs the ~mm
+        # curvature radius). "auto" focus maximizes recoverable yield: pass the
+        # optics (so it folds in field curvature) and the sensor/photon-field
+        # context (so it weights cells by the brightness their image actually gets).
         focal = resolve_focal_plane(
             scene.cells,
             acq.focal_depth_in_tissue_um,
             acq.optics,
-            (axis_y, axis_x),
             acq=acq,
             sensor_spec=self.sensor_spec,
             photon_field=self.photon_field,
-            fov_offset_um=fov_off,
         )
         scene.truth.focal_depth_um = focal  # the resolved "auto" plane, made observable
         dof = acq.optics.resolved_depth_of_field_um
@@ -979,7 +961,7 @@ class CellOpticsStep(Step["CellOptics"]):
             if cell.footprint_planted is None:
                 continue
             z = cell.center_um[0]
-            r = math.hypot(cell.center_um[1] - axis_y, cell.center_um[2] - axis_x)
+            r = math.hypot(cell.center_um[1], cell.center_um[2])
             focal_eff = focal - acq.optics.focal_curvature_shift_um(r)
             sigma_px, brightness = acq.cell_optics(z, focal_eff)
             # Keep only the two scalars that define the observed footprint; render
