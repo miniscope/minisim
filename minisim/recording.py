@@ -42,6 +42,14 @@ from minisim.spec import Acquisition, Spec
 # cell to count as detectable. A provisional value: a future threshold
 # calibration revisits it against observed metric distributions. Kept here, named,
 # rather than buried as a literal so that calibration is a one-line change.
+#
+# STABILITY CONTRACT. This single constant sets the `detectable` flag, the
+# `restrict_to_detectable` recall denominator in `minisim.testing.score`, and the
+# "auto" focus/exposure yield objective - so its value is part of what a consumer's
+# `assert report.recall > X` depends on. It is provisional and *not yet calibrated*
+# against a real pipeline, so it may change before 1.0. Treat any change as a
+# minor-version bump with a changelog entry, because it moves recall denominators
+# under downstream tests (see the reproducibility & stability contract in the docs).
 DETECT_SNR_THRESHOLD = 3.0
 
 # On-disk layout for save()/load() (zarr group + sibling spec.json). The format

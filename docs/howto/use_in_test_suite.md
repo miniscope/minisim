@@ -42,11 +42,27 @@ report = score(Estimate(A=A_est, C=C_est, S=S_est), rec.ground_truth)
 assert report.recall > 0.8, report.summary()
 ```
 
-`A` is the only required field of `Estimate`; leave `C` / `S` / `shifts` out and
-the matching scores come back as `nan` / `None`. The `Report` carries `recall`,
-`precision`, `mean_iou`, `trace_corr` (median Pearson r), `spike_precision`,
-`spike_recall`, and `shift_rmse`. Arrays may be `numpy` or `xarray` (minian's CNMF
-returns `xr.DataArray`); both are accepted.
+The footprints are the only required field of `Estimate`; leave the traces /
+spikes / shifts out and the matching scores come back as `nan` / `None`. Each
+field takes either the terse CNMF symbol your pipeline already emits or a
+spelled-out alias - `Estimate(A=A, C=C, S=S)` and
+`Estimate(footprints=A, traces=C, spikes=S)` are the same thing. Arrays may be
+`numpy` or `xarray` (minian's CNMF returns `xr.DataArray`); both are accepted.
+
+The `Report` carries `recall`, `precision`, `f1`, `mean_iou`, `trace_corr` (median
+Pearson r), `spike_precision`, `spike_recall`, and `shift_rmse`.
+
+```{important}
+**`recall` is over the *detectable* cells, not every planted cell.** By default
+`score` drops cells too dim to clear the detection floor before computing the
+denominator, so `recall = 1.0` can mean "recovered every detectable cell" while
+some planted cells were undetectable. The `Report` makes this explicit:
+`n_requested` (cells planted), `n_detectable` (cells above the floor), and
+`n_true` (the denominator `recall` actually used). Read `report.summary()`, or
+pass `restrict_to_detectable=False` to score against every planted cell instead.
+The detection threshold itself is provisional and may change before 1.0 - see the
+{doc}`reproducibility & stability contract <../reference/stability>`.
+```
 
 When you need more than the common case, the underlying primitives
 ({py:func}`~minisim.hungarian_match`, {py:func}`~minisim.trace_pearson`,

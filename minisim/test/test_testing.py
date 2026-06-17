@@ -125,6 +125,69 @@ def test_score_restrict_to_detectable_changes_denominator():
     assert restricted.n_true <= full.n_true
 
 
+def test_report_surfaces_the_recall_denominator():
+    # The point of n_requested / n_detectable: a high recall over a shrunken
+    # denominator must be legible, not silent. Use a deep population so some cells
+    # fall below the detection floor (n_detectable < n_requested).
+    rec = make_recording(n_cells=6, duration_s=1.0, depth_um=120.0, seed=3)
+    est, _ = _perfect_estimate(rec)
+    report = score(est, rec.ground_truth, restrict_to_detectable=True)
+    assert report.n_requested == rec.ground_truth.n_units == 6
+    assert report.n_detectable == int(rec.ground_truth.detectable.sum())
+    # Under the detectable filter, the recall denominator IS the detectable count.
+    assert report.n_true == report.n_detectable
+    # n_requested is invariant to the filter; the denominator is not.
+    full = score(est, rec.ground_truth, restrict_to_detectable=False)
+    assert full.n_requested == report.n_requested == 6
+    assert full.n_true == 6
+    assert report.summary().count("planted") == 1  # the population line is present
+
+
+def test_report_f1_is_harmonic_mean():
+    rec = make_recording(n_cells=5, duration_s=1.0, seed=0)
+    est, _ = _perfect_estimate(rec)
+    report = score(est, rec.ground_truth)
+    expected = 2.0 * report.precision * report.recall / (report.precision + report.recall)
+    assert report.f1 == pytest.approx(expected)
+
+
+def test_report_f1_is_zero_when_no_matches():
+    rec = make_recording(n_cells=4, duration_s=1.0)
+    h, w = rec.ground_truth.fov_shape
+    report = score(Estimate(A=np.zeros((0, h, w))), rec.ground_truth)
+    assert report.recall == 0.0
+    assert report.precision == 0.0
+    assert report.f1 == 0.0  # harmonic mean is defined as 0, never a 0/0 nan
+
+
+# --- Estimate: the two interchangeable field spellings ---------------------
+
+
+def test_estimate_accepts_both_field_spellings():
+    rec = make_recording(n_cells=4, duration_s=1.0, seed=0)
+    det = rec.ground_truth.detectable_subset()
+    terse = Estimate(A=det.A_observed, C=det.C, S=det.S)
+    spelled = Estimate(footprints=det.A_observed, traces=det.C, spikes=det.S)
+    # Both spellings populate the same canonical fields and read back either way.
+    np.testing.assert_array_equal(terse.A, spelled.footprints)
+    np.testing.assert_array_equal(terse.footprints, spelled.A)
+    np.testing.assert_array_equal(terse.traces, spelled.C)
+    np.testing.assert_array_equal(terse.spikes, spelled.S)
+    # The two estimates score identically.
+    assert score(terse, rec.ground_truth).recall == score(spelled, rec.ground_truth).recall
+
+
+def test_estimate_requires_footprints():
+    with pytest.raises(TypeError, match="footprints"):
+        Estimate()
+
+
+def test_estimate_rejects_both_footprint_spellings_at_once():
+    a = np.zeros((1, 8, 8))
+    with pytest.raises(TypeError, match="not both"):
+        Estimate(A=a, footprints=a)
+
+
 def test_score_motion_rmse_perfect_correction_is_zero():
     rec = make_recording(n_cells=4, duration_s=1.0, motion=True, seed=1)
     det = rec.ground_truth.detectable_subset()
