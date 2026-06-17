@@ -56,10 +56,29 @@ The stages mirror the forward chain described in {doc}`../concepts`:
 8. Stray-light leakage.
 9. Sensor digitization to raw counts, where the auto-focus yield is realized.
 
+## Scoring a recovery (notebook)
+
+A second shipped notebook, **`03_metrics`**, turns the simulator around: given a
+recording's ground truth and what an analysis pipeline recovered, how do you measure
+recovery *honestly*? It is a static, step-by-step walkthrough (no widgets) that builds
+each recovery metric on a controlled perturbation of the truth - footprint matching
+and why pixel weights matter, why a global shift after motion correction is not a
+miss, trace correlation, why the deconvolved `S` is **not** a spike train (score it
+without binarizing and up to an unknown scale), and motion error - then scores a mock
+recovery end to end with `minisim.testing.score`. Copy it the same way:
+
+```bash
+minisim-notebooks copy 03_metrics
+```
+
+It pairs with the {doc}`benchmarking guide <../howto/benchmark>` (the same recipe
+outside a notebook) and needs only `matplotlib`.
+
 :::{admonition} Coming soon
 :class: seealso
 
-A second notebook, the **demixing capstone**, shows why naive per-ROI traces are
+A further notebook, the **demixing capstone**, shows why naive per-ROI traces are
 contaminated by neighbor bleed and neuropil, and how demixing recovers the true
-signals, quantified against the ground-truth `A`/`C`.
+signals, quantified against the ground-truth `A`/`C` with the metrics from
+`03_metrics`.
 :::

@@ -11,8 +11,8 @@ collapses each into one:
 * :func:`make_recording` - a small, fast, deterministic :class:`~minisim.Recording`
   for CI, in one call. The same ``seed`` always yields the same recording.
 * :func:`score` - run the common recovery scorecard (cell recall/precision, trace
-  correlation, spike precision/recall, optional motion error) in one call,
-  returning a :class:`Report`.
+  correlation, deconvolved-activity correlation / variance explained, optional
+  motion error) in one call, returning a :class:`Report`.
 
 Both are thin wrappers over the public API, built on the a-la-carte metrics
 (:func:`~minisim.hungarian_match`, :func:`~minisim.trace_pearson`, ...), which stay
@@ -33,9 +33,10 @@ from typing import Literal
 import numpy as np
 
 from minisim.metrics import (
+    activity_similarity,
+    global_shift_from_trajectories,
     hungarian_match,
     shift_rmse,
-    spike_precision_recall,
     trace_pearson,
 )
 from minisim.recording import GroundTruth, Recording
@@ -226,7 +227,7 @@ _UNSET: object = object()  # distinguishes "not passed" from an explicit None
 class Estimate:
     """What a pipeline recovered, as the input to :func:`score`.
 
-    The footprints are the only required field. Traces / spikes / shifts are
+    The footprints are the only required field. Traces / activity / shifts are
     optional; when omitted, the matching score in the :class:`Report` is ``nan``
     (or ``None`` for motion). Arrays may be ``numpy`` or ``xarray`` (minian's CNMF
     returns ``xr.DataArray``); both are accepted.
@@ -236,15 +237,20 @@ class Estimate:
     that dialect. **Both work as keyword arguments**, and both are readable
     attributes::
 
-        Estimate(A=A, C=C, S=S)                          # CNMF names
-        Estimate(footprints=A, traces=C, spikes=S)       # spelled out
+        Estimate(A=A, C=C, S=S)                            # CNMF names
+        Estimate(footprints=A, traces=C, activity=S)       # spelled out
 
     * ``A`` / ``footprints`` - spatial footprints, ``(n_units, height, width)``.
     * ``C`` / ``traces`` - calcium traces, ``(n_units, frame)``.
-    * ``S`` / ``spikes`` - deconvolved spikes, ``(n_units, frame)``.
+    * ``S`` / ``activity`` - the deconvolved estimate, ``(n_units, frame)``. **Not a
+      spike train**: it is a non-negative estimate of neural activity rate, scaled by
+      an unknown factor mapping activity to calcium-kernel amplitude. :func:`score`
+      compares it without binarizing and up to that unknown scale (see
+      :func:`~minisim.activity_similarity`).
     * ``shifts`` - estimated per-frame ``(dy, dx)`` motion, ``(frame, 2)``. A motion
       *correction* trajectory (the negation of the applied shift); :func:`score`
-      negates it to compare against ``GroundTruth.shifts``.
+      negates it to compare against ``GroundTruth.shifts`` and to recover the global
+      footprint offset.
 
     A frozen dataclass (not a ``NamedTuple``) on purpose: keyword construction with
     no positional contract, so a future field can be added without breaking callers
@@ -266,7 +272,7 @@ class Estimate:
         *,
         footprints: object = _UNSET,
         traces: object | None = None,
-        spikes: object | None = None,
+        activity: object | None = None,
     ) -> None:
         a = footprints if footprints is not _UNSET else A
         if a is _UNSET:
@@ -278,7 +284,7 @@ class Estimate:
         # Frozen dataclass: bypass the immutability guard to set the canonical fields.
         object.__setattr__(self, "A", a)
         object.__setattr__(self, "C", traces if C is None else C)
-        object.__setattr__(self, "S", spikes if S is None else S)
+        object.__setattr__(self, "S", activity if S is None else S)
         object.__setattr__(self, "shifts", shifts)
 
     @property
@@ -292,8 +298,8 @@ class Estimate:
         return self.C
 
     @property
-    def spikes(self) -> object | None:
-        """Spelled-out alias for :attr:`S` (deconvolved spikes)."""
+    def activity(self) -> object | None:
+        """Spelled-out alias for :attr:`S` (the deconvolved activity estimate)."""
         return self.S
 
 
@@ -316,31 +322,38 @@ class Report:
 
     n_true: int  # ground-truth cells scored against = the recall denominator
     n_est: int  # estimated cells supplied
-    n_matched: int  # matched pairs clearing the IoU threshold (true positives)
+    n_matched: int  # matched pairs clearing the similarity threshold (true positives)
     recall: float  # n_matched / n_true
     precision: float  # n_matched / n_est
     f1: float  # harmonic mean of precision and recall (0 when both are 0)
-    mean_iou: float  # mean spatial overlap over matched pairs
+    mean_overlap: float  # mean footprint similarity over matched pairs (the match metric)
     trace_corr: float  # median Pearson r of matched traces (nan if no C / no match)
-    spike_precision: float  # pooled spike precision (nan if no S)
-    spike_recall: float  # pooled spike recall (nan if no S)
-    shift_rmse: float | None  # motion RMSE in px (None if no motion truth/estimate)
+    activity_corr: float  # median Pearson r of matched activity (nan if no S / no match)
+    activity_variance_explained: float  # median PVE of true activity by scaled estimate
+    activity_scale: float  # median recovered amplitude factor alpha (the unknown gain)
+    shift_rmse: float | None  # motion RMSE in px, offset-aligned (None if no motion)
     n_requested: int  # total ground-truth cells planted (the full population)
     n_detectable: int  # cells clearing the detection floor (the detectable subset)
+    match_metric: str = "iou"  # footprint similarity used for matching
+    footprint_shift: tuple[int, int] = (0, 0)  # global (dy, dx) applied to the estimate
 
     def summary(self) -> str:
         """A compact one-line-per-metric string, handy for a test failure message."""
         lines = [
             f"cells: recall={self.recall:.2f} precision={self.precision:.2f} "
             f"f1={self.f1:.2f} (matched {self.n_matched}/{self.n_true}, "
-            f"mean IoU {self.mean_iou:.2f})",
+            f"mean {self.match_metric} {self.mean_overlap:.2f})",
             f"population: {self.n_detectable} detectable of {self.n_requested} "
             f"planted (recall denominator = {self.n_true})",
             f"traces: median r={self.trace_corr:.2f}",
-            f"spikes: precision={self.spike_precision:.2f} recall={self.spike_recall:.2f}",
+            f"activity: median r={self.activity_corr:.2f} "
+            f"variance explained={self.activity_variance_explained:.2f} "
+            f"(scale={self.activity_scale:.2g})",
         ]
+        if self.footprint_shift != (0, 0):
+            lines.append(f"footprint shift applied: {self.footprint_shift} px (dy, dx)")
         if self.shift_rmse is not None:
-            lines.append(f"motion: RMSE={self.shift_rmse:.2f} px")
+            lines.append(f"motion: RMSE={self.shift_rmse:.2f} px (offset-aligned)")
         return "\n".join(lines)
 
 
@@ -348,9 +361,10 @@ def score(
     estimate: Estimate,
     ground_truth: GroundTruth,
     *,
-    iou_threshold: float = 0.5,
-    tol_frames: int = 2,
+    match_metric: str = "iou",
+    match_threshold: float = 0.5,
     restrict_to_detectable: bool = True,
+    footprint_shift: tuple[float, float] | str | None = "auto",
 ) -> Report:
     """Score a pipeline's :class:`Estimate` against the ground truth, in one call.
 
@@ -366,9 +380,15 @@ def score(
       ``n_detectable`` alongside ``n_true`` (the denominator used), so a high
       ``recall`` over a shrunken denominator can never be mistaken for "recovered
       everything";
+    * **absorbs a global footprint offset** before matching, so a uniform shift from
+      the pipeline's motion-correction frame is not scored as a miss (see
+      ``footprint_shift``);
     * reduces per-pair trace correlations with a nan-safe median;
-    * treats an estimated motion trajectory as a *correction* (negated) when
-      comparing to ``GroundTruth.shifts``.
+    * scores the deconvolved activity without binarizing and up to an unknown scale
+      (:func:`~minisim.activity_similarity`), reducing each quantity with a nan-safe
+      median;
+    * treats an estimated motion trajectory as a *correction* (negated) and aligns
+      away a constant origin offset when comparing to ``GroundTruth.shifts``.
 
     Parameters
     ----------
@@ -376,14 +396,23 @@ def score(
         The pipeline output. Only :attr:`Estimate.A` is required.
     ground_truth
         The recording's ``ground_truth``.
-    iou_threshold
-        Minimum IoU for a matched pair to count as a true positive.
-    tol_frames
-        Spike-timing tolerance, frames (see
-        :func:`~minisim.spike_precision_recall`).
+    match_metric
+        Footprint similarity for matching (see :data:`~minisim.metrics.SIMILARITY_METRICS`):
+        ``"iou"`` (binary, default), ``"cosine"``, or ``"weighted_jaccard"`` (the
+        weighted metrics let pixel weights, not just lit pixels, drive the match).
+    match_threshold
+        Minimum similarity for a matched pair to count as a true positive.
     restrict_to_detectable
         Score against :meth:`~minisim.GroundTruth.detectable_subset` (default).
         Set ``False`` to score against every planted cell, detectable or not.
+    footprint_shift
+        How to handle a global translational offset between the estimated
+        (motion-corrected) footprints and the true ones. ``"auto"`` (default) reads
+        the offset off the motion trajectories when both ``estimate.shifts`` and
+        ``ground_truth.shifts`` are present (exact), and otherwise estimates it by
+        aligning the footprint centroids. Pass a ``(dy, dx)`` to force a known shift,
+        or ``None`` to disable. The applied integer shift is recorded on the
+        :class:`Report`.
 
     Returns
     -------
@@ -396,8 +425,10 @@ def score(
     n_requested = ground_truth.n_units
     n_detectable = int(np.asarray(ground_truth.detectable).sum())
     gt = ground_truth.detectable_subset() if restrict_to_detectable else ground_truth
-    match = hungarian_match(estimate.A, gt.A_observed)
-    matched = match.matched_pairs(iou_threshold)
+
+    shift = _resolve_footprint_shift(footprint_shift, estimate, gt)
+    match = hungarian_match(estimate.A, gt.A_observed, metric=match_metric, shift=shift)
+    matched = match.matched_pairs(match_threshold)
     n_matched = len(matched)
     recall = n_matched / match.n_true if match.n_true else 0.0
     precision = n_matched / match.n_est if match.n_est else 0.0
@@ -410,13 +441,18 @@ def score(
         trace_corr = float("nan")
 
     if estimate.S is not None and match.pairing:
-        spikes = spike_precision_recall(estimate.S, gt.S, match.pairing, tol_frames=tol_frames)
-        spike_precision, spike_recall = spikes.precision, spikes.recall
+        act = activity_similarity(estimate.S, gt.S, match.pairing)
+        activity_corr = float(np.nanmedian(act.correlation)) if act.correlation.size else float("nan")
+        activity_var = (
+            float(np.nanmedian(act.variance_explained))
+            if act.variance_explained.size else float("nan")
+        )
+        activity_scale = float(np.nanmedian(act.scale)) if act.scale.size else float("nan")
     else:
-        spike_precision = spike_recall = float("nan")
+        activity_corr = activity_var = activity_scale = float("nan")
 
     rmse = (
-        shift_rmse(estimate.shifts, gt.shifts, correction=True)
+        shift_rmse(estimate.shifts, gt.shifts, correction=True, align=True)
         if estimate.shifts is not None and gt.shifts is not None
         else None
     )
@@ -428,11 +464,32 @@ def score(
         recall=recall,
         precision=precision,
         f1=f1,
-        mean_iou=match.mean_iou,
+        mean_overlap=match.mean_similarity,
         trace_corr=trace_corr,
-        spike_precision=spike_precision,
-        spike_recall=spike_recall,
+        activity_corr=activity_corr,
+        activity_variance_explained=activity_var,
+        activity_scale=activity_scale,
         shift_rmse=rmse,
         n_requested=n_requested,
         n_detectable=n_detectable,
+        match_metric=match.metric,
+        footprint_shift=match.shift,
     )
+
+
+def _resolve_footprint_shift(
+    footprint_shift: tuple[float, float] | str | None, estimate: Estimate, gt: GroundTruth
+) -> tuple[float, float] | str | None:
+    """Pick the ``shift`` to hand :func:`~minisim.hungarian_match`.
+
+    For ``"auto"``: when both the estimated and true motion trajectories are present
+    the offset is read off them exactly (the constant difference between the
+    pipeline's correction and the applied motion); otherwise it falls back to
+    ``"auto"`` centroid estimation. Any explicit value (a ``(dy, dx)`` or ``None``)
+    passes straight through.
+    """
+    if footprint_shift != "auto":
+        return footprint_shift
+    if estimate.shifts is not None and gt.shifts is not None:
+        return global_shift_from_trajectories(estimate.shifts, gt.shifts, correction=True)
+    return "auto"

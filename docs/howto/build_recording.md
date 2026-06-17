@@ -18,7 +18,7 @@ with the bundled `minisim-notebooks` command:
 
 ```bash
 pip install "minisim[notebook]"
-minisim-notebooks list                       # shows 01_anatomy and build_recording
+minisim-notebooks list                       # 01_anatomy, 03_metrics, build_recording
 minisim-notebooks copy build_recording       # -> ./minisim-notebooks/build_recording
 cd minisim-notebooks/build_recording
 jupyter lab build_recording.ipynb
