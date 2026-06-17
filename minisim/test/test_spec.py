@@ -95,12 +95,11 @@ def test_sensor_hardware_lives_on_image_sensor():
         Sensor(read_noise_e=3.0)  # hardware no longer accepted on the step
 
 
-def test_sensor_photons_per_unit_accepts_auto_and_rejects_nonpositive():
-    assert Sensor(photons_per_unit="auto").photons_per_unit == "auto"
-    assert Sensor().photons_per_unit == pytest.approx(100.0)  # numeric default unchanged
-    with pytest.raises(ValidationError, match="auto"):
+def test_sensor_photons_per_unit_rejects_nonpositive():
+    assert Sensor().photons_per_unit == pytest.approx(100.0)  # numeric default
+    with pytest.raises(ValidationError):
         Sensor(photons_per_unit=0.0)
-    with pytest.raises(ValidationError, match="auto"):
+    with pytest.raises(ValidationError):
         Sensor(photons_per_unit=-5.0)
 
 

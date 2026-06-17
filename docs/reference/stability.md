@@ -40,7 +40,7 @@ a minor-version bump with a changelog entry.
   callers; removing or renaming one is breaking.
 - **`DETECT_SNR_THRESHOLD`** - the SNR a cell must clear to count as `detectable`.
   This sets the `restrict_to_detectable` recall denominator and the "auto"
-  focus/exposure objective. **It is provisional and not yet calibrated against a
+  focus objective. **It is provisional and not yet calibrated against a
   real pipeline, so it may change before 1.0.** When it changes, recall
   denominators move under downstream tests, so it is treated as a breaking change.
   If you need a denominator that cannot drift, pass `restrict_to_detectable=False`

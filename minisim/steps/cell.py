@@ -729,17 +729,6 @@ class CellActivityStep(Step["CellActivity"]):
 # field (≈ 8 µm at NA 0.3), so the optimum is sampled finely enough.
 _FOCUS_SCAN_N = 96
 
-# Nominal exposure the yield scan assumes when the exposure is *itself* "auto"
-# (resolved later, at the sensor step, from the rendered cells). Focus and exposure
-# would otherwise be mutually circular - focus ranks planes by detectable yield,
-# which needs an exposure; exposure scales the cells, which needs the focus. The
-# cycle is broken by ranking planes at this fixed reference: the plane *ranking* is
-# robust to the absolute exposure (it shifts which cells clear the floor together,
-# not their order), and "auto" exposure then sets the real level for the chosen
-# plane. Matches the numeric exposure default so a "auto"-exposure spec focuses like
-# the default-exposure one would.
-_FOCUS_YIELD_REFERENCE_PHOTONS = 100.0
-
 
 def resolve_focal_plane(
     cells: list[Cell],
@@ -846,10 +835,7 @@ def _max_yield_focus(
     illum = _photon_budget_at(cells, scored, photon_field, acq)
     qe = acq.image_sensor.quantum_efficiency
     read_e = acq.image_sensor.read_noise_e
-    # When the exposure is "auto" it is not resolved until the (later) sensor step,
-    # so rank planes at a fixed reference exposure (see _FOCUS_YIELD_REFERENCE_PHOTONS).
-    ppu = sensor_spec.photons_per_unit
-    ppu = _FOCUS_YIELD_REFERENCE_PHOTONS if ppu == "auto" else float(ppu)
+    ppu = float(sensor_spec.photons_per_unit)
     gain_const = atten * optics.collection_efficiency * illum * ppu * qe
     peak_dF_list, baseline_list = [], []
     for i in scored:

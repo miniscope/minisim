@@ -98,18 +98,6 @@ def test_streamed_frames_match_simulate_bit_for_bit(motion, neuropil, bleaching,
     np.testing.assert_array_equal(streamed, observed)  # exact counts, not approximate
 
 
-def test_streamed_auto_exposure_matches_simulate_bit_for_bit():
-    # "auto" exposure is resolved analytically from the cells, so the streamer (which
-    # never holds the whole movie) must resolve the SAME photons_per_unit as
-    # simulate() and stay bit-for-bit. Sweep chunk sizes too, since the resolution
-    # happens once before the chunk loop.
-    spec = _spec(exposure="auto")
-    observed = simulate(spec).observed
-    assert observed.max() < 2 ** spec.acquisition.image_sensor.bit_depth  # not saturated
-    np.testing.assert_array_equal(_stream(spec, chunk=8), observed)
-    np.testing.assert_array_equal(_stream(spec, chunk=5), observed)
-
-
 def test_iter_count_frames_raises_on_unreproduced_rng(monkeypatch):
     # The streamer reproduces simulate()'s RNG draws by hand; the consumes_rng guard
     # is what stops a newly RNG-consuming step from silently desyncing the stream.

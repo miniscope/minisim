@@ -63,6 +63,14 @@ __all__ = ["Estimate", "Report", "make_recording", "score"]
 # make_recording - a one-call CI fixture
 # ---------------------------------------------------------------------------
 
+# The default fixture exposure (photons per intensity unit). Chosen so the default
+# scene's cells sit bright and clearly above the detection threshold with headroom
+# below the 8-bit ADC ceiling. Fixed (not auto-leveled), and the same for every
+# scene, so the fixture is reproducible and a confound added via ``extra_steps``
+# changes detectability only through its own physics, not through a re-leveled
+# exposure. Override via the ``sensor`` argument for other regimes.
+_DEFAULT_PHOTONS_PER_UNIT = 40.0
+
 
 def _grid_positions_um(
     n: int, fov_um: float, depth_um: float, rng: np.random.Generator, *, margin_frac: float = 0.15
@@ -120,11 +128,11 @@ def make_recording(
     arguments) always yields the same recording - the property a fixture needs.
 
     Defaults are tuned for CI: a 128 px FOV at 1 µm/px (128 µm), six cells at
-    50 µm depth, two seconds at 20 fps, with a lively default activity and ``"auto"``
-    exposure (the focal plane is ``"auto"`` too), so every placed cell reliably fires,
-    is in focus, and is brightly but non-saturatingly exposed - hence *detectable* -
-    with no manual brightness/exposure tuning. Shrink ``n_px`` / ``duration_s`` for
-    an even faster fixture, or raise ``n_cells`` for a denser one.
+    50 µm depth, two seconds at 20 fps, with a lively default activity and a fixed,
+    well-chosen exposure (the focal plane is ``"auto"``), so every placed cell reliably
+    fires, is in focus, and is brightly but non-saturatingly exposed - hence
+    *detectable* - with no manual tuning. Shrink ``n_px`` / ``duration_s`` for an even
+    faster fixture, or raise ``n_cells`` for a denser one.
 
     Parameters
     ----------
@@ -149,8 +157,8 @@ def make_recording(
     activity, sensor
         Override the :class:`~minisim.CellActivity` model or the
         :class:`~minisim.Sensor` exposure step; ``None`` uses defaults (the default
-        sensor is ``Sensor(photons_per_unit="auto")`` - auto-exposed). Pass an
-        explicit ``Sensor(photons_per_unit=...)`` to fix the exposure instead.
+        sensor uses a fixed, well-exposed ``photons_per_unit``). Pass an explicit
+        ``Sensor(photons_per_unit=...)`` for a dimmer or brighter recording.
     extra_steps
         Additional steps to append (``Neuropil``, ``Vignette``, ``Leakage``, ...);
         the spec re-sorts into canonical order, so order here is free.
@@ -186,14 +194,13 @@ def make_recording(
                 )
             ]
         ),
-        # Lively + auto-exposed by default: every cell fires a transient in the short
-        # clip, and "auto" exposure lands the brightest cell near the top of the ADC
-        # range without saturating - so a fixture is clear and well-exposed with no
-        # manual photons_per_unit dialing, and all cells clear the noise floor.
+        # Lively by default: every cell fires a transient in the short clip.
         activity or CellActivity(p_quiescent_to_active=0.05),
         CellOptics(),
         Composite(),
-        sensor or Sensor(photons_per_unit="auto"),
+        # A fixed, well-chosen exposure (see _DEFAULT_PHOTONS_PER_UNIT); override via
+        # the sensor arg for a dimmer/brighter run.
+        sensor or Sensor(photons_per_unit=_DEFAULT_PHOTONS_PER_UNIT),
     ]
     if motion:
         steps.append(BrainMotion())

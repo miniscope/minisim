@@ -126,10 +126,8 @@ def test_save_load_roundtrips_optional_fields_present(tmp_path):
                  "neuropil_spatial", "vasculature_mask", "vessel_overlap_fraction"):
         assert getattr(back, name) is not None, name
         np.testing.assert_array_equal(getattr(back, name), getattr(gt, name))
-    # the resolved "auto" focus + exposure are scalar attrs, not datasets; they
-    # round-trip too
+    # the resolved "auto" focus depth is a scalar attr, not a dataset; it round-trips too
     assert back.focal_depth_um == gt.focal_depth_um is not None
-    assert back.exposure_photons_per_unit == gt.exposure_photons_per_unit is not None
 
 
 def test_save_load_roundtrips_snapshots(tmp_path):

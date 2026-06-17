@@ -28,88 +28,18 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from minisim.recording import sample_field_at
-from minisim.scene import Cell, Scene
-from minisim.steps.base import PipelineContext, Step
+from minisim.scene import Scene
+from minisim.steps.base import Step
 
 if TYPE_CHECKING:
     # Referenced only as string Generic bases (Step["Vignette"] etc.), which ruff's
     # F401 misses; pyright needs them in scope to resolve the forward references.
     from minisim.spec import (  # noqa: F401
-        Acquisition,
         IlluminationProfile,
         Leakage,
         Sensor,
         Vignette,
     )
-
-# "auto" exposure aims the brightest cell's *mean* peak at this fraction of the ADC
-# full scale: high enough to use the dynamic range, with enough headroom that the
-# shot/read-noise tail on top of that mean does not clip (at 0.85 the realized peak
-# lands ~0.95 of full scale with no saturated pixels; pushing to ~0.9 starts tipping
-# the noise tail over the rail). The analog of the depth-of-field margin "auto"
-# focus respects: bright, but deliberately short of saturation.
-_EXPOSURE_TARGET_FRACTION = 0.85
-# Fallback exposure when "auto" has no cell signal to scale against (no active
-# cells, an empty scene): a nominal, well-behaved level so a blank recording is
-# still digitized sanely. Matches the numeric Sensor default.
-_EXPOSURE_FALLBACK_PHOTONS = 100.0
-
-
-def resolve_exposure(
-    cells: list[Cell],
-    acq: Acquisition,
-    sensor_spec: Sensor,
-    photon_field: np.ndarray | None,
-) -> float:
-    """Resolve ``Sensor.photons_per_unit`` to a concrete exposure (photons/unit).
-
-    A numeric value passes through unchanged. ``"auto"`` chooses the exposure that
-    lands the **brightest cell's rendered peak** at :data:`_EXPOSURE_TARGET_FRACTION`
-    of the sensor's ADC full scale - bright enough to use the dynamic range, with
-    headroom so shot/read noise rarely saturates. This is the exposure analog of
-    "auto" focus: a fixture gets a clear, well-exposed recording with no manual
-    dialing of ``photons_per_unit``.
-
-    The peak is estimated **analytically per cell** - ``observed_footprint_peak ×
-    trace_peak × illumination`` at the cell's position - rather than from the
-    realized movie, so ``simulate`` and the streaming writer
-    (:func:`minisim.video.simulate_video`) resolve the *same* exposure from the same
-    cell state and stay bit-for-bit identical (the streamer never holds the whole
-    movie). ``photon_field`` is the illumination × vignette product, sampled at each
-    cell's lateral position the same way detectability samples it.
-
-    **v1 simplifications**, mirroring how "auto" focus documents its own: the
-    estimate is per-cell, so it ignores where two footprints overlap (a hot spot can
-    nudge slightly past the target) and the additive backgrounds (``neuropil`` /
-    ``leakage``); for the clear-footprint fixtures this targets, cells dominate and
-    are well separated, so the brightest pixel is a single soma peak. With no
-    activity-bearing cell to scale against it falls back to
-    :data:`_EXPOSURE_FALLBACK_PHOTONS`.
-    """
-    ppu = sensor_spec.photons_per_unit
-    if ppu != "auto":
-        return float(ppu)
-    sensor = acq.image_sensor
-    full_scale = float(2**sensor.bit_depth - 1)
-    peak_intensity = 0.0
-    for cell in cells:
-        if cell.trace is None:
-            continue
-        footprint = cell.observed_footprint()
-        if footprint is None or footprint.is_empty:
-            continue
-        illum = sample_field_at(
-            photon_field, cell.center_um[1], cell.center_um[2], acq.pixel_size_um
-        )
-        cell_peak = float(footprint.patch.max()) * float(np.max(cell.trace)) * illum
-        peak_intensity = max(peak_intensity, cell_peak)
-    if peak_intensity <= 0.0:
-        return _EXPOSURE_FALLBACK_PHOTONS
-    # counts_peak ≈ intensity · ppu · QE · gain_adu_per_e; solve for the ppu that
-    # puts the brightest peak at TARGET_FRACTION · full_scale.
-    denom = peak_intensity * sensor.quantum_efficiency * sensor.gain_adu_per_e
-    return _EXPOSURE_TARGET_FRACTION * full_scale / denom
 
 
 def radius_grid(shape: tuple[int, int], center_px: tuple[float, float]) -> np.ndarray:
@@ -292,25 +222,8 @@ class SensorStep(Step["Sensor"]):
     domain = "sensor"
     consumes_rng = True  # Poisson shot noise + Gaussian read noise per frame
 
-    def __init__(self, spec, acq, rng) -> None:
-        super().__init__(spec, acq, rng)
-        # Pulled from the PipelineContext in prepare(): the illumination × vignette
-        # product, sampled at each cell's position so "auto" exposure scales the
-        # brightest cell by the light its image actually gets. None (no falloff
-        # steps) means a uniform field. A step run directly in a unit test may skip
-        # prepare and leave this None.
-        self.photon_field: np.ndarray | None = None
-
-    def prepare(self, context: PipelineContext) -> None:
-        self.photon_field = context.photon_field
-
     def __call__(self, scene: Scene) -> None:
-        # Resolve the exposure once (a no-op when photons_per_unit is numeric; the
-        # brightest-cell scan when it is "auto"), record it so it is observable, and
-        # digitize with it. The streaming writer resolves the same value the same
-        # way, keeping the chunked counts bit-for-bit equal.
-        ppu = resolve_exposure(scene.cells, self.acq, self.spec, self.photon_field)
-        scene.truth.exposure_photons_per_unit = ppu
+        ppu = self.spec.photons_per_unit
         # Digitize FRAME BY FRAME, in order, on the shared rng: each frame draws its
         # combined shot+read noise (one standard_normal per frame, see
         # ImageSensor.photons_to_counts) before the next. The per-frame draw order is
