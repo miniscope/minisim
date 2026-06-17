@@ -272,6 +272,15 @@ gt.detectable        # (n,) cells whose transient clears the sensor noise floor
 rec.observed         # (frames, H, W) raw 8-bit counts
 ```
 
+`Sensor.photons_per_unit` is the exposure (the photon flux per intensity unit).
+Like the focal plane, it accepts `"auto"`: the exposure analog of auto-focus,
+`Sensor(photons_per_unit="auto")` lands the brightest cell's peak near the top of
+the ADC range without saturating, so you get bright, clear dynamics without
+hand-dialing the brightness. The resolved value is recorded as
+`gt.exposure_photons_per_unit` (just as `"auto"` focus records `gt.focal_depth_um`).
+This is the default in {py:func}`~minisim.testing.make_recording`, so a fixture is
+well-exposed out of the box.
+
 (`bleaching` is cell-domain, so it sits before `composite` with the other
 per-cell steps. Its fade acts over minutes, so it is negligible in a 20 s clip -
 included here for completeness. `vasculature` is left out of this default chain

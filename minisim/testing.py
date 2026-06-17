@@ -120,10 +120,11 @@ def make_recording(
     arguments) always yields the same recording - the property a fixture needs.
 
     Defaults are tuned for CI: a 128 px FOV at 1 µm/px (128 µm), six cells at
-    50 µm depth, two seconds at 20 fps, with a lively, brightly-exposed default
-    activity/sensor so every placed cell reliably fires and is *detectable*. Shrink
-    ``n_px`` / ``duration_s`` for an even faster fixture, or raise ``n_cells`` for
-    a denser one.
+    50 µm depth, two seconds at 20 fps, with a lively default activity and ``"auto"``
+    exposure (the focal plane is ``"auto"`` too), so every placed cell reliably fires,
+    is in focus, and is brightly but non-saturatingly exposed - hence *detectable* -
+    with no manual brightness/exposure tuning. Shrink ``n_px`` / ``duration_s`` for
+    an even faster fixture, or raise ``n_cells`` for a denser one.
 
     Parameters
     ----------
@@ -147,7 +148,9 @@ def make_recording(
         ``ground_truth.shifts`` is populated (lets you exercise motion correction).
     activity, sensor
         Override the :class:`~minisim.CellActivity` model or the
-        :class:`~minisim.Sensor` exposure step; ``None`` uses defaults.
+        :class:`~minisim.Sensor` exposure step; ``None`` uses defaults (the default
+        sensor is ``Sensor(photons_per_unit="auto")`` - auto-exposed). Pass an
+        explicit ``Sensor(photons_per_unit=...)`` to fix the exposure instead.
     extra_steps
         Additional steps to append (``Neuropil``, ``Vignette``, ``Leakage``, ...);
         the spec re-sorts into canonical order, so order here is free.
@@ -183,12 +186,14 @@ def make_recording(
                 )
             ]
         ),
-        # Lively + brightly exposed by default: every cell fires a transient in the
-        # short clip and clears the sensor noise floor, so all cells are detectable.
+        # Lively + auto-exposed by default: every cell fires a transient in the short
+        # clip, and "auto" exposure lands the brightest cell near the top of the ADC
+        # range without saturating - so a fixture is clear and well-exposed with no
+        # manual photons_per_unit dialing, and all cells clear the noise floor.
         activity or CellActivity(p_quiescent_to_active=0.05),
         CellOptics(),
         Composite(),
-        sensor or Sensor(photons_per_unit=600.0),
+        sensor or Sensor(photons_per_unit="auto"),
     ]
     if motion:
         steps.append(BrainMotion())
