@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -53,10 +54,28 @@ from minisim.spec import Acquisition, Spec
 DETECT_SNR_THRESHOLD = 3.0
 
 # On-disk layout for save()/load() (zarr group + sibling spec.json). The format
-# version is stamped in the group attrs so a future layout change can be detected
-# rather than silently misread.
+# version is the cross-version compatibility boundary: `load()` reads it back and
+# refuses a layout it does not understand, rather than silently misreading. Any
+# change to the on-disk layout (new/renamed datasets, a different sparse encoding)
+# MUST bump this, so an older reader fails loudly with a migration message instead
+# of mis-parsing. Within a single format version the spec hash is only an *advisory*
+# staleness check (see `load`), so a benign spec-field addition that changes the
+# hash does not brick already-saved recordings.
 # v2: footprints stored sparse (planted patches; observed regenerated on load).
 _FORMAT_VERSION = 2
+
+
+class RecordingFormatWarning(UserWarning):
+    """Advisory warning when a loaded recording's spec hash does not match.
+
+    Raised by :meth:`Recording.load` when the stored ``spec_cache_key`` differs from
+    the recomputed one *within a matching format version* - typically because this
+    minisim serializes the spec slightly differently than the version that wrote the
+    file (a benign field addition changes the hash), or because ``spec.json`` was
+    hand-edited. The recording still loads (the arrays are independent of the hash);
+    the warning flags that the spec it is paired with may be stale. A genuine layout
+    incompatibility is a *hard* error instead, keyed on ``format_version``.
+    """
 # Plain GroundTruth array fields saved as datasets, split by whether they are always
 # present or optional (None when their producing step is absent). The sparse planted
 # footprints (and the fov crop) are handled separately; A_observed is not stored.
@@ -358,23 +377,50 @@ class Recording(BaseModel):
 
     @classmethod
     def load(cls, path: str | Path) -> Recording:
-        """Load a recording written by :meth:`save`, verifying its spec hash.
+        """Load a recording written by :meth:`save`.
 
-        Reads back ``spec.json``, re-validates it, and checks that its
-        :attr:`Spec.cache_key` matches the one stamped at save time - guarding
-        against a stale cache or a hand-edited ``spec.json``. Snapshots are
-        rebuilt as ``DataArray``s over ``MOVIE_DIMS`` with ``arange`` coordinates.
+        Two checks, with deliberately different severities:
+
+        * **``format_version`` is a hard boundary.** If the on-disk layout version is
+          not one this reader understands, ``load`` raises rather than risk
+          mis-parsing a layout that changed incompatibly. Any layout change bumps the
+          version, so an old file fails loudly with a re-simulate message.
+        * **The spec hash is advisory.** Within a matching format version, a
+          ``spec_cache_key`` mismatch only warns (:class:`RecordingFormatWarning`):
+          the arrays load fine, and the most common cause is benign - this minisim
+          serializes the spec slightly differently than the version that wrote the
+          file, which changes the hash without changing the data. Hard-failing here
+          would brick already-saved fixtures on a minisim upgrade. (The cache layer
+          does not rely on this check - it keys recordings by filename, so a changed
+          spec hash is a fresh filename and a clean miss.)
+
+        Snapshots are rebuilt as ``DataArray``s over ``MOVIE_DIMS`` with ``arange``
+        coordinates.
         """
         path = Path(path)
         root = zarr.open_group(str(path), mode="r")
 
+        stored_format = root.attrs.get("format_version")
+        if stored_format != _FORMAT_VERSION:
+            raise ValueError(
+                f"Cannot load {path}: on-disk format_version {stored_format!r} is not "
+                f"readable by this minisim (which writes/reads format {_FORMAT_VERSION}). "
+                f"The zarr layout changed incompatibly between versions; there is no "
+                f"in-place migration - re-simulate the spec with this minisim version."
+            )
+
         spec = Spec.model_validate_json((path / "spec.json").read_text())
         stored_key = root.attrs.get("spec_cache_key")
         if stored_key != spec.cache_key():
-            raise ValueError(
+            warnings.warn(
                 f"Spec hash mismatch loading {path}: stored {stored_key!r} != "
-                f"recomputed {spec.cache_key()!r}. The cache is stale or spec.json "
-                f"was edited; delete it and re-simulate."
+                f"recomputed {spec.cache_key()!r}. The recording still loads; this "
+                f"usually means a newer minisim serializes the spec differently than "
+                f"the one that wrote the file (a benign field addition changes the "
+                f"hash), or spec.json was hand-edited. If the recording looks stale, "
+                f"delete it and re-simulate.",
+                RecordingFormatWarning,
+                stacklevel=2,
             )
 
         gt_group = root["ground_truth"]

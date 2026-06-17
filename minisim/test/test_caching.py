@@ -26,6 +26,7 @@ from minisim import (
     Output,
     PlaceNeurons,
     Recording,
+    RecordingFormatWarning,
     Sensor,
     Spec,
     Vasculature,
@@ -179,14 +180,32 @@ def test_save_overwrites_and_leaves_no_tmp(tmp_path):
     np.testing.assert_array_equal(Recording.load(path).observed, rec.observed)
 
 
-def test_load_rejects_spec_hash_mismatch(tmp_path):
+def test_load_warns_but_loads_on_spec_hash_mismatch(tmp_path):
+    # A spec-hash mismatch within a matching format_version is *advisory*: the
+    # recording still loads (the arrays are independent of the hash), with a warning.
+    # Hard-failing here would brick already-saved fixtures on a benign minisim
+    # serialization change.
     rec = simulate(_minimal_spec(seed=7))
     path = tmp_path / "r.zarr"
     rec.save(path)
     # rewrite spec.json with a *different* valid spec -> its hash no longer matches
     # the spec_cache_key stamped in the group attrs at save time
     (path / "spec.json").write_text(_minimal_spec(seed=999).model_dump_json(indent=2))
-    with pytest.raises(ValueError, match="hash mismatch"):
+    with pytest.warns(RecordingFormatWarning, match="hash mismatch"):
+        back = Recording.load(path)
+    np.testing.assert_array_equal(back.observed, rec.observed)
+
+
+def test_load_rejects_unknown_format_version(tmp_path):
+    # format_version is the hard boundary: a layout this reader does not understand
+    # raises rather than risk mis-parsing.
+    import zarr
+
+    rec = simulate(_minimal_spec(seed=7))
+    path = tmp_path / "r.zarr"
+    rec.save(path)
+    zarr.open_group(str(path), mode="r+").attrs["format_version"] = 999
+    with pytest.raises(ValueError, match="format_version"):
         Recording.load(path)
 
 

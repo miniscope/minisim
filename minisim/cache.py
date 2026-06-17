@@ -56,9 +56,11 @@ def simulate_cached(spec: Spec, *, root: str | Path | None = None) -> Recording:
 
     Notes
     -----
-    A hit is served by :meth:`Recording.load`, which re-verifies the stored spec
-    hash; a miss runs :func:`simulate` and persists the result with
-    :meth:`Recording.save` before returning it.
+    The cache is keyed by *filename* (``{cache_key}.zarr``): a changed spec
+    serializes to a new key, hence a new filename and a clean miss, so the cache
+    never serves a recording for the wrong spec. A hit is served by
+    :meth:`Recording.load`; a miss runs :func:`simulate` and persists the result
+    with :meth:`Recording.save` before returning it.
     """
     path = cache_path(spec, root)
     if path.exists():
