@@ -17,3 +17,9 @@
 ```{eval-rst}
 .. autofunction:: minisim.finalize
 ```
+
+## RecordingFormatWarning
+
+```{eval-rst}
+.. autoclass:: minisim.RecordingFormatWarning
+```

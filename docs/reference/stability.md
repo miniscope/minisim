@@ -63,12 +63,25 @@ everything". `report.summary()` prints all three.
 ## On-disk format
 
 A saved {py:class}`~minisim.Recording` (`save()` / `load()`) is a zarr directory
-stamped with a `format_version`. The compatibility boundary is that version: a
-recording is loadable by any minisim whose reader understands its `format_version`.
-The sibling `spec.json` is additionally checked against the spec hash to catch a
-stale or hand-edited cache. Persisted fixtures are a supported pattern only within
-a stable `format_version`; for CI, prefer regenerating in-memory with
-`make_recording` (a cold cache gives no speedup anyway).
+stamped with a `format_version`. Two checks, with deliberately different severities:
+
+- **`format_version` is the hard compatibility boundary.** `load()` reads it back
+  and *raises* if the layout version is not one it understands. Any change to the
+  on-disk layout bumps this version, so an older file fails loudly with a
+  re-simulate message instead of being mis-parsed.
+- **The spec hash is advisory.** Within a matching `format_version`, a
+  `spec_cache_key` mismatch only *warns* ({py:class}`~minisim.RecordingFormatWarning`)
+  and the recording still loads. The common cause is benign: a newer minisim
+  serializes the spec slightly differently (a field addition changes the hash
+  without changing the data). Hard-failing here would brick already-saved fixtures
+  across downstream repos on a minisim upgrade, which is why it does not.
+
+The cache layer ({py:func}`~minisim.simulate_cached`) keys recordings by filename
+(`{cache_key}.zarr`), so a changed spec is a fresh filename and a clean miss - it
+never serves a recording for the wrong spec, independent of the advisory hash check.
+For CI, prefer regenerating in-memory with `make_recording` (a cold cache gives no
+speedup anyway); persisting recordings as artifacts is supported within a stable
+`format_version`.
 
 ## Not frozen (free to change)
 
