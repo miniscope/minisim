@@ -33,7 +33,6 @@ from minisim.recording import (
     finalize,
     sample_field_at,
 )
-from minisim.scene import Cell, GroundTruthBuilder, Scene
 from minisim.simulate import simulate
 from minisim.spec import (
     Acquisition,
@@ -54,12 +53,10 @@ from minisim.spec import (
     Sensor,
     Spec,
     SpecWarning,
-    StepSpec,
     Tissue,
     Vasculature,
     VesselLayer,
     Vignette,
-    order_steps,
 )
 from minisim.sweep import SweptSpec, sweep
 from minisim.video import simulate_video
@@ -70,12 +67,10 @@ __all__ = [
     "AnyStep",
     "Bleaching",
     "BrainMotion",
-    "Cell",
     "CellActivity",
     "CellOptics",
     "Composite",
     "GroundTruth",
-    "GroundTruthBuilder",
     "IlluminationProfile",
     "ImageSensor",
     "Leakage",
@@ -88,13 +83,11 @@ __all__ = [
     "PlaceNeurons",
     "Recording",
     "Region",
-    "Scene",
     "Scope",
     "Sensor",
     "Spec",
     "SpecWarning",
     "SpikeScore",
-    "StepSpec",
     "SweptSpec",
     "Tissue",
     "Vasculature",
@@ -109,7 +102,6 @@ __all__ = [
     "footprint_mask",
     "footprint_roi_trace",
     "hungarian_match",
-    "order_steps",
     "sample_field_at",
     "shift_rmse",
     "simulate",

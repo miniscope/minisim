@@ -28,14 +28,13 @@ from minisim import (
     Neuropil,
     Optics,
     PlaceNeurons,
-    Scene,
     Sensor,
     Vasculature,
     VesselLayer,
     Vignette,
 )
 from minisim.footprint import Footprint
-from minisim.scene import Cell
+from minisim.scene import Cell, Scene
 from minisim.steps import (
     BleachingStep,
     CellOpticsStep,

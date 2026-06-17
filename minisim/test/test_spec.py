@@ -483,3 +483,19 @@ def test_photons_to_counts_gain_scales_counts():
     low = _flat_sensor_acq(gain_adu_per_e=1.0, read_noise_e=2.0, bit_depth=16).photons_to_counts(photons, rng)
     high = _flat_sensor_acq(gain_adu_per_e=4.0, read_noise_e=2.0, bit_depth=16).photons_to_counts(photons, rng)
     assert high.mean() == pytest.approx(4.0 * low.mean(), rel=0.05)
+
+
+def test_spec_internals_are_submodule_only():
+    # StepSpec (the closed-catalog base) and order_steps (Spec applies it itself)
+    # are implementation details, reachable via minisim.spec but off the top-level
+    # surface. AnyStep stays public: it is the type annotating a step list.
+    import minisim
+
+    for name in ("StepSpec", "order_steps"):
+        assert not hasattr(minisim, name), f"{name} leaked back onto the top-level surface"
+        assert name not in minisim.__all__
+    from minisim.spec import (  # noqa: F401  (reachable via submodule)
+        StepSpec,
+        order_steps,
+    )
+    assert "AnyStep" in minisim.__all__ and hasattr(minisim, "AnyStep")
