@@ -148,6 +148,11 @@ class GroundTruth(BaseModel):
     # that maximized recoverable yield. A scalar, so persisted as a group attr (not
     # a dataset) by save/load; None when the optics step did not run.
     focal_depth_um: float | None = None
+    # The concrete exposure (photons per intensity unit) the sensor step resolved
+    # "auto" to - the level that lands the brightest cell near the top of the ADC
+    # range. A scalar, persisted as a group attr; None when the sensor step did not
+    # run. Equals Sensor.photons_per_unit when that was given numerically.
+    exposure_photons_per_unit: float | None = None
 
     # Memoizes the regenerated dense A_observed (one blur pass over all units), so
     # repeated reads on the same object are free. A private attr, so it does not
@@ -241,6 +246,7 @@ class GroundTruth(BaseModel):
             neuropil_population=self.neuropil_population,
             vasculature_mask=self.vasculature_mask,
             focal_depth_um=self.focal_depth_um,
+            exposure_photons_per_unit=self.exposure_photons_per_unit,
         )
 
 
@@ -335,8 +341,10 @@ class Recording(BaseModel):
             for name in snapshot_names:
                 snap_group.create_dataset(name, data=np.asarray(self.snapshots[name].values))
 
-        # focal_depth_um is a scalar, not an array: stash it as a group attr.
+        # focal_depth_um / exposure_photons_per_unit are scalars, not arrays: stash
+        # them as group attrs (the resolved "auto" focus and exposure values).
         gt_group.attrs["focal_depth_um"] = gt.focal_depth_um
+        gt_group.attrs["exposure_photons_per_unit"] = gt.exposure_photons_per_unit
 
         root.attrs["format_version"] = _FORMAT_VERSION
         root.attrs["spec_cache_key"] = self.spec.cache_key()
@@ -376,6 +384,9 @@ class Recording(BaseModel):
         focal = gt_group.attrs.get("focal_depth_um")
         if focal is not None:
             fields["focal_depth_um"] = float(focal)
+        exposure = gt_group.attrs.get("exposure_photons_per_unit")
+        if exposure is not None:
+            fields["exposure_photons_per_unit"] = float(exposure)
 
         # Rebuild the sparse planted footprints and the FOV crop.
         planted_group = gt_group["planted"]
@@ -471,6 +482,21 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     margin_w = (canvas_w - fov_w) // 2
 
     sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
+    # The exposure the sensor step resolved (the numeric value, or what "auto" chose);
+    # None when no sensor ran, which is the signal detectability falls back on. Read
+    # from the resolved value, never sensor_spec.photons_per_unit, which may be "auto".
+    # Fallback: when finalize runs on a scene the SensorStep never touched (a hand-
+    # built test scene, or a partial build that stops before the sensor) the resolved
+    # value is absent - use the spec's exposure if it was given numerically. Only an
+    # unrun "auto" stays unresolved, and then detectability rightly falls back to the
+    # geometric in_focus flag.
+    resolved_ppu = scene.truth.exposure_photons_per_unit
+    if (
+        resolved_ppu is None
+        and sensor_spec is not None
+        and sensor_spec.photons_per_unit != "auto"
+    ):
+        resolved_ppu = float(sensor_spec.photons_per_unit)
     # Both falloff fields are FOV-sized (built post-motion-crop), or None. Their
     # product is the per-pixel photon budget a cell's signal is dimmed by.
     illumination = scene.truth.illumination
@@ -518,7 +544,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         # record the footprint-weighted occlusion as the scoreable confound axis.
         vessel_t = sample_field_at(vasc_mask_fov, y_um, x_um, acq.pixel_size_um)
         detectable.append(
-            _is_detectable(cell, ifocus, y_um, x_um, photon_field, sensor_spec, acq, vessel_t)
+            _is_detectable(cell, ifocus, y_um, x_um, photon_field, resolved_ppu, acq, vessel_t)
         )
         overlaps.append(_vessel_overlap(cell.observed_footprint(), vasc_mask_canvas))
 
@@ -557,6 +583,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         neuropil_population=scene.truth.neuropil_population,
         vasculature_mask=_crop_field(scene.truth.vasculature_mask, fov_h, fov_w),
         focal_depth_um=scene.truth.focal_depth_um,
+        exposure_photons_per_unit=resolved_ppu,
     )
     # observed is always the sensor FOV: brain_motion already crops the movie,
     # but a partial build (until= before motion) can leave it canvas-sized, so
@@ -673,7 +700,7 @@ def _is_detectable(
     y_um: float,
     x_um: float,
     photon_field: np.ndarray | None,
-    sensor_spec,
+    photons_per_unit: float | None,
     acq: Acquisition,
     vessel_transmission: float = 1.0,
 ) -> bool:
@@ -688,14 +715,16 @@ def _is_detectable(
     test; the footprint-weighted occlusion is recorded separately as
     ``vessel_overlap_fraction``.
 
-    ``detectable`` requires ``in_focus`` and ``SNR ≥ DETECT_SNR_THRESHOLD``. With
-    no activity (no trace) a cell emits no transient and is not detectable; with
-    no ``sensor`` step there is no noise floor to test against, so detectability
-    falls back to the geometric ``in_focus`` flag.
+    ``photons_per_unit`` is the **resolved** exposure (the numeric value, or what
+    ``"auto"`` chose at the sensor step), not the raw spec field. ``detectable``
+    requires ``in_focus`` and ``SNR ≥ DETECT_SNR_THRESHOLD``. With no activity (no
+    trace) a cell emits no transient and is not detectable; with no ``sensor`` step
+    (``photons_per_unit is None``) there is no noise floor to test against, so
+    detectability falls back to the geometric ``in_focus`` flag.
     """
     if cell.trace is None:
         return False
-    if sensor_spec is None:
+    if photons_per_unit is None:
         return in_focus
     if not in_focus:
         return False
@@ -703,7 +732,7 @@ def _is_detectable(
     illum = sample_field_at(photon_field, y_um, x_um, acq.pixel_size_um)
     gain = (
         brightness * illum * vessel_transmission
-        * sensor_spec.photons_per_unit * acq.image_sensor.quantum_efficiency
+        * photons_per_unit * acq.image_sensor.quantum_efficiency
     )
     peak_dF = float(cell.trace.max() - cell.trace.min())
     baseline = float(cell.trace.min())

@@ -37,7 +37,7 @@ from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
 from minisim.steps import STEP_FOR_KIND
 from minisim.steps.motion import brain_motion_shifts, shift_and_crop
-from minisim.steps.sensor import leakage_field
+from minisim.steps.sensor import leakage_field, resolve_exposure
 from minisim.steps.tissue import (
     neuropil_components,
     vasculature_focal,
@@ -221,7 +221,14 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
         # per-chunk contraction is single-precision and bit-identical to simulate().
         A = stack_dense(footprints, canvas_shape) if footprints else None  # (unit, Hc, Wc)
         CB = np.stack(emissions).astype(RENDER_DTYPE) if emissions else None  # (unit, frame)
-    ppu = sensor_spec.photons_per_unit if sensor_spec is not None else None
+    # Resolve the exposure exactly as SensorStep does (numeric passes through, "auto"
+    # scans the brightest cell) so the streamed counts stay bit-for-bit equal to
+    # simulate(): same cells, same photon field, same resolve_exposure call.
+    ppu = (
+        resolve_exposure(scene.cells, acq, sensor_spec, photon_field)
+        if sensor_spec is not None
+        else None
+    )
 
     for t0 in range(0, n_frames, chunk_frames):
         t1 = min(t0 + chunk_frames, n_frames)

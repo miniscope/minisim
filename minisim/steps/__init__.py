@@ -48,6 +48,7 @@ from minisim.steps.sensor import (
     leakage_field,
     radial_falloff,
     radius_grid,
+    resolve_exposure,
 )
 from minisim.steps.tissue import (
     BleachingStep,
@@ -131,6 +132,7 @@ __all__ = [
     "radial_falloff",
     "radius_grid",
     "rasterize_vessels",
+    "resolve_exposure",
     "resolve_focal_plane",
     "sample_neurons",
     "shift_and_crop",
