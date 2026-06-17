@@ -14,6 +14,7 @@ scene
 metrics
 testing
 caching
+stability
 ```
 
 ## At a glance
