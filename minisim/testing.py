@@ -65,8 +65,10 @@ __all__ = ["Estimate", "Report", "make_recording", "score"]
 
 # The default fixture exposure (photons per intensity unit). Chosen so the default
 # scene's cells sit bright and clearly above the detection threshold with headroom
-# below the 8-bit ADC ceiling. Fixed (not auto-leveled) so the fixture is reproducible
-# and confound-invariant; override via the ``sensor`` argument for other regimes.
+# below the 8-bit ADC ceiling. Fixed (not auto-leveled), and the same for every
+# scene, so the fixture is reproducible and a confound added via ``extra_steps``
+# changes detectability only through its own physics, not through a re-leveled
+# exposure. Override via the ``sensor`` argument for other regimes.
 _DEFAULT_PHOTONS_PER_UNIT = 40.0
 
 
@@ -196,11 +198,8 @@ def make_recording(
         activity or CellActivity(p_quiescent_to_active=0.05),
         CellOptics(),
         Composite(),
-        # A fixed, well-chosen exposure (no auto-leveling): bright, clear, every cell
-        # comfortably above the noise floor, with headroom below the ADC ceiling - and
-        # the same for every scene, so the fixture is reproducible and a confound added
-        # via extra_steps changes detectability only through its own physics, not through
-        # a re-leveled exposure. Override with an explicit Sensor for a dimmer/brighter run.
+        # A fixed, well-chosen exposure (see _DEFAULT_PHOTONS_PER_UNIT); override via
+        # the sensor arg for a dimmer/brighter run.
         sensor or Sensor(photons_per_unit=_DEFAULT_PHOTONS_PER_UNIT),
     ]
     if motion:

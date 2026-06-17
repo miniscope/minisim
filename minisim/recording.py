@@ -46,7 +46,7 @@ from minisim.spec import Acquisition, Spec
 #
 # STABILITY CONTRACT. This single constant sets the `detectable` flag, the
 # `restrict_to_detectable` recall denominator in `minisim.testing.score`, and the
-# "auto" focus/exposure yield objective - so its value is part of what a consumer's
+# "auto" focus yield objective - so its value is part of what a consumer's
 # `assert report.recall > X` depends on. It is provisional and *not yet calibrated*
 # against a real pipeline, so it may change before 1.0. Treat any change as a
 # minor-version bump with a changelog entry, because it moves recall denominators
