@@ -142,9 +142,6 @@ class GroundTruthBuilder:
     # The concrete focal depth the optics step resolved (µm below the surface);
     # the one number "auto" focus turns into, recorded so it is observable.
     focal_depth_um: float | None = None
-    # The concrete exposure the sensor step resolved (photons per intensity unit);
-    # the one number "auto" exposure turns into, recorded so it is observable.
-    exposure_photons_per_unit: float | None = None
 
 
 @dataclass

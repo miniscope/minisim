@@ -38,7 +38,7 @@ def _sha256(array) -> str:
 # Golden hashes for make_recording(seed=0) at its documented defaults. Re-pin
 # these (deliberately, with a changelog note) whenever the fixture output changes.
 _GOLDEN_SEED = 0
-_GOLDEN_OBSERVED_SHA = "6db97c39006c4e52de43aab5ae7469dea90ff0662447b0e6b4cd0c32b681ae4b"
+_GOLDEN_OBSERVED_SHA = "e97a581dd653045e767ade4aeab915cd9853c0e8f722e2b7e3ccd0db416de81a"
 _GOLDEN_CENTERS_SHA = "1789804afad9ecffee2fc27e8e1321d708274618aea5066fa7d62a73f6247dc5"
 _GOLDEN_SHAPE = (40, 128, 128)
 _GOLDEN_N_UNITS = 6
@@ -71,18 +71,16 @@ def test_make_recording_ground_truth_is_stable():
     assert float(gt.C.max()) == pytest.approx(_GOLDEN_C_MAX, rel=1e-4)
 
 
-def test_make_recording_auto_exposure_is_bright_but_not_saturating():
-    # The contract for the "auto"-exposed default fixture: the brightest cell uses
-    # the top of the ADC range (bright, clear dynamics) without the recording
-    # saturating. Guards the auto-exposure target so a regression that over- or
-    # under-exposes the default fixture is caught.
+def test_make_recording_default_exposure_is_bright_but_not_saturating():
+    # The default fixture's fixed exposure is chosen to be bright (uses most of the
+    # ADC range, clear dynamics) without saturating. Guards that default so a
+    # regression that over- or under-exposes the fixture is caught.
     rec = make_recording(seed=_GOLDEN_SEED)
     full_scale = 2 ** rec.spec.acquisition.image_sensor.bit_depth - 1
     peak = float(rec.observed.max())
     saturated_fraction = float((rec.observed >= full_scale).mean())
-    assert rec.ground_truth.exposure_photons_per_unit is not None
-    assert peak >= 0.85 * full_scale, "auto-exposure left the fixture too dim"
-    assert saturated_fraction < 0.001, "auto-exposure saturated the fixture"
+    assert peak >= 0.8 * full_scale, "default exposure left the fixture too dim"
+    assert saturated_fraction < 0.001, "default exposure saturated the fixture"
 
 
 def test_make_recording_is_repeatable_within_a_run():

@@ -1134,22 +1134,16 @@ class Sensor(StepSpec):
 
     domain: ClassVar[str] = "sensor"
     kind: Literal["sensor"] = "sensor"
-    photons_per_unit: float | Literal["auto"] = Field(
+    photons_per_unit: float = Field(
+        gt=0,
         default=100.0,
         description="Photons per fluorescence intensity unit (exposure/flux scale); sets the "
-        "shot-noise regime. A scene/illumination property, not sensor hardware. 'auto' picks "
-        "the exposure that lands the brightest cell's peak near the top of the ADC range "
-        "without saturating - the analog of 'auto' focus, so a fixture gets a clear, "
-        "well-exposed recording with no manual dialing. The resolved value is recorded as "
-        "GroundTruth.exposure_photons_per_unit.",
+        "shot-noise regime, and scales every light source in the frame (cells, neuropil, "
+        "vasculature, leakage). A scene/illumination property, not sensor hardware (it lumps "
+        "excitation power x integration time x collection efficiency), which is why it stays on "
+        "the step rather than the image-sensor spec. Raise it (or the sensor gain) for a brighter "
+        "recording; raising it also lifts the shot-noise-limited SNR.",
     )
-
-    @field_validator("photons_per_unit")
-    @classmethod
-    def _check_photons_per_unit(cls, v: float | Literal["auto"]) -> float | Literal["auto"]:
-        if v != "auto" and v <= 0:
-            raise ValueError(f"photons_per_unit ({v}) must be > 0, or 'auto'.")
-        return v
 
 
 # The v1 catalog is closed and known, so AnyStep is a hand-written static union:
