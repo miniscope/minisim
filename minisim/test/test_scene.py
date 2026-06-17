@@ -10,14 +10,12 @@ substrate.
 import numpy as np
 import xarray as xr
 
-from minisim import (
-    Acquisition,
-    Cell,
-    GroundTruthBuilder,
-    ImageSensor,
-    Scene,
-)
-from minisim.scene import MOVIE_DIMS
+from minisim import Acquisition, ImageSensor
+
+# Scene / Cell / GroundTruthBuilder are the mutable working-state internals: they
+# live in minisim.scene, not the top-level public surface, so import them here from
+# the submodule that owns them.
+from minisim.scene import MOVIE_DIMS, Cell, GroundTruthBuilder, Scene
 
 
 def _tiny_acquisition(**kw):
@@ -145,3 +143,16 @@ def test_cell_defaults_are_unpopulated():
         is cell.detectable
         is None
     )
+
+
+def test_scene_internals_are_submodule_only():
+    # The mutable working-state types are deliberately not on the top-level public
+    # surface (they are an implementation detail of the pipeline, reachable via
+    # minisim.scene for the step authors who build against them). Guard the
+    # decision so the surface cannot silently regrow.
+    import minisim
+
+    for name in ("Scene", "Cell", "GroundTruthBuilder"):
+        assert not hasattr(minisim, name), f"{name} leaked back onto the top-level surface"
+        assert name not in minisim.__all__
+        assert hasattr(__import__("minisim.scene", fromlist=[name]), name)

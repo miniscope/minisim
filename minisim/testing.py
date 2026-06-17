@@ -28,6 +28,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -102,7 +103,7 @@ def make_recording(
     seed: int = 0,
     depth_um: float = 50.0,
     soma_radius_um: float = 5.0,
-    morphology: str = "soma",
+    morphology: Literal["soma", "cytosolic"] = "soma",
     motion: bool = False,
     activity: CellActivity | None = None,
     sensor: Sensor | None = None,
@@ -178,7 +179,7 @@ def make_recording(
                 NeuronPopulation(
                     positions_um=positions,
                     soma_radius_um=soma_radius_um,
-                    morphology=morphology,  # type: ignore[arg-type]
+                    morphology=morphology,
                 )
             ]
         ),

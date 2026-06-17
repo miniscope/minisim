@@ -23,7 +23,6 @@ from minisim import (
     Neuropil,
     Optics,
     PlaceNeurons,
-    Scene,
     Sensor,
     Spec,
     Vignette,
@@ -33,7 +32,7 @@ from minisim import (
 )
 from minisim.footprint import Footprint, FootprintStack
 from minisim.recording import _vessel_overlap
-from minisim.scene import Cell
+from minisim.scene import Cell, Scene
 
 
 def _acq(n_px=20, fps=20.0, duration_s=1.0, bit_depth=8, **kw):

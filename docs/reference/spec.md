@@ -41,11 +41,12 @@ models below.
 ## Steps
 
 `Spec.steps` is the forward chain. Each step below is a
-{py:class}`~minisim.StepSpec`; `AnyStep` is the discriminated union of them.
-Each `kind` may appear at most once in a spec.
+{py:class}`~minisim.spec.StepSpec` (the base class lives in {mod}`minisim.spec`);
+{py:obj}`~minisim.AnyStep` is the discriminated union of them and is the type you
+annotate a step list with. Each `kind` may appear at most once in a spec.
 
 ```{eval-rst}
-.. autopydantic_model:: minisim.StepSpec
+.. autopydantic_model:: minisim.spec.StepSpec
 ```
 
 ### The forward chain
