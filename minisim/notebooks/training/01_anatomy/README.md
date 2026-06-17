@@ -8,9 +8,9 @@ miniscope recording one physically-meaningful stage at a time, using
 *understand* the physics, *explore* it with sliders, then *commit* the values you
 want and move on - so the recording grows in front of you. Because every stage is
 built by hand, the *exact* ground truth is known at each step, which is precisely
-what the analysis pipeline has to recover. Notebook 2 (`02_pipeline_vs_truth`,
-planned) then runs real minian on a recording like this and scores it against that
-truth.
+what the analysis pipeline has to recover. Notebook 2 (`02_demixing`) then reads the
+biology back out by demixing a recording like this, and Notebook 3 (`03_metrics`)
+scores how well a pipeline recovers that truth.
 
 > **The full forward pipeline is built.** All stages are in place, in physical
 > order: place neurons, calcium activity, photobleaching, optics (depth blur +
