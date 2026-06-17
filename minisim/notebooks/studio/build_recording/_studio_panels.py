@@ -138,8 +138,8 @@ class AnatomyPanel:
     # Widget keys that do NOT map 1:1 to a StudioConfig field (handled explicitly in
     # _config_to_widgets/_apply). Everything else is a plain getattr/setattr.
     _SPECIAL = (
-        "focus_auto", "focal_depth_um", "field_curvature_on",
-        "field_curvature_radius_um", "resolution",
+        "focus_auto", "focal_depth_um", "exposure_auto", "photons_per_unit",
+        "field_curvature_on", "field_curvature_radius_um", "resolution",
     )
 
     # Dependent-control gating: each (controller, [dependents], enable_when) disables
@@ -148,6 +148,7 @@ class AnatomyPanel:
     # vasculature is off). `bool` enables on a truthy toggle; auto-focus inverts it.
     _GATES = (
         ("focus_auto", ["focal_depth_um"], lambda v: not v),
+        ("exposure_auto", ["photons_per_unit"], lambda v: not v),
         ("field_curvature_on", ["field_curvature_radius_um"], bool),
         ("neuropil_enabled", ["neuropil_amplitude"], bool),
         ("vasculature_enabled", ["vessel_depth_um", "vessel_root_radius_um", "vessel_opacity",
@@ -221,7 +222,13 @@ class AnatomyPanel:
         w["read_noise_e"] = _slider(S, 0.0, 10.0, 0.5, c.read_noise_e, "read noise (e-)")
         w["gain_adu_per_e"] = _slider(S, 0.1, 4.0, 0.1, c.gain_adu_per_e, "gain (ADU/e-)")
         w["bit_depth"] = _slider(I, 8, 12, 1, c.bit_depth, "bit depth")
-        w["photons_per_unit"] = _slider(S, 10.0, 1000.0, 10.0, c.photons_per_unit, "exposure")
+        w["exposure_auto"] = _choice(
+            Checkbox, value=(c.photons_per_unit == "auto"), description="auto exposure"
+        )
+        w["photons_per_unit"] = _slider(
+            S, 10.0, 1000.0, 10.0,
+            600.0 if c.photons_per_unit == "auto" else float(c.photons_per_unit), "exposure",
+        )
 
         # -- tissue --
         w["scatter_mfp_emission_um"] = _slider(
@@ -308,7 +315,7 @@ class AnatomyPanel:
             "Optics": ["na", "magnification", "emission_nm", "focus_auto", "focal_depth_um",
                        "field_curvature_on", "field_curvature_radius_um"],
             "Image sensor": ["resolution", "pixel_pitch_um", "quantum_efficiency", "read_noise_e",
-                             "gain_adu_per_e", "bit_depth", "photons_per_unit"],
+                             "gain_adu_per_e", "bit_depth", "exposure_auto", "photons_per_unit"],
             "Tissue": ["scatter_mfp_emission_um", "scatter_mfp_excitation_um", "scatter_blur_per_um"],
             "Cells (placement)": ["density_per_mm3", "depth_lo_um", "depth_hi_um", "soma_radius_um",
                                   "irregularity", "morphology", "dendrite_length_um",
@@ -380,6 +387,9 @@ class AnatomyPanel:
         w["focus_auto"].value = c.focal_depth_um == "auto"
         if c.focal_depth_um != "auto":
             w["focal_depth_um"].value = float(c.focal_depth_um)
+        w["exposure_auto"].value = c.photons_per_unit == "auto"
+        if c.photons_per_unit != "auto":
+            w["photons_per_unit"].value = float(c.photons_per_unit)
         w["field_curvature_on"].value = c.field_curvature_radius_um is not None
         if c.field_curvature_radius_um is not None:
             w["field_curvature_radius_um"].value = c.field_curvature_radius_um
@@ -393,6 +403,9 @@ class AnatomyPanel:
         w = self._widgets
         c = self.config
         c.focal_depth_um = "auto" if w["focus_auto"].value else float(w["focal_depth_um"].value)
+        c.photons_per_unit = (
+            "auto" if w["exposure_auto"].value else float(w["photons_per_unit"].value)
+        )
         c.field_curvature_radius_um = (
             float(w["field_curvature_radius_um"].value) if w["field_curvature_on"].value else None
         )
@@ -511,12 +524,19 @@ class AnatomyPanel:
         det = int(np.asarray(gt.detectable).sum()) if n_pv else 0
         ph, pw = spec.acquisition.image_sensor.n_px_height, spec.acquisition.image_sensor.n_px_width
         focal = "auto" if c.focal_depth_um == "auto" else f"{c.focal_depth_um:.0f}um"
+        # Exposure mirrors focus: under "auto" show the value the Sensor step resolved
+        # (recorded in ground truth), so the readout reports what auto-exposure picked.
+        if c.photons_per_unit == "auto":
+            resolved = gt.exposure_photons_per_unit
+            exposure = f"auto (~{resolved:.0f})" if resolved is not None else "auto"
+        else:
+            exposure = f"{c.photons_per_unit:.0f}"
         # Line 1 is the density-driven number (full FOV); line 2 makes clear the preview
         # is a window auto-sized to a ~fixed cell budget, so its count stays ~constant as
         # density rises (the window shrinks instead) - the full file is the whole FOV.
         return (
             f"FOV {fov_h:.0f}x{fov_w:.0f} um  |  {c.pixel_size_um:.2f} um/px  |  "
-            f"~{n_full} cells over full FOV  |  focus {focal}\n"
+            f"~{n_full} cells over full FOV  |  focus {focal}  |  exposure {exposure}\n"
             f"preview = {ph}x{pw}px window auto-sized to ~{self.cell_budget} cells "
             f"({n_pv} shown, {det} detectable); the generated file is the whole FOV"
         )

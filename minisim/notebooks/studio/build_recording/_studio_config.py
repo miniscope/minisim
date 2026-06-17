@@ -89,7 +89,11 @@ class StudioConfig:
     # studio default is well above the library's 100: a usable recording is brightly
     # exposed (background well off the noise floor, cells clearly above shot noise),
     # whereas 100 left a deep field sitting at ~12 of 255 ADC counts - all noise.
-    photons_per_unit: float = 600.0
+    # "auto" is the exposure analog of "auto" focus: the Sensor step picks the value
+    # that lands the brightest composed pixel - the full combination of light sources,
+    # including the neuropil + leakage this studio enables by default - near the top of
+    # the ADC range without saturating; recorded as GroundTruth.exposure_photons_per_unit.
+    photons_per_unit: float | Literal["auto"] = 600.0
 
     # ---- tissue scattering (Tissue) ----
     scatter_mfp_excitation_um: float = 600.0
