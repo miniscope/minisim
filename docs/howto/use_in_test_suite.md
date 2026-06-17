@@ -43,14 +43,16 @@ assert report.recall > 0.8, report.summary()
 ```
 
 The footprints are the only required field of `Estimate`; leave the traces /
-spikes / shifts out and the matching scores come back as `nan` / `None`. Each
+activity / shifts out and the matching scores come back as `nan` / `None`. Each
 field takes either the terse CNMF symbol your pipeline already emits or a
 spelled-out alias - `Estimate(A=A, C=C, S=S)` and
-`Estimate(footprints=A, traces=C, spikes=S)` are the same thing. Arrays may be
-`numpy` or `xarray` (minian's CNMF returns `xr.DataArray`); both are accepted.
+`Estimate(footprints=A, traces=C, activity=S)` are the same thing (the deconvolved
+`S` is a non-negative activity rate, not a spike train). Arrays may be `numpy` or
+`xarray` (minian's CNMF returns `xr.DataArray`); both are accepted.
 
-The `Report` carries `recall`, `precision`, `f1`, `mean_iou`, `trace_corr` (median
-Pearson r), `spike_precision`, `spike_recall`, and `shift_rmse`.
+The `Report` carries `recall`, `precision`, `f1`, `mean_overlap`, `trace_corr`
+(median Pearson r), `activity_corr`, `activity_variance_explained`,
+`activity_scale`, `shift_rmse`, and the `footprint_shift` it absorbed.
 
 ```{important}
 **`recall` is over the *detectable* cells, not every planted cell.** By default
@@ -66,7 +68,7 @@ The detection threshold itself is provisional and may change before 1.0 - see th
 
 When you need more than the common case, the underlying primitives
 ({py:func}`~minisim.hungarian_match`, {py:func}`~minisim.trace_pearson`,
-{py:func}`~minisim.spike_precision_recall`, {py:func}`~minisim.shift_rmse`) stay
+{py:func}`~minisim.activity_similarity`, {py:func}`~minisim.shift_rmse`) stay
 fully available; `score` is just the 90%-path on top of them.
 
 ## A pytest fixture

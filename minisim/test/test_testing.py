@@ -3,8 +3,9 @@
 Covers ``make_recording`` (a one-call deterministic CI fixture: exact cell count,
 seed reproducibility, the size/speed knobs, optional motion and snapshots) and
 ``score`` (the one-call recovery scorecard: a perfect estimate scores ~1, an empty
-one scores 0, the detectable filter, and motion RMSE), plus the ``until=`` /
-``stage()`` ``composite`` alias and the ``shift_rmse`` correction flag.
+one scores 0, the detectable filter, activity scoring, global-offset absorption,
+and motion RMSE), plus the ``until=`` / ``stage()`` ``composite`` alias and the
+``shift_rmse`` correction flag.
 """
 
 import math
@@ -89,11 +90,12 @@ def test_score_perfect_estimate_recovers_everything():
     assert report.n_true == det.n_units
     assert report.recall == 1.0
     assert report.precision == 1.0
-    assert report.mean_iou > 0.99
-    # Identical traces/spikes for the active cells -> near-perfect temporal scores.
+    assert report.mean_overlap > 0.99
+    # Identical traces/activity for the active cells -> near-perfect temporal scores.
     assert report.trace_corr > 0.99
-    assert report.spike_precision == 1.0
-    assert report.spike_recall == 1.0
+    assert report.activity_corr > 0.99
+    assert report.activity_variance_explained > 0.99
+    assert report.activity_scale == pytest.approx(1.0)  # identical -> unit gain
 
 
 def test_score_empty_estimate_scores_zero():
@@ -113,7 +115,8 @@ def test_score_footprints_only_leaves_temporal_nan():
     report = score(Estimate(A=det.A_observed), rec.ground_truth)  # no C / S
     assert report.recall == 1.0
     assert math.isnan(report.trace_corr)
-    assert math.isnan(report.spike_precision)
+    assert math.isnan(report.activity_corr)
+    assert math.isnan(report.activity_variance_explained)
 
 
 def test_score_restrict_to_detectable_changes_denominator():
@@ -167,12 +170,12 @@ def test_estimate_accepts_both_field_spellings():
     rec = make_recording(n_cells=4, duration_s=1.0, seed=0)
     det = rec.ground_truth.detectable_subset()
     terse = Estimate(A=det.A_observed, C=det.C, S=det.S)
-    spelled = Estimate(footprints=det.A_observed, traces=det.C, spikes=det.S)
+    spelled = Estimate(footprints=det.A_observed, traces=det.C, activity=det.S)
     # Both spellings populate the same canonical fields and read back either way.
     np.testing.assert_array_equal(terse.A, spelled.footprints)
     np.testing.assert_array_equal(terse.footprints, spelled.A)
     np.testing.assert_array_equal(terse.traces, spelled.C)
-    np.testing.assert_array_equal(terse.spikes, spelled.S)
+    np.testing.assert_array_equal(terse.activity, spelled.S)
     # The two estimates score identically.
     assert score(terse, rec.ground_truth).recall == score(spelled, rec.ground_truth).recall
 
@@ -195,6 +198,29 @@ def test_score_motion_rmse_perfect_correction_is_zero():
     est = Estimate(A=det.A_observed, shifts=-np.asarray(rec.ground_truth.shifts))
     report = score(est, rec.ground_truth)
     assert report.shift_rmse == pytest.approx(0.0, abs=1e-9)
+
+
+def test_score_absorbs_global_footprint_offset_from_motion():
+    # A pipeline whose footprints sit a constant (2, 1) px off (its registration
+    # template differs from minisim's reference) but whose motion correction
+    # over-shoots the true motion by that same constant. score() reads the offset
+    # off the trajectories and re-aligns, so a perfect-but-shifted estimate still
+    # recovers every cell.
+    from minisim.metrics import _shift_stack
+
+    rec = make_recording(n_cells=5, duration_s=2.0, motion=True, seed=2)
+    gt = rec.ground_truth
+    det = gt.detectable_subset()
+    bias = (6, 4)
+    A_off = _shift_stack(np.asarray(det.A_observed), *bias)
+    est_shifts = -np.asarray(gt.shifts) + np.array(bias)  # correction over-shoots by bias
+    est = Estimate(A=A_off, C=det.C, S=det.S, shifts=est_shifts)
+    no_shift = score(est, gt, footprint_shift=None)
+    aligned = score(est, gt)  # default "auto" -> trajectory-derived offset
+    assert aligned.footprint_shift == (-6, -4)
+    assert aligned.recall == 1.0
+    # Re-aligning lifts the overlap the raw offset eroded.
+    assert aligned.mean_overlap > no_shift.mean_overlap
 
 
 def test_report_summary_is_a_string():

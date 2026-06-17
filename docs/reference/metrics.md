@@ -20,11 +20,11 @@ the {doc}`benchmarking guide <../howto/benchmark>` for how they fit together.
 ```
 
 ```{eval-rst}
-.. autofunction:: minisim.spike_precision_recall
+.. autofunction:: minisim.activity_similarity
 ```
 
 ```{eval-rst}
-.. autoclass:: minisim.SpikeScore
+.. autoclass:: minisim.ActivityScore
 ```
 
 ## Field and motion
@@ -35,4 +35,8 @@ the {doc}`benchmarking guide <../howto/benchmark>` for how they fit together.
 
 ```{eval-rst}
 .. autofunction:: minisim.shift_rmse
+```
+
+```{eval-rst}
+.. autofunction:: minisim.global_shift_from_trajectories
 ```

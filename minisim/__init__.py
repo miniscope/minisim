@@ -13,14 +13,15 @@ cached :func:`simulate_cached`), the recovery :mod:`~minisim.metrics`, and the
 
 from minisim.cache import cache_dir, cache_path, simulate_cached
 from minisim.metrics import (
+    ActivityScore,
     Match,
-    SpikeScore,
+    activity_similarity,
     field_pearson,
     footprint_mask,
     footprint_roi_trace,
+    global_shift_from_trajectories,
     hungarian_match,
     shift_rmse,
-    spike_precision_recall,
     trace_pearson,
 )
 from minisim.perf import PerfTracker
@@ -65,6 +66,7 @@ from minisim.video import simulate_video
 __all__ = [
     "DETECT_SNR_THRESHOLD",
     "Acquisition",
+    "ActivityScore",
     "AnyStep",
     "Bleaching",
     "BrainMotion",
@@ -89,12 +91,12 @@ __all__ = [
     "Sensor",
     "Spec",
     "SpecWarning",
-    "SpikeScore",
     "SweptSpec",
     "Tissue",
     "Vasculature",
     "VesselLayer",
     "Vignette",
+    "activity_similarity",
     "build_spec",
     "cache_dir",
     "cache_path",
@@ -103,13 +105,13 @@ __all__ = [
     "finalize",
     "footprint_mask",
     "footprint_roi_trace",
+    "global_shift_from_trajectories",
     "hungarian_match",
     "sample_field_at",
     "shift_rmse",
     "simulate",
     "simulate_cached",
     "simulate_video",
-    "spike_precision_recall",
     "sweep",
     "trace_pearson",
 ]
