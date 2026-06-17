@@ -274,12 +274,14 @@ rec.observed         # (frames, H, W) raw 8-bit counts
 
 `Sensor.photons_per_unit` is the exposure (the photon flux per intensity unit).
 Like the focal plane, it accepts `"auto"`: the exposure analog of auto-focus,
-`Sensor(photons_per_unit="auto")` lands the brightest cell's peak near the top of
-the ADC range without saturating, so you get bright, clear dynamics without
-hand-dialing the brightness. The resolved value is recorded as
-`gt.exposure_photons_per_unit` (just as `"auto"` focus records `gt.focal_depth_um`).
-This is the default in {py:func}`~minisim.testing.make_recording`, so a fixture is
-well-exposed out of the box.
+`Sensor(photons_per_unit="auto")` lands the brightest pixel of the fully-composed
+scene near the top of the ADC range without saturating, so you get bright, clear
+dynamics without hand-dialing the brightness. It sizes exposure from the full
+combination of light sources, the additive neuropil and leakage backgrounds
+included, so it stays unsaturated even with the full confound pipeline on (not just
+the bare cell peak). The resolved value is recorded as `gt.exposure_photons_per_unit`
+(just as `"auto"` focus records `gt.focal_depth_um`). This is the default in
+{py:func}`~minisim.testing.make_recording`, so a fixture is well-exposed out of the box.
 
 (`bleaching` is cell-domain, so it sits before `composite` with the other
 per-cell steps. Its fade acts over minutes, so it is negligible in a 20 s clip -

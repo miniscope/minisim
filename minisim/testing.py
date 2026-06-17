@@ -187,7 +187,7 @@ def make_recording(
             ]
         ),
         # Lively + auto-exposed by default: every cell fires a transient in the short
-        # clip, and "auto" exposure lands the brightest cell near the top of the ADC
+        # clip, and "auto" exposure lands the brightest pixel near the top of the ADC
         # range without saturating - so a fixture is clear and well-exposed with no
         # manual photons_per_unit dialing, and all cells clear the noise floor.
         activity or CellActivity(p_quiescent_to_active=0.05),

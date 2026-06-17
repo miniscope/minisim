@@ -1138,10 +1138,11 @@ class Sensor(StepSpec):
         default=100.0,
         description="Photons per fluorescence intensity unit (exposure/flux scale); sets the "
         "shot-noise regime. A scene/illumination property, not sensor hardware. 'auto' picks "
-        "the exposure that lands the brightest cell's peak near the top of the ADC range "
-        "without saturating - the analog of 'auto' focus, so a fixture gets a clear, "
-        "well-exposed recording with no manual dialing. The resolved value is recorded as "
-        "GroundTruth.exposure_photons_per_unit.",
+        "the exposure that lands the brightest pixel of the fully-composed scene - the full "
+        "combination of light sources (cells, neuropil, vasculature, illumination/vignette, "
+        "leakage) - near the top of the ADC range without saturating, the analog of 'auto' "
+        "focus, so a fixture gets a clear, well-exposed recording with no manual dialing. The "
+        "resolved value is recorded as GroundTruth.exposure_photons_per_unit.",
     )
 
     @field_validator("photons_per_unit")

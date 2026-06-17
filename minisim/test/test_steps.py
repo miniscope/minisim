@@ -628,55 +628,40 @@ def test_sensor_is_reproducible():
 # --- auto exposure --------------------------------------------------------
 
 
-def _cell_with_trace_peak(acq, peak, y_um=0.0, x_um=0.0):
-    """A cell with a unit-peak (optics-free) footprint and a trace peaking at ``peak``."""
-    shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
-    fp = Footprint.from_dense(
-        neuron_footprint(
-            shape, acq.um_to_index(y_um, x_um, shape), acq.um_to_px(4.0), 0.0,
-            np.random.default_rng(0),
-        )
-    )
-    trace = np.ones(acq.n_frames)
-    trace[acq.n_frames // 2] = peak
-    return Cell(center_um=(0.0, y_um, x_um), footprint_planted=fp, trace=trace)
-
-
 def test_resolve_exposure_passes_numeric_through():
     acq = _acq(n_px=16, duration_s=0.5)
-    cell = _cell_with_trace_peak(acq, peak=5.0)
-    assert resolve_exposure([cell], acq, Sensor(photons_per_unit=77.0), None) == 77.0
+    # A numeric photons_per_unit is returned unchanged, ignoring the scene peak.
+    assert resolve_exposure(Sensor(photons_per_unit=77.0), 3.5, acq.image_sensor) == 77.0
 
 
-def test_resolve_exposure_auto_lands_brightest_peak_near_target():
+def test_resolve_exposure_auto_lands_peak_near_target():
     acq = _acq(n_px=16, duration_s=0.5, bit_depth=8)
-    cell = _cell_with_trace_peak(acq, peak=5.0)  # observed footprint peak 1.0, trace peak 5.0
-    ppu = resolve_exposure([cell], acq, Sensor(photons_per_unit="auto"), None)
     sensor = acq.image_sensor
-    # The brightest *mean* pixel = footprint_peak(1) * trace_peak(5) * ppu * QE * gain.
-    mean_peak_counts = 1.0 * 5.0 * ppu * sensor.quantum_efficiency * sensor.gain_adu_per_e
+    peak = 5.0  # the brightest composed pixel, across the full combination of sources
+    ppu = resolve_exposure(Sensor(photons_per_unit="auto"), peak, sensor)
+    # The brightest *mean* (pre-noise) counts = peak * ppu * QE * gain, at 0.85 full scale.
+    mean_peak_counts = peak * ppu * sensor.quantum_efficiency * sensor.gain_adu_per_e
     full_scale = 2 ** sensor.bit_depth - 1
     assert mean_peak_counts == pytest.approx(0.85 * full_scale, rel=1e-6)
 
 
-def test_resolve_exposure_auto_scales_with_the_brightest_cell():
-    # Two cells of different peak brightness: exposure is set by the brighter one, so
-    # doubling the bright cell's peak halves the chosen exposure.
+def test_resolve_exposure_auto_scales_inversely_with_peak():
+    # Exposure is set by the brightest composed pixel: doubling that peak halves ppu.
     acq = _acq(n_px=16, duration_s=0.5)
-    dim = _cell_with_trace_peak(acq, peak=2.0, y_um=-10.0)
-    bright = _cell_with_trace_peak(acq, peak=8.0, y_um=10.0)
-    brighter = _cell_with_trace_peak(acq, peak=16.0, y_um=10.0)
-    ppu_a = resolve_exposure([dim, bright], acq, Sensor(photons_per_unit="auto"), None)
-    ppu_b = resolve_exposure([dim, brighter], acq, Sensor(photons_per_unit="auto"), None)
+    ppu_a = resolve_exposure(Sensor(photons_per_unit="auto"), 8.0, acq.image_sensor)
+    ppu_b = resolve_exposure(Sensor(photons_per_unit="auto"), 16.0, acq.image_sensor)
     assert ppu_b == pytest.approx(ppu_a / 2.0, rel=1e-6)
 
 
-def test_resolve_exposure_auto_falls_back_without_active_cells():
+def test_resolve_exposure_auto_falls_back_on_a_dark_scene():
     acq = _acq(n_px=16, duration_s=0.5)
-    # No activity-bearing cells (no traces) -> the documented fallback exposure.
+    # No light to scale against (peak <= 0) -> the documented fallback exposure.
     from minisim.steps.sensor import _EXPOSURE_FALLBACK_PHOTONS
 
-    assert resolve_exposure([], acq, Sensor(photons_per_unit="auto"), None) == _EXPOSURE_FALLBACK_PHOTONS
+    assert (
+        resolve_exposure(Sensor(photons_per_unit="auto"), 0.0, acq.image_sensor)
+        == _EXPOSURE_FALLBACK_PHOTONS
+    )
 
 
 def test_auto_exposure_end_to_end_is_bright_but_not_saturating():
@@ -702,6 +687,34 @@ def test_auto_exposure_end_to_end_is_bright_but_not_saturating():
     # Not *meaningfully* saturated: "auto" targets the mean peak below the rail, so at
     # most a negligible noise-tail fraction can touch it (no flat-topped dynamics).
     assert float((rec.observed >= full_scale).mean()) < 0.005
+
+
+def test_auto_exposure_accounts_for_additive_backgrounds():
+    # "auto" sizes exposure from the brightest *composed* pixel - the full combination
+    # of light sources, including the additive neuropil + leakage backgrounds, not the
+    # bare cell peak. With those backgrounds on (as the studio enables by default), an
+    # exposure sized to the cell alone would over-saturate; this guards that it does
+    # not. Regression for the studio full-pipeline auto-exposure fix.
+    acq = _acq(n_px=32, duration_s=1.0, bit_depth=8)
+    population = NeuronPopulation(positions_um=[(10.0, -15.0, -15.0), (10.0, 15.0, 15.0)])
+    spec = Spec(
+        acquisition=acq,
+        seed=1,
+        steps=[PlaceNeurons(populations=[population]),
+               CellActivity(p_quiescent_to_active=0.05),
+               CellOptics(), Composite(),
+               Neuropil(amplitude=0.5, n_components=3),
+               IlluminationProfile(), Vignette(), Leakage(level=0.1, profile="gaussian"),
+               Sensor(photons_per_unit="auto")],
+    )
+    from minisim import simulate
+
+    rec = simulate(spec)
+    full_scale = 2 ** acq.image_sensor.bit_depth - 1
+    assert rec.ground_truth.exposure_photons_per_unit is not None
+    # The bright background no longer blows past the rail: saturation stays negligible.
+    assert float((rec.observed >= full_scale).mean()) < 0.01
+    assert rec.observed.max() >= 0.6 * full_scale  # still genuinely bright
     assert rec.observed.max() >= 0.8 * full_scale  # but is genuinely bright
 
 

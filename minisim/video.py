@@ -221,17 +221,15 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
         # per-chunk contraction is single-precision and bit-identical to simulate().
         A = stack_dense(footprints, canvas_shape) if footprints else None  # (unit, Hc, Wc)
         CB = np.stack(emissions).astype(RENDER_DTYPE) if emissions else None  # (unit, frame)
-    # Resolve the exposure exactly as SensorStep does (numeric passes through, "auto"
-    # scans the brightest cell) so the streamed counts stay bit-for-bit equal to
-    # simulate(): same cells, same photon field, same resolve_exposure call.
-    ppu = (
-        resolve_exposure(scene.cells, acq, sensor_spec, photon_field)
-        if sensor_spec is not None
-        else None
-    )
+    def compose(t0: int, t1: int) -> np.ndarray:
+        """Render frames [t0, t1) up to (not including) digitization - no RNG drawn.
 
-    for t0 in range(0, n_frames, chunk_frames):
-        t1 = min(t0 + chunk_frames, n_frames)
+        Every light source the sensor sees, composed exactly as the in-memory steps
+        do: cells (composite), neuropil, the vessel shadow, the motion crop, the
+        illumination × vignette field, and the additive leakage glow. Digitization is
+        the only RNG in this loop, so composing without it draws nothing and cannot
+        desync the stream - which lets the exposure scan below run it an extra time.
+        """
         with measure(perf, "composite"):
             canvas = np.zeros((t1 - t0, canvas_shape[0], canvas_shape[1]))
             if A is not None and CB is not None:
@@ -261,6 +259,28 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
         if leak is not None:
             with measure(perf, "leakage"):
                 frames = frames + leak
+        return frames
+
+    # Resolve the exposure exactly as SensorStep does, from the SAME realized peak.
+    # SensorStep takes the max over the whole composed movie it holds; here, where the
+    # movie is never materialized, "auto" takes it over a no-RNG pass that composes
+    # every chunk (above). A numeric photons_per_unit needs no peak, so the extra pass
+    # runs only for "auto"; a sensorless spec digitizes nothing.
+    if sensor_spec is None:
+        ppu = None
+    elif sensor_spec.photons_per_unit == "auto":
+        peak = 0.0
+        for t0 in range(0, n_frames, chunk_frames):
+            chunk = compose(t0, min(t0 + chunk_frames, n_frames))
+            if chunk.size:
+                peak = max(peak, float(chunk.max()))
+        ppu = resolve_exposure(sensor_spec, peak, sensor_hw)
+    else:
+        ppu = resolve_exposure(sensor_spec, 0.0, sensor_hw)  # numeric passes through
+
+    for t0 in range(0, n_frames, chunk_frames):
+        t1 = min(t0 + chunk_frames, n_frames)
+        frames = compose(t0, t1)
         if ppu is not None:
             # Per-frame digitization on the shared rng -- identical to SensorStep, and
             # independent of the chunk boundaries (each frame draws its own noise).

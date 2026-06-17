@@ -168,9 +168,9 @@ class GroundTruth(BaseModel):
     # a dataset) by save/load; None when the optics step did not run.
     focal_depth_um: float | None = None
     # The concrete exposure (photons per intensity unit) the sensor step resolved
-    # "auto" to - the level that lands the brightest cell near the top of the ADC
-    # range. A scalar, persisted as a group attr; None when the sensor step did not
-    # run. Equals Sensor.photons_per_unit when that was given numerically.
+    # "auto" to - the level that lands the brightest composed pixel (all light sources)
+    # near the top of the ADC range. A scalar, persisted as a group attr; None when the
+    # sensor step did not run. Equals Sensor.photons_per_unit when given numerically.
     exposure_photons_per_unit: float | None = None
 
     # Memoizes the regenerated dense A_observed (one blur pass over all units), so
