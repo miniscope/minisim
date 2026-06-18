@@ -234,7 +234,9 @@ def stack_dense(
     Defaults to :data:`RENDER_DTYPE` (float32), the render's contraction precision;
     pass ``dtype=float`` for a float64 stack when full precision is wanted.
     """
-    a = np.zeros((len(footprints), int(canvas_shape[0]), int(canvas_shape[1])), dtype=dtype)
+    a = np.zeros(
+        (len(footprints), int(canvas_shape[0]), int(canvas_shape[1])), dtype=dtype
+    )
     for i, fp in enumerate(footprints):
         fp.add_into(a[i])
     return a
@@ -272,7 +274,10 @@ class FootprintStack:
         ``canvas_shape`` is required so an empty stack (no cells) still knows the
         frame it lives on, the way the old ``np.zeros((0, H, W))`` did.
         """
-        return cls(footprints=tuple(footprints), canvas_shape=(int(canvas_shape[0]), int(canvas_shape[1])))
+        return cls(
+            footprints=tuple(footprints),
+            canvas_shape=(int(canvas_shape[0]), int(canvas_shape[1])),
+        )
 
     @classmethod
     def from_dense(cls, dense: np.ndarray) -> FootprintStack:
@@ -321,7 +326,9 @@ class FootprintStack:
         the sensor FOV.
         """
         return FootprintStack(
-            footprints=tuple(fp.crop(top, left, height, width) for fp in self.footprints),
+            footprints=tuple(
+                fp.crop(top, left, height, width) for fp in self.footprints
+            ),
             canvas_shape=(int(height), int(width)),
         )
 
@@ -384,6 +391,8 @@ class FootprintStack:
             patch = data[pos : pos + count].reshape(int(ph), int(pw))
             pos += count
             footprints.append(
-                Footprint(offset=(int(y0), int(x0)), patch=patch, canvas_shape=canvas_shape)
+                Footprint(
+                    offset=(int(y0), int(x0)), patch=patch, canvas_shape=canvas_shape
+                )
             )
         return cls(footprints=tuple(footprints), canvas_shape=canvas_shape)

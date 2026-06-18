@@ -236,10 +236,14 @@ def test_flat_spec_resolves_to_one_population_identically():
     # draw (so the flat form stays a faithful shorthand, not a separate code path).
     acq = _acq()
     fov_h, fov_w = acq.fov_um
-    flat = PlaceNeurons(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0), soma_radius_um=6.0)
+    flat = PlaceNeurons(
+        density_per_mm3=40000.0, depth_range_um=(0.0, 50.0), soma_radius_um=6.0
+    )
     listed = PlaceNeurons(
         populations=[
-            NeuronPopulation(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0), soma_radius_um=6.0)
+            NeuronPopulation(
+                density_per_mm3=40000.0, depth_range_um=(0.0, 50.0), soma_radius_um=6.0
+            )
         ]
     )
     a = sample_neurons(flat, fov_h, fov_w, np.random.default_rng(7))
@@ -255,11 +259,15 @@ def test_multiple_populations_concatenate_and_keep_per_population_shape():
     spec = PlaceNeurons(
         populations=[
             NeuronPopulation(  # thin soma-only band: 50 µm FOV, depth (0,0) → 5 cells
-                morphology="soma", density_per_mm3=200000.0, soma_radius_um=5.0,
+                morphology="soma",
+                density_per_mm3=200000.0,
+                soma_radius_um=5.0,
                 depth_range_um=(0.0, 0.0),
             ),
             NeuronPopulation(  # planar cytosolic layer at depth 30 → another 5
-                morphology="cytosolic", density_per_mm3=200000.0, soma_radius_um=5.0,
+                morphology="cytosolic",
+                density_per_mm3=200000.0,
+                soma_radius_um=5.0,
                 depth_range_um=(30.0, 30.0),
             ),
         ]
@@ -282,7 +290,9 @@ def test_sample_neurons_matches_the_full_step_multi_population():
         populations=[
             NeuronPopulation(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0)),
             NeuronPopulation(
-                morphology="cytosolic", density_per_mm3=30000.0, depth_range_um=(80.0, 150.0)
+                morphology="cytosolic",
+                density_per_mm3=30000.0,
+                depth_range_um=(80.0, 150.0),
             ),
         ]
     )
@@ -313,7 +323,9 @@ def test_explicit_and_sampled_populations_mix():
     explicit = [(40.0, 12.0, 12.0), (40.0, 24.0, 24.0)]
     spec = PlaceNeurons(
         populations=[
-            NeuronPopulation(density_per_mm3=200000.0, soma_radius_um=5.0, depth_range_um=(0.0, 0.0)),
+            NeuronPopulation(
+                density_per_mm3=200000.0, soma_radius_um=5.0, depth_range_um=(0.0, 0.0)
+            ),
             NeuronPopulation(positions_um=explicit, morphology="soma"),
         ]
     )
@@ -339,7 +351,11 @@ def test_populations_spec_survives_serialization_round_trip():
     # A populations-based step must round-trip through model_dump()/model_validate()
     # unchanged - a dump marks every field "set", so the both-set guard must compare
     # against defaults, not model_fields_set, or sweep()/cache reload would reject it.
-    step = PlaceNeurons(populations=[NeuronPopulation(soma_radius_um=5.0, positions_um=[(1.0, 2.0, 3.0)])])
+    step = PlaceNeurons(
+        populations=[
+            NeuronPopulation(soma_radius_um=5.0, positions_um=[(1.0, 2.0, 3.0)])
+        ]
+    )
     restored = PlaceNeurons.model_validate(step.model_dump())
     assert restored.populations == step.populations
 
@@ -375,17 +391,31 @@ def test_cytosolic_dendrite_count_is_random_per_cell():
     # different dendrite layouts - what makes cells look distinct.
     shape, center, radius = (96, 96), (48.0, 48.0), 6.0
     fps = [
-        neuron_footprint(shape, center, radius, irregularity=0.0,
-                         rng=np.random.default_rng(s), morphology="cytosolic",
-                         dendrite_length_px=18.0, dendrite_width_px=2.5)
+        neuron_footprint(
+            shape,
+            center,
+            radius,
+            irregularity=0.0,
+            rng=np.random.default_rng(s),
+            morphology="cytosolic",
+            dendrite_length_px=18.0,
+            dendrite_width_px=2.5,
+        )
         for s in range(8)
     ]
     counts = {int((fp > 0).sum()) for fp in fps}
     assert len(counts) >= 5  # cells differ from one another (varied arbors)
     # Same seed reproduces the same arbor exactly (determinism for streaming/cache).
-    again = neuron_footprint(shape, center, radius, irregularity=0.0,
-                             rng=np.random.default_rng(3), morphology="cytosolic",
-                             dendrite_length_px=18.0, dendrite_width_px=2.5)
+    again = neuron_footprint(
+        shape,
+        center,
+        radius,
+        irregularity=0.0,
+        rng=np.random.default_rng(3),
+        morphology="cytosolic",
+        dendrite_length_px=18.0,
+        dendrite_width_px=2.5,
+    )
     np.testing.assert_array_equal(again, fps[3])
 
 
@@ -464,10 +494,10 @@ def test_spike_activity_params_are_monotonic_in_density():
     # Denser activity: bursts start more often (p_q2a up), last longer (p_a2q down),
     # fire harder (active_rate up), and the background rate rises.
     sparse, dense = spike_activity_params(0.2), spike_activity_params(0.8)
-    assert dense[0] > sparse[0]   # p_quiescent_to_active
-    assert dense[1] < sparse[1]   # p_active_to_quiescent
-    assert dense[2] > sparse[2]   # active_rate_hz
-    assert dense[3] > sparse[3]   # quiescent_rate_hz
+    assert dense[0] > sparse[0]  # p_quiescent_to_active
+    assert dense[1] < sparse[1]  # p_active_to_quiescent
+    assert dense[2] > sparse[2]  # active_rate_hz
+    assert dense[3] > sparse[3]  # quiescent_rate_hz
     assert spike_activity_params(2.0) == spike_activity_params(1.0)  # clamps
 
 
@@ -520,16 +550,16 @@ def test_cell_activity_opens_at_steady_state_no_cold_ramp():
     # baseline over a few tau_decay (a raw history-free convolution would start at f0).
     acq = _acq(n_px=80, duration_s=15.0)
     scene = Scene.zeros(acq)
-    PlaceNeurons(density_per_mm3=6e5, depth_range_um=(0.0, 0.0), soma_radius_um=4.0).build(
-        acq, np.random.default_rng(3)
-    )(scene)
+    PlaceNeurons(
+        density_per_mm3=6e5, depth_range_um=(0.0, 0.0), soma_radius_um=4.0
+    ).build(acq, np.random.default_rng(3))(scene)
     CellActivity(active_rate_hz=5.0, tau_decay_s=0.5, brightness_cv=0.0).build(
         acq, np.random.default_rng(3)
     )(scene)
     m = np.stack([c.trace for c in scene.cells]).mean(axis=0)  # population mean trace
-    early = m[: int(0.5 * acq.fps)].mean()       # first 0.5 s
-    steady = m[int(5.0 * acq.fps):].mean()       # well past any ramp
-    assert steady > 1.3                          # a real calcium baseline exists to ramp to
+    early = m[: int(0.5 * acq.fps)].mean()  # first 0.5 s
+    steady = m[int(5.0 * acq.fps) :].mean()  # well past any ramp
+    assert steady > 1.3  # a real calcium baseline exists to ramp to
     assert 0.85 * steady < early < 1.15 * steady  # ...yet the opening is already there
 
 
@@ -546,8 +576,16 @@ def test_render_is_the_footprint_trace_outer_sum():
     tr1 = np.array([1.0, 2.0, 3.0])
     tr2 = np.array([4.0, 5.0, 6.0])
     scene.cells += [
-        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=Footprint.from_dense(fp1), trace=tr1),
-        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=Footprint.from_dense(fp2), trace=tr2),
+        Cell(
+            center_um=(0.0, 0.0, 0.0),
+            footprint_planted=Footprint.from_dense(fp1),
+            trace=tr1,
+        ),
+        Cell(
+            center_um=(0.0, 0.0, 0.0),
+            footprint_planted=Footprint.from_dense(fp2),
+            trace=tr2,
+        ),
     ]
     CompositeStep(Composite(), acq, np.random.default_rng(0))(scene)
     np.testing.assert_allclose(scene.movie.values[:, 2, 3], tr1)
@@ -574,9 +612,10 @@ def test_render_regenerates_observed_footprint_from_optics_scalars():
         )
     )
     CompositeStep(Composite(), acq, np.random.default_rng(0))(scene)
-    expected = degrade_footprint(
-        Footprint.from_dense(planted), 1.0, 0.5
-    ).to_dense(dtype=float) * 2.0
+    expected = (
+        degrade_footprint(Footprint.from_dense(planted), 1.0, 0.5).to_dense(dtype=float)
+        * 2.0
+    )
     np.testing.assert_allclose(scene.movie.values[0], expected, rtol=1e-5)
     assert scene.movie.values[0, 4, 4] < 2.0 * 0.5  # blurred: peak below gain·trace
 
@@ -634,20 +673,29 @@ def test_exposure_scales_counts_and_stays_within_adc():
     from minisim import simulate
 
     acq = _acq(n_px=32, duration_s=1.0, bit_depth=8)
-    population = NeuronPopulation(positions_um=[(10.0, -15.0, -15.0), (10.0, 15.0, 15.0)])
-    full_scale = 2 ** acq.image_sensor.bit_depth - 1
+    population = NeuronPopulation(
+        positions_um=[(10.0, -15.0, -15.0), (10.0, 15.0, 15.0)]
+    )
+    full_scale = 2**acq.image_sensor.bit_depth - 1
 
     def run(ppu):
         spec = Spec(
-            acquisition=acq, seed=1,
-            steps=[PlaceNeurons(populations=[population]),
-                   CellActivity(p_quiescent_to_active=0.05),
-                   CellOptics(), Composite(), Sensor(photons_per_unit=ppu)],
+            acquisition=acq,
+            seed=1,
+            steps=[
+                PlaceNeurons(populations=[population]),
+                CellActivity(p_quiescent_to_active=0.05),
+                CellOptics(),
+                Composite(),
+                Sensor(photons_per_unit=ppu),
+            ],
         )
         return simulate(spec)
 
     dim, bright = run(20.0), run(80.0)
-    assert bright.observed.mean() > dim.observed.mean()  # brighter exposure -> more counts
+    assert (
+        bright.observed.mean() > dim.observed.mean()
+    )  # brighter exposure -> more counts
     assert dim.observed.max() <= full_scale and bright.observed.max() <= full_scale
 
 
@@ -659,7 +707,11 @@ def _cell_with_footprint(acq, z, radius_um=4.0):
     h, w = acq.image_sensor.n_px_height, acq.image_sensor.n_px_width
     fp = Footprint.from_dense(
         neuron_footprint(
-            (h, w), (h / 2, w / 2), acq.um_to_px(radius_um), 0.0, np.random.default_rng(0)
+            (h, w),
+            (h / 2, w / 2),
+            acq.um_to_px(radius_um),
+            0.0,
+            np.random.default_rng(0),
         )
     )
     y_um, x_um = (h / 2) * acq.pixel_size_um, (w / 2) * acq.pixel_size_um
@@ -702,7 +754,9 @@ def test_resolve_focal_plane_auto_is_median_and_numeric_passes_through():
     acq = _acq()  # focal_depth_in_tissue_um defaults to "auto"
     cells = [_cell_with_footprint(acq, z) for z in (0.0, 50.0, 100.0, 150.0, 200.0)]
     assert resolve_focal_plane(cells, acq.focal_depth_in_tissue_um) == 100.0
-    assert resolve_focal_plane([], acq.focal_depth_in_tissue_um) == 0.0  # empty -> surface
+    assert (
+        resolve_focal_plane([], acq.focal_depth_in_tissue_um) == 0.0
+    )  # empty -> surface
     numeric = _acq(focal_depth_in_tissue_um=42.0)
     assert resolve_focal_plane(cells, numeric.focal_depth_in_tissue_um) == 42.0
 
@@ -712,11 +766,15 @@ def test_resolve_focal_plane_auto_accounts_for_field_curvature():
     # effective depth z + shift(r), so the min-total-defocus focus is the MEDIAN
     # effective depth. With curvature, off-axis cells read deeper, so auto sits
     # deeper than the plain median z -- and falls back to median z without optics.
-    acq = _acq(n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0))
+    acq = _acq(
+        n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0)
+    )
     radii = (0.0, 20.0, 40.0, 60.0, 80.0)
     # Optical axis is the frame origin (0, 0), so field radius is just |x| here.
     cells = [Cell(center_um=(100.0, 0.0, r)) for r in radii]
-    expected = float(np.median([100.0 + acq.optics.focal_curvature_shift_um(r) for r in radii]))
+    expected = float(
+        np.median([100.0 + acq.optics.focal_curvature_shift_um(r) for r in radii])
+    )
 
     assert resolve_focal_plane(cells, "auto") == 100.0  # no optics -> plain median z
     curv = resolve_focal_plane(cells, "auto", acq.optics)
@@ -755,7 +813,9 @@ def test_resolve_focal_plane_auto_focuses_shallower_when_scatter_dims_deep_cells
     shallow = [_scored_cell(z, lo=20.0, hi=28.0) for z in (22.0, 24.0, 26.0)]
     deep = [_scored_cell(z, lo=20.0, hi=28.0) for z in (122.0, 124.0, 126.0)]
     cells = shallow + deep
-    sensor = Sensor(photons_per_unit=70.0)  # tuned: shallow clears the floor, deep does not
+    sensor = Sensor(
+        photons_per_unit=70.0
+    )  # tuned: shallow clears the floor, deep does not
 
     assert resolve_focal_plane(cells, "auto", acq.optics) == 74.0  # geometric median
     focus = resolve_focal_plane(cells, "auto", acq.optics, acq=acq, sensor_spec=sensor)
@@ -769,11 +829,18 @@ def test_resolve_focal_plane_auto_shifts_when_vignette_removes_edge_cells():
     # yield-optimal focus sits on the edge group. A strong vignette dims those
     # corner cells below the floor, dropping them from the vote, so the focus
     # snaps back to the on-axis cluster. The plane moves once you account for it.
-    acq = _acq(n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0))
+    acq = _acq(
+        n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0)
+    )
     # Optical-center frame (n_px=200, 1 µm/px): the axis is (0, 0); the FOV corner
     # is ~(-90, -90), a large field radius.
-    center = [Cell(center_um=(80.0, 0.0, 0.0), trace=np.array([20.0, 28.0])) for _ in range(5)]
-    edge = [Cell(center_um=(80.0, -90.0, -90.0), trace=np.array([20.0, 28.0])) for _ in range(8)]
+    center = [
+        Cell(center_um=(80.0, 0.0, 0.0), trace=np.array([20.0, 28.0])) for _ in range(5)
+    ]
+    edge = [
+        Cell(center_um=(80.0, -90.0, -90.0), trace=np.array([20.0, 28.0]))
+        for _ in range(8)
+    ]
     cells = center + edge
     sensor = Sensor(photons_per_unit=200.0)
     strong = combined_falloff_field(acq, None, Vignette(falloff=0.01, exponent=1.0))
@@ -785,7 +852,9 @@ def test_resolve_focal_plane_auto_shifts_when_vignette_removes_edge_cells():
         cells, "auto", acq.optics, acq=acq, sensor_spec=sensor, photon_field=strong
     )
     assert focus_none > 90.0  # edge group (deeper effective depth) wins the count
-    assert focus_vig < 84.0  # vignette kills the edge cells -> back to the center cluster
+    assert (
+        focus_vig < 84.0
+    )  # vignette kills the edge cells -> back to the center cluster
     assert focus_vig < focus_none - 5.0
 
 
@@ -812,7 +881,9 @@ def test_optics_deeper_cell_is_broader_and_dimmer():
     # Both in focus (focal == z, defocus 0), so the difference is pure depth:
     # scatter broadens the footprint and attenuation removes light.
     def run(z):
-        acq = _acq(n_px=80, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=z)
+        acq = _acq(
+            n_px=80, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=z
+        )
         scene = Scene.zeros(acq)
         scene.cells.append(_cell_with_footprint(acq, z=z))
         CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
@@ -820,7 +891,9 @@ def test_optics_deeper_cell_is_broader_and_dimmer():
 
     shallow, deep = run(10.0), run(180.0)
     assert deep.optical_brightness < shallow.optical_brightness  # attenuation
-    assert deep.observed_footprint().patch.sum() < shallow.observed_footprint().patch.sum()
+    assert (
+        deep.observed_footprint().patch.sum() < shallow.observed_footprint().patch.sum()
+    )
     assert (
         deep.observed_footprint().patch.max() < shallow.observed_footprint().patch.max()
     )  # broader + dimmer
@@ -831,7 +904,9 @@ def test_optics_defocus_conserves_observed_integral():
     # (being a convolution) conserves its integral; attenuation(z) is fixed.
     z, sums = 50.0, []
     for focal in (48.0, 50.0, 52.0):
-        acq = _acq(n_px=80, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=focal)
+        acq = _acq(
+            n_px=80, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=focal
+        )
         scene = Scene.zeros(acq)
         scene.cells.append(_cell_with_footprint(acq, z=z, radius_um=3.0))
         CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
@@ -869,7 +944,9 @@ def test_resolved_depth_of_field_um():
     assert Optics(na=0.3, depth_of_field_um=12.0).resolved_depth_of_field_um == 12.0
     # "auto" (the default) derives the DOF from NA: n·λ/NA², falling as 1/NA²
     o30 = Optics(na=0.30, emission_nm=525.0)  # depth_of_field_um defaults to "auto"
-    assert o30.resolved_depth_of_field_um == pytest.approx(1.33 * 0.525 / 0.30**2, rel=1e-6)
+    assert o30.resolved_depth_of_field_um == pytest.approx(
+        1.33 * 0.525 / 0.30**2, rel=1e-6
+    )
     assert Optics(na=0.45).resolved_depth_of_field_um < o30.resolved_depth_of_field_um
     with pytest.raises(ValidationError, match="depth_of_field_um"):
         Optics(depth_of_field_um=0.0)  # must be > 0 or "auto"
@@ -894,20 +971,26 @@ def test_field_curvature_blurs_off_axis_cells():
     def cell_at(y_um, x_um):
         fp = Footprint.from_dense(
             neuron_footprint(
-                (npx, npx), acq.um_to_index(y_um, x_um, (npx, npx)), acq.um_to_px(4.0), 0.0,
+                (npx, npx),
+                acq.um_to_index(y_um, x_um, (npx, npx)),
+                acq.um_to_px(4.0),
+                0.0,
                 np.random.default_rng(0),
             )
         )
         return Cell(center_um=(z, y_um, x_um), footprint_planted=fp)
 
-    center = cell_at(0.0, 0.0)        # on axis (r = 0)
-    corner = cell_at(-90.0, -90.0)    # near a corner (large r)
+    center = cell_at(0.0, 0.0)  # on axis (r = 0)
+    corner = cell_at(-90.0, -90.0)  # near a corner (large r)
     scene = Scene.zeros(acq)
     scene.cells += [center, corner]
     CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
     assert center.in_focus is True
     assert corner.in_focus is False  # off-axis sagitta pushes it past the DOF
-    assert corner.observed_footprint().patch.max() < center.observed_footprint().patch.max()
+    assert (
+        corner.observed_footprint().patch.max()
+        < center.observed_footprint().patch.max()
+    )
 
 
 def test_optics_makes_render_use_the_degraded_footprint():
@@ -926,7 +1009,9 @@ def test_optics_makes_render_use_the_degraded_footprint():
 
     scene.movie.values[:] = 0.0
     CellOpticsStep(CellOptics(), acq, rng)(scene)
-    CompositeStep(Composite(), acq, rng)(scene)  # now regenerates the observed footprint
+    CompositeStep(Composite(), acq, rng)(
+        scene
+    )  # now regenerates the observed footprint
     observed_peak = scene.movie.values.max()
 
     assert all(c.observed_sigma_px is not None for c in scene.cells)
@@ -1070,10 +1155,13 @@ def test_neuropil_temporal_couples_to_population_activity():
 
     def _background_per_frame(coupling):
         scene = Scene.zeros(acq)
-        scene.cells += [Cell(center_um=(0.0, 12.0, 12.0), trace=bump.copy()) for _ in range(3)]
+        scene.cells += [
+            Cell(center_um=(0.0, 12.0, 12.0), trace=bump.copy()) for _ in range(3)
+        ]
         NeuropilStep(
             Neuropil(amplitude=1.0, n_components=3, population_coupling=coupling),
-            acq, np.random.default_rng(0),
+            acq,
+            np.random.default_rng(0),
         )(scene)
         return scene.movie.values.mean(axis=(1, 2)), scene.truth.neuropil_population
 
@@ -1103,7 +1191,8 @@ def test_neuropil_envelope_mix_stays_positive_with_cells():
     ]
     NeuropilStep(
         Neuropil(n_components=3, population_coupling=0.7),
-        acq, np.random.default_rng(1),
+        acq,
+        np.random.default_rng(1),
     )(scene)
     temporal = scene.truth.neuropil_temporal
     assert temporal.shape == (3, acq.n_frames)
@@ -1123,7 +1212,9 @@ def test_bleaching_pool_decays_under_drive_and_recovers_in_dark():
     assert (np.diff(lit) <= 1e-12).all()  # monotonically non-increasing
     assert lit[-1] < 0.1
     # Light off (no emission) with turnover: the pool recovers back toward 1.
-    dark = bleaching_pool(np.zeros(n), q=0.02, tau_turn_frames=50.0, intensity=1.0, b0=0.3)
+    dark = bleaching_pool(
+        np.zeros(n), q=0.02, tau_turn_frames=50.0, intensity=1.0, b0=0.3
+    )
     assert dark[0] == pytest.approx(0.3)
     assert (np.diff(dark) >= -1e-12).all()  # monotonically non-decreasing
     assert dark[-1] > 0.95  # recovered
@@ -1133,11 +1224,15 @@ def test_bleaching_pool_more_emission_or_brighter_bleaches_more():
     n = 300
     base = bleaching_pool(np.full(n, 1.0), q=0.01, tau_turn_frames=1e9, intensity=1.0)
     busier = bleaching_pool(np.full(n, 3.0), q=0.01, tau_turn_frames=1e9, intensity=1.0)
-    brighter = bleaching_pool(np.full(n, 1.0), q=0.01, tau_turn_frames=1e9, intensity=3.0)
-    assert busier[-1] < base[-1]      # a more active cell fades more
-    assert brighter[-1] < base[-1]    # ...as does a more brightly-lit one
+    brighter = bleaching_pool(
+        np.full(n, 1.0), q=0.01, tau_turn_frames=1e9, intensity=3.0
+    )
+    assert busier[-1] < base[-1]  # a more active cell fades more
+    assert brighter[-1] < base[-1]  # ...as does a more brightly-lit one
     # With turnover the decay settles at a floor B* = k_turn/(k_turn + q*I*emission).
-    settled = bleaching_pool(np.full(2000, 1.0), q=0.01, tau_turn_frames=100.0, intensity=1.0)
+    settled = bleaching_pool(
+        np.full(2000, 1.0), q=0.01, tau_turn_frames=100.0, intensity=1.0
+    )
     k = 1.0 / 100.0
     assert settled[-1] == pytest.approx(k / (k + 0.01 * 1.0 * 1.0), rel=0.02)
 
@@ -1147,32 +1242,63 @@ def test_bleaching_floor_is_the_pool_fixed_point():
     # constant drive (the steady state it documents), so the notebook's planning
     # curves agree with the engine.
     q, tau, intensity, emission = 0.01, 100.0, 1.0, 1.0
-    settled = bleaching_pool(np.full(4000, emission), q=q, tau_turn_frames=tau, intensity=intensity)
-    assert bleaching_floor(q, intensity, emission, tau) == pytest.approx(settled[-1], rel=1e-3)
+    settled = bleaching_pool(
+        np.full(4000, emission), q=q, tau_turn_frames=tau, intensity=intensity
+    )
+    assert bleaching_floor(q, intensity, emission, tau) == pytest.approx(
+        settled[-1], rel=1e-3
+    )
     # Light off (or no turnover) are the two limits: turnover wins -> 1; no turnover -> 0.
-    assert bleaching_floor(q, intensity=0.0, emission=emission, tau_turn=tau) == pytest.approx(1.0)
-    assert bleaching_floor(q, intensity, emission, tau_turn=float("inf")) == pytest.approx(0.0)
+    assert bleaching_floor(
+        q, intensity=0.0, emission=emission, tau_turn=tau
+    ) == pytest.approx(1.0)
+    assert bleaching_floor(
+        q, intensity, emission, tau_turn=float("inf")
+    ) == pytest.approx(0.0)
     # tau_turn == 0 (no turnover) is the same limit, and still equals the pool: under
     # any positive drive the integrator settles at 0, and the degenerate no-drive /
     # no-turnover case (denom == 0) falls back to the fully-intact 1.0.
-    settled0 = bleaching_pool(np.full(4000, emission), q=q, tau_turn_frames=0.0, intensity=intensity)
-    assert bleaching_floor(q, intensity, emission, tau_turn=0.0) == pytest.approx(settled0[-1], abs=1e-9)
-    assert bleaching_floor(q, intensity=0.0, emission=0.0, tau_turn=0.0) == pytest.approx(1.0)
+    settled0 = bleaching_pool(
+        np.full(4000, emission), q=q, tau_turn_frames=0.0, intensity=intensity
+    )
+    assert bleaching_floor(q, intensity, emission, tau_turn=0.0) == pytest.approx(
+        settled0[-1], abs=1e-9
+    )
+    assert bleaching_floor(
+        q, intensity=0.0, emission=0.0, tau_turn=0.0
+    ) == pytest.approx(1.0)
     # negative rates are non-physical and rejected rather than silently returning 1.0.
-    for bad in (dict(q=-q), dict(intensity=-1.0), dict(emission=-1.0), dict(tau_turn=-1.0)):
+    for bad in (
+        dict(q=-q),
+        dict(intensity=-1.0),
+        dict(emission=-1.0),
+        dict(tau_turn=-1.0),
+    ):
         with pytest.raises(ValueError, match="non-negative"):
-            bleaching_floor(**{"q": q, "intensity": intensity, "emission": emission, "tau_turn": tau, **bad})
+            bleaching_floor(
+                **{
+                    "q": q,
+                    "intensity": intensity,
+                    "emission": emission,
+                    "tau_turn": tau,
+                    **bad,
+                }
+            )
 
 
 def test_dark_recovery_is_the_pool_zero_input_response():
     # dark_recovery must trace the integrator with the light off (no emission),
     # frame for frame, starting from b0.
     n, tau, b0 = 200, 50.0, 0.3
-    pool = bleaching_pool(np.zeros(n), q=0.02, tau_turn_frames=tau, intensity=1.0, b0=b0)
+    pool = bleaching_pool(
+        np.zeros(n), q=0.02, tau_turn_frames=tau, intensity=1.0, b0=b0
+    )
     closed = dark_recovery(b0, np.arange(n), tau)
     np.testing.assert_allclose(closed, pool, atol=1e-9)
     assert dark_recovery(b0, 0.0, tau) == pytest.approx(b0)  # starts at b0
-    assert dark_recovery(b0, 1e9, tau) == pytest.approx(1.0)  # fully recovered after long dark
+    assert dark_recovery(b0, 1e9, tau) == pytest.approx(
+        1.0
+    )  # fully recovered after long dark
     assert np.ndim(dark_recovery(b0, 10.0, tau)) == 0  # scalar t -> 0-d scalar back
     # a non-positive turnover time is rejected (would divide by zero / diverge).
     for bad_tau in (0.0, -1.0):
@@ -1192,7 +1318,8 @@ def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
     # Exaggerated susceptibility (at unit intensity) so the fade is unambiguous.
     BleachingStep(
         Bleaching(bleach_susceptibility=0.05, excitation_intensity=1.0),
-        acq, np.random.default_rng(4),
+        acq,
+        np.random.default_rng(4),
     )(scene)
     for cell in scene.cells:
         assert cell.bleach is not None
@@ -1200,7 +1327,7 @@ def test_bleaching_step_sets_per_cell_envelope_and_render_dims_over_time():
         assert cell.bleach[-1] < cell.bleach[0]  # faded by the end
     CompositeStep(Composite(), acq, np.random.default_rng(4))(scene)
     brightness = scene.movie.values.sum(axis=(1, 2))
-    assert brightness[-int(acq.fps):].mean() < brightness[: int(acq.fps)].mean()
+    assert brightness[-int(acq.fps) :].mean() < brightness[: int(acq.fps)].mean()
 
 
 # --- vignette ---------------------------------------------------------
@@ -1245,10 +1372,14 @@ def test_illumination_drives_bleaching_faster_at_the_bright_center():
     def end_B(with_illum):
         scene = Scene.zeros(acq, rng=np.random.default_rng(0))
         scene.cells = [
-            Cell(center_um=(0.0, 0.0, 0.0), trace=trace.copy()),              # optical axis
-            Cell(center_um=(0.0, -30 * px, -30 * px), trace=trace.copy()),    # near a corner
+            Cell(center_um=(0.0, 0.0, 0.0), trace=trace.copy()),  # optical axis
+            Cell(
+                center_um=(0.0, -30 * px, -30 * px), trace=trace.copy()
+            ),  # near a corner
         ]
-        step = BleachingStep(Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2))
+        step = BleachingStep(
+            Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2)
+        )
         if with_illum:
             step.illumination = IlluminationProfile(falloff=0.2, exponent=2.0)
         step(scene)
@@ -1258,7 +1389,9 @@ def test_illumination_drives_bleaching_faster_at_the_bright_center():
     c_off, e_off = end_B(False)
     assert c_on < e_on  # center bleaches more than edge when illumination present
     assert e_on > e_off  # the dim edge bleaches less than the uniform-dose baseline
-    assert c_off == pytest.approx(e_off, rel=1e-9)  # equal without illumination (same trace)
+    assert c_off == pytest.approx(
+        e_off, rel=1e-9
+    )  # equal without illumination (same trace)
 
 
 def test_bleaching_illumination_dose_is_margin_invariant():
@@ -1273,7 +1406,9 @@ def test_bleaching_illumination_dose_is_margin_invariant():
     def center_end_B(margin_px):
         scene = Scene.zeros(acq, rng=np.random.default_rng(0), margin_px=margin_px)
         scene.cells = [Cell(center_um=(0.0, 0.0, 0.0), trace=trace.copy())]
-        step = BleachingStep(Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2))
+        step = BleachingStep(
+            Bleaching(excitation_intensity=10.0), acq, np.random.default_rng(2)
+        )
         step.illumination = IlluminationProfile(falloff=0.2, exponent=2.0)
         step(scene)
         return scene.cells[0].bleach[-1]
@@ -1285,9 +1420,9 @@ def test_bleaching_illumination_dose_is_margin_invariant():
 def test_vignette_is_radial_and_time_invariant():
     acq = _acq(n_px=51, duration_s=1.0)  # odd -> a clean center pixel at (25, 25)
     scene = Scene.ones(acq)
-    VignetteStep(
-        Vignette(falloff=0.5, exponent=2.0), acq, np.random.default_rng(0)
-    )(scene)
+    VignetteStep(Vignette(falloff=0.5, exponent=2.0), acq, np.random.default_rng(0))(
+        scene
+    )
     field = scene.truth.vignette
     assert field.shape == (51, 51)
     assert field[25, 25] == pytest.approx(1.0)  # bright center
@@ -1317,9 +1452,9 @@ def test_vignette_center_offset_moves_the_bright_spot():
 def test_leakage_uniform_adds_level_everywhere():
     acq = _acq(n_px=16, duration_s=1.0)
     scene = Scene.zeros(acq)
-    LeakageStep(
-        Leakage(profile="uniform", level=0.2), acq, np.random.default_rng(0)
-    )(scene)
+    LeakageStep(Leakage(profile="uniform", level=0.2), acq, np.random.default_rng(0))(
+        scene
+    )
     np.testing.assert_allclose(scene.movie.values, 0.2)
     np.testing.assert_allclose(scene.truth.leakage, 0.2)
     movie = scene.movie.values
@@ -1400,7 +1535,9 @@ def test_grow_vessel_tree_unbranched_is_a_constant_radius_path():
 def test_grow_vessel_tree_branching_tapers_and_terminates_at_capillary_floor():
     bounds, root = (400.0, 400.0), (200.0, 0.0)
     segs = grow_vessel_tree(
-        bounds, root, 0.0,
+        bounds,
+        root,
+        0.0,
         _growth(r0_um=10.0, min_radius_um=2.0, branch_prob=0.4, tortuosity_rad=0.2),
         np.random.default_rng(3),
     )
@@ -1413,7 +1550,9 @@ def test_grow_vessel_tree_branching_tapers_and_terminates_at_capillary_floor():
 def test_grow_vessel_tree_respects_the_segment_cap():
     # A dense brancher in a big canvas would grow forever without the cap.
     segs = grow_vessel_tree(
-        (1000.0, 1000.0), (500.0, 0.0), 0.0,
+        (1000.0, 1000.0),
+        (500.0, 0.0),
+        0.0,
         _growth(r0_um=20.0, min_radius_um=0.1, branch_prob=0.9, max_segments=50),
         np.random.default_rng(0),
     )
@@ -1449,7 +1588,9 @@ def test_vessels_to_mask_beer_lambert_floor_and_clear_tissue():
     L = np.array([[0.0, 1.0, 100.0]])
     m = vessels_to_mask(L, opacity=0.8, absorption_per_um=0.2)
     assert m[0, 0] == pytest.approx(1.0)  # no blood -> fully transmissive
-    assert m[0, 2] == pytest.approx(1.0 - 0.8, abs=1e-3)  # thick trunk -> 1-opacity floor
+    assert m[0, 2] == pytest.approx(
+        1.0 - 0.8, abs=1e-3
+    )  # thick trunk -> 1-opacity floor
     assert 1.0 - 0.8 < m[0, 1] < 1.0  # a thin vessel sits between floor and clear
     # opacity=0 disables the effect regardless of path length
     assert np.allclose(vessels_to_mask(L, 0.0, 0.2), 1.0)
@@ -1474,11 +1615,16 @@ def test_vasculature_mask_field_is_deterministic_and_composes_layers():
     acq = _acq(n_px=48, duration_s=0.2)
     one = [VesselLayer(depth_um=10.0, n_roots=2, root_radius_um=8.0)]
     two = [*one, VesselLayer(depth_um=40.0, n_roots=2, root_radius_um=6.0)]
-    spec1, spec2 = Vasculature(enabled=True, layers=one), Vasculature(enabled=True, layers=two)
+    spec1, spec2 = (
+        Vasculature(enabled=True, layers=one),
+        Vasculature(enabled=True, layers=two),
+    )
     m1a = vasculature_mask_field(spec1, acq, (48, 48), 30.0, np.random.default_rng(5))
     m1b = vasculature_mask_field(spec1, acq, (48, 48), 30.0, np.random.default_rng(5))
     np.testing.assert_array_equal(m1a, m1b)  # same seed -> identical mask
-    assert ((m1a > 0) & (m1a <= 1.0)).all() and (m1a < 1.0).any()  # a valid, non-trivial mask
+    assert ((m1a > 0) & (m1a <= 1.0)).all() and (
+        m1a < 1.0
+    ).any()  # a valid, non-trivial mask
     m2 = vasculature_mask_field(spec2, acq, (48, 48), 30.0, np.random.default_rng(5))
     assert m2.mean() <= m1a.mean()  # a second absorbing layer only darkens
 
@@ -1492,7 +1638,9 @@ def test_vasculature_step_applies_a_dark_static_mask_and_records_it():
     spec.build(acq, np.random.default_rng(0))(scene)
     mask = scene.truth.vasculature_mask
     assert mask is not None and mask.shape == scene.canvas_shape
-    assert ((mask > 0) & (mask <= 1.0)).all() and (mask < 1.0).any()  # vessels darkened pixels
+    assert ((mask > 0) & (mask <= 1.0)).all() and (
+        mask < 1.0
+    ).any()  # vessels darkened pixels
     # the movie started at ones, so a multiplicative static mask leaves every frame
     # equal to the mask itself (and identical frame-to-frame: spatially static).
     movie = scene.movie.values
@@ -1582,7 +1730,9 @@ def test_field_chain_runs_end_to_end_and_records_ground_truth():
 
 
 def test_bounded_random_walk_starts_at_zero_and_stays_bounded():
-    walk = bounded_random_walk(500, step_px=1.0, max_px=4.0, rng=np.random.default_rng(0))
+    walk = bounded_random_walk(
+        500, step_px=1.0, max_px=4.0, rng=np.random.default_rng(0)
+    )
     assert walk.shape == (500, 2)
     np.testing.assert_array_equal(walk[0], [0.0, 0.0])  # frame 0 is the reference
     mags = np.hypot(walk[:, 0], walk[:, 1])
@@ -1591,9 +1741,16 @@ def test_bounded_random_walk_starts_at_zero_and_stays_bounded():
 
 def test_physical_motion_starts_at_origin_and_stays_bounded():
     traj = physical_brain_motion(
-        2000, fps=50.0, locomotion_freq_hz=7.0, resonance_freq_hz=6.0,
-        damping_ratio=0.5, locomotion_fraction=0.6, locomotion_axis=0,
-        amplitude_px=10.0, max_px=12.0, rng=np.random.default_rng(0),
+        2000,
+        fps=50.0,
+        locomotion_freq_hz=7.0,
+        resonance_freq_hz=6.0,
+        damping_ratio=0.5,
+        locomotion_fraction=0.6,
+        locomotion_axis=0,
+        amplitude_px=10.0,
+        max_px=12.0,
+        rng=np.random.default_rng(0),
     )
     assert traj.shape == (2000, 2)
     np.testing.assert_array_equal(traj[0], [0.0, 0.0])  # frame 0 is the reference
@@ -1606,9 +1763,16 @@ def test_physical_motion_amplitude_tracks_the_target():
     # extreme excursion), with the bulk of frames well inside it. Clamp well clear at
     # max_px=30, so it never bites.
     traj = physical_brain_motion(
-        3000, fps=50.0, locomotion_freq_hz=7.0, resonance_freq_hz=6.0,
-        damping_ratio=0.5, locomotion_fraction=0.25, locomotion_axis=0,
-        amplitude_px=10.0, max_px=30.0, rng=np.random.default_rng(1),
+        3000,
+        fps=50.0,
+        locomotion_freq_hz=7.0,
+        resonance_freq_hz=6.0,
+        damping_ratio=0.5,
+        locomotion_fraction=0.25,
+        locomotion_axis=0,
+        amplitude_px=10.0,
+        max_px=30.0,
+        rng=np.random.default_rng(1),
     )
     radius = np.hypot(traj[:, 0], traj[:, 1])
     assert np.percentile(radius, 99) == pytest.approx(10.0, rel=1e-6)
@@ -1621,9 +1785,16 @@ def test_physical_motion_spectrum_peaks_at_the_locomotion_frequency():
     # below Nyquist and the line is cleanly resolved.
     fps, f_loco = 50.0, 7.0
     traj = physical_brain_motion(
-        4096, fps=fps, locomotion_freq_hz=f_loco, resonance_freq_hz=f_loco,
-        damping_ratio=0.4, locomotion_fraction=0.9, locomotion_axis=0,
-        amplitude_px=10.0, max_px=40.0, rng=np.random.default_rng(2),
+        4096,
+        fps=fps,
+        locomotion_freq_hz=f_loco,
+        resonance_freq_hz=f_loco,
+        damping_ratio=0.4,
+        locomotion_fraction=0.9,
+        locomotion_axis=0,
+        amplitude_px=10.0,
+        max_px=40.0,
+        rng=np.random.default_rng(2),
     )
     freqs = np.fft.rfftfreq(traj.shape[0], d=1.0 / fps)
     power = np.abs(np.fft.rfft(traj[:, 0] - traj[:, 0].mean())) ** 2
@@ -1636,9 +1807,16 @@ def test_physical_motion_cross_axis_lacks_the_locomotion_peak():
     # broadband noise only, so its power at the stride frequency is far weaker.
     fps, f_loco = 50.0, 7.0
     traj = physical_brain_motion(
-        4096, fps=fps, locomotion_freq_hz=f_loco, resonance_freq_hz=f_loco,
-        damping_ratio=0.4, locomotion_fraction=0.9, locomotion_axis=0,
-        amplitude_px=10.0, max_px=40.0, rng=np.random.default_rng(3),
+        4096,
+        fps=fps,
+        locomotion_freq_hz=f_loco,
+        resonance_freq_hz=f_loco,
+        damping_ratio=0.4,
+        locomotion_fraction=0.9,
+        locomotion_axis=0,
+        amplitude_px=10.0,
+        max_px=40.0,
+        rng=np.random.default_rng(3),
     )
     freqs = np.fft.rfftfreq(traj.shape[0], d=1.0 / fps)
     bin_loco = int(np.argmin(np.abs(freqs - f_loco)))
@@ -1649,8 +1827,13 @@ def test_physical_motion_cross_axis_lacks_the_locomotion_peak():
 
 def test_physical_motion_is_deterministic_given_seed():
     kw = dict(
-        locomotion_freq_hz=7.0, resonance_freq_hz=6.0, damping_ratio=0.5,
-        locomotion_fraction=0.6, locomotion_axis=0, amplitude_px=10.0, max_px=20.0,
+        locomotion_freq_hz=7.0,
+        resonance_freq_hz=6.0,
+        damping_ratio=0.5,
+        locomotion_fraction=0.6,
+        locomotion_axis=0,
+        amplitude_px=10.0,
+        max_px=20.0,
     )
     a = physical_brain_motion(1000, fps=30.0, rng=np.random.default_rng(7), **kw)
     b = physical_brain_motion(1000, fps=30.0, rng=np.random.default_rng(7), **kw)

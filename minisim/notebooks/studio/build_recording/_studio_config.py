@@ -228,10 +228,18 @@ class StudioConfig:
         only when their ``*_enabled`` toggle is set. ``Spec`` re-sorts into the
         canonical order, so the order here does not matter.
         """
-        steps: list = [self.place_neurons(), self.cell_activity(), CellOptics(), Composite()]
+        steps: list = [
+            self.place_neurons(),
+            self.cell_activity(),
+            CellOptics(),
+            Composite(),
+        ]
         if self.neuropil_enabled:
             steps.append(
-                Neuropil(amplitude=self.neuropil_amplitude, n_components=self.neuropil_n_components)
+                Neuropil(
+                    amplitude=self.neuropil_amplitude,
+                    n_components=self.neuropil_n_components,
+                )
             )
         if self.vasculature_enabled:
             steps.append(
@@ -262,18 +270,28 @@ class StudioConfig:
         if self.illumination_enabled:
             steps.append(
                 IlluminationProfile(
-                    falloff=self.illumination_falloff, exponent=self.illumination_exponent
+                    falloff=self.illumination_falloff,
+                    exponent=self.illumination_exponent,
                 )
             )
         if self.vignette_enabled:
-            steps.append(Vignette(falloff=self.vignette_falloff, exponent=self.vignette_exponent))
+            steps.append(
+                Vignette(falloff=self.vignette_falloff, exponent=self.vignette_exponent)
+            )
         if self.leakage_enabled:
-            steps.append(Leakage(level=self.leakage_level, profile=self.leakage_profile))
+            steps.append(
+                Leakage(level=self.leakage_level, profile=self.leakage_profile)
+            )
         steps.append(Sensor(photons_per_unit=self.photons_per_unit))
         return steps
 
     def spec(
-        self, *, duration_s: float, fps: float, seed: int, save_intermediates: bool = False
+        self,
+        *,
+        duration_s: float,
+        fps: float,
+        seed: int,
+        save_intermediates: bool = False,
     ) -> Spec:
         """Assemble the full, validated :class:`minisim.Spec` for a recording.
 
@@ -312,7 +330,9 @@ class StudioConfig:
         differs slightly (rounding / Poisson-disk thinning), so this is a ``~``.
         """
         fov_h, fov_w = self.fov_um
-        thickness_um = max(self.depth_hi_um - self.depth_lo_um, 2.0 * self.soma_radius_um)
+        thickness_um = max(
+            self.depth_hi_um - self.depth_lo_um, 2.0 * self.soma_radius_um
+        )
         volume_mm3 = (fov_h / 1000.0) * (fov_w / 1000.0) * (thickness_um / 1000.0)
         return round(self.density_per_mm3 * volume_mm3)
 
@@ -339,7 +359,12 @@ class StudioConfig:
         )
 
     def preview_spec(
-        self, *, cell_budget: int = 400, duration_s: float = 3.0, fps: float = 20.0, seed: int = 0
+        self,
+        *,
+        cell_budget: int = 400,
+        duration_s: float = 3.0,
+        fps: float = 20.0,
+        seed: int = 0,
     ) -> Spec:
         """A fast, full-pipeline :class:`~minisim.Spec` for the live example frame.
 
@@ -354,7 +379,12 @@ class StudioConfig:
         return preview.spec(duration_s=duration_s, fps=fps, seed=seed)
 
     def activity_preview_spec(
-        self, *, cell_budget: int = 30, duration_s: float = 60.0, fps: float = 20.0, seed: int = 0
+        self,
+        *,
+        cell_budget: int = 30,
+        duration_s: float = 60.0,
+        fps: float = 20.0,
+        seed: int = 0,
     ) -> Spec:
         """A :class:`~minisim.Spec` for previewing calcium *traces* (panel 2).
 
@@ -476,15 +506,24 @@ STUDIO_PRESETS: dict[str, Callable[[], StudioConfig]] = {
 # level); "Quiet" and "Active" bracket it with sparser/denser bursting.
 ACTIVITY_PRESETS: dict[str, dict[str, float]] = {
     "Quiet": dict(
-        p_quiescent_to_active=0.002, p_active_to_quiescent=0.4,
-        active_rate_hz=80.0, quiescent_rate_hz=0.2, tau_decay_s=0.6,
+        p_quiescent_to_active=0.002,
+        p_active_to_quiescent=0.4,
+        active_rate_hz=80.0,
+        quiescent_rate_hz=0.2,
+        tau_decay_s=0.6,
     ),
     "Moderate": dict(
-        p_quiescent_to_active=0.005, p_active_to_quiescent=0.3,
-        active_rate_hz=150.0, quiescent_rate_hz=0.6, tau_decay_s=0.5,
+        p_quiescent_to_active=0.005,
+        p_active_to_quiescent=0.3,
+        active_rate_hz=150.0,
+        quiescent_rate_hz=0.6,
+        tau_decay_s=0.5,
     ),
     "Active": dict(
-        p_quiescent_to_active=0.012, p_active_to_quiescent=0.2,
-        active_rate_hz=250.0, quiescent_rate_hz=1.0, tau_decay_s=0.45,
+        p_quiescent_to_active=0.012,
+        p_active_to_quiescent=0.2,
+        active_rate_hz=250.0,
+        quiescent_rate_hz=1.0,
+        tau_decay_s=0.45,
     ),
 }

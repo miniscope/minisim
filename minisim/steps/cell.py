@@ -68,7 +68,9 @@ _EPS = 1e-12
 _DENDRITE_BASE_INTENSITY = 0.55  # planted weight where a dendrite leaves the soma
 _DENDRITE_TIP_INTENSITY = 0.05  # ...tapering to this at the distal tip (faint)
 _DENDRITE_TIP_WIDTH_PX = 0.5  # minimum stamp radius, keeps the thread continuous
-_DENDRITE_WANDER_RAD = 0.16  # per-step heading random walk, radians (gently wavy, not curly)
+_DENDRITE_WANDER_RAD = (
+    0.16  # per-step heading random walk, radians (gently wavy, not curly)
+)
 _DENDRITE_ANGLE_JITTER_RAD = 0.4  # jitter on the evenly spaced launch angles
 # The number of primary dendrites is drawn *per cell* (not a spec input), so cells
 # differ from one another: a clamped Poisson around this mean.
@@ -172,7 +174,9 @@ def neuron_footprint(
     # Cytosolic GCaMP fills the proximal dendrites too. Stamp them *after* the
     # soma so the soma's RNG draw above is untouched - "soma" stays bit-identical.
     if morphology == "cytosolic" and dendrite_length_px > 0:
-        _stamp_dendrites(footprint, cy, cx, radius_px, dendrite_length_px, dendrite_width_px, rng)
+        _stamp_dendrites(
+            footprint, cy, cx, radius_px, dendrite_length_px, dendrite_width_px, rng
+        )
     if not footprint.any():
         # Sub-pixel soma: keep at least the nearest pixel lit so the cell is
         # never silently empty.
@@ -259,15 +263,25 @@ def _stamp_dendrites(
                 heading += rng.normal(0.0, _DENDRITE_WANDER_RAD)
                 y += np.sin(heading)
                 x += np.cos(heading)
-                if branches > 0 and i < n_steps - 2 and rng.random() < _DENDRITE_BRANCH_PROB:
+                if (
+                    branches > 0
+                    and i < n_steps - 2
+                    and rng.random() < _DENDRITE_BRANCH_PROB
+                ):
                     w_main, w_side = murray_children(w, _DENDRITE_BRANCH_AREA_MAIN)
                     side = -1.0 if rng.random() < 0.5 else 1.0
                     # Side branch peels off and grows the rest of the way (a little
                     # shorter); the main continues, thinner and bending slightly back.
-                    stack.append((
-                        y, x, heading + side * _DENDRITE_BRANCH_ANGLE_RAD,
-                        (n_steps - 1 - i) * 0.8, w_side, branches - 1,
-                    ))
+                    stack.append(
+                        (
+                            y,
+                            x,
+                            heading + side * _DENDRITE_BRANCH_ANGLE_RAD,
+                            (n_steps - 1 - i) * 0.8,
+                            w_side,
+                            branches - 1,
+                        )
+                    )
                     heading -= side * 0.5 * _DENDRITE_BRANCH_ANGLE_RAD
                     w = w_main
                     branches -= 1
@@ -449,9 +463,7 @@ class PlaceNeuronsStep(Step["PlaceNeurons"]):
                     dendrite_width_px=acq.um_to_px(pop.dendrite_width_um),
                 )
             )
-            scene.cells.append(
-                Cell(center_um=(z, y, x), footprint_planted=footprint)
-            )
+            scene.cells.append(Cell(center_um=(z, y, x), footprint_planted=footprint))
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +688,9 @@ class CellActivityStep(Step["CellActivity"]):
             if spec.trace_noise > 0:
                 trace = trace + self.rng.normal(0.0, spec.trace_noise, size=n_frames)
             cell.trace = trace
-            cell.spikes = fine.reshape(n_total, bins).sum(axis=1)[pad:]  # per-frame counts
+            cell.spikes = fine.reshape(n_total, bins).sum(axis=1)[
+                pad:
+            ]  # per-frame counts
             cell.amplitude = float(gain)
 
     @staticmethod
@@ -714,7 +728,9 @@ class CellActivityStep(Step["CellActivity"]):
         rate). One spike per fine bin enforces the refractory period for free, and
         the sub-frame spike timing survives into the calcium kernel.
         """
-        rate = np.where(np.repeat(state, bins), spec.active_rate_hz, spec.quiescent_rate_hz)
+        rate = np.where(
+            np.repeat(state, bins), spec.active_rate_hz, spec.quiescent_rate_hz
+        )
         p_spike = np.minimum(rate / hr_fps, 1.0)
         return (rng.random(state.size * bins) < p_spike).astype(float)
 
@@ -779,7 +795,9 @@ def resolve_focal_plane(
         # Field radius is the distance from the optical axis = the frame origin.
         shifts = np.array(
             [
-                optics.focal_curvature_shift_um(math.hypot(cell.center_um[1], cell.center_um[2]))
+                optics.focal_curvature_shift_um(
+                    math.hypot(cell.center_um[1], cell.center_um[2])
+                )
                 for cell in cells
             ],
             dtype=float,
@@ -969,6 +987,8 @@ class CellOpticsStep(Step["CellOptics"]):
             # Keep only the two scalars that define the observed footprint; render
             # and GroundTruth.A_observed regenerate it via degrade_footprint.
             cell.observed_sigma_px = sigma_px
-            cell.observed_gain = acq.tissue.attenuation(z) * acq.optics.collection_efficiency
+            cell.observed_gain = (
+                acq.tissue.attenuation(z) * acq.optics.collection_efficiency
+            )
             cell.in_focus = abs(z - focal_eff) <= dof
             cell.optical_brightness = brightness

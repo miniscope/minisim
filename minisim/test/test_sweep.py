@@ -32,11 +32,15 @@ def _base():
             fps=20.0,
             duration_s=1.0,
             optics=Optics(magnification=8.0, na=0.45),
-            image_sensor=ImageSensor(n_px_height=64, n_px_width=64, pixel_pitch_um=8.0, bit_depth=8),
+            image_sensor=ImageSensor(
+                n_px_height=64, n_px_width=64, pixel_pitch_um=8.0, bit_depth=8
+            ),
         ),
         seed=7,
         steps=[
-            PlaceNeurons(density_per_mm3=312500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+            PlaceNeurons(
+                density_per_mm3=312500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -50,10 +54,15 @@ def _place(spec):
 
 
 def test_cartesian_product_count_and_axes():
-    specs = list(sweep(_base(), {
-        "acquisition.optics.na": [0.3, 0.6],
-        "steps.place_neurons.density_per_mm3": [50.0, 150.0, 400.0],
-    }))
+    specs = list(
+        sweep(
+            _base(),
+            {
+                "acquisition.optics.na": [0.3, 0.6],
+                "steps.place_neurons.density_per_mm3": [50.0, 150.0, 400.0],
+            },
+        )
+    )
     assert len(specs) == 6
     # every combination is present exactly once
     seen = {(s.acquisition.optics.na, _place(s).density_per_mm3) for s in specs}
@@ -61,7 +70,9 @@ def test_cartesian_product_count_and_axes():
     # .axes mirrors the chosen values for each yielded spec
     for s in specs:
         assert s.axes["acquisition.optics.na"] == s.acquisition.optics.na
-        assert s.axes["steps.place_neurons.density_per_mm3"] == _place(s).density_per_mm3
+        assert (
+            s.axes["steps.place_neurons.density_per_mm3"] == _place(s).density_per_mm3
+        )
 
 
 def test_nested_model_path_override():
@@ -85,7 +96,11 @@ def test_top_level_path_override():
 
 
 def test_tuple_valued_axis():
-    specs = list(sweep(_base(), {"steps.place_neurons.depth_range_um": [(0.0, 75.0), (0.0, 150.0)]}))
+    specs = list(
+        sweep(
+            _base(), {"steps.place_neurons.depth_range_um": [(0.0, 75.0), (0.0, 150.0)]}
+        )
+    )
     assert [_place(s).depth_range_um for s in specs] == [(0.0, 75.0), (0.0, 150.0)]
 
 
@@ -99,10 +114,15 @@ def test_empty_axes_yields_base_once():
 
 def test_base_spec_is_not_mutated():
     base = _base()
-    list(sweep(base, {
-        "acquisition.optics.na": [0.1, 0.2],
-        "steps.place_neurons.density_per_mm3": [1.0],
-    }))
+    list(
+        sweep(
+            base,
+            {
+                "acquisition.optics.na": [0.1, 0.2],
+                "steps.place_neurons.density_per_mm3": [1.0],
+            },
+        )
+    )
     assert base.acquisition.optics.na == 0.45
     assert _place(base).density_per_mm3 == 312500.0
 
@@ -112,9 +132,13 @@ def test_cache_key_parity_axes_excluded():
     # physical content -> the axes tag never perturbs cache dedup
     (s,) = list(sweep(_base(), {"acquisition.optics.na": [0.3]}))
     plain = _base().model_copy(
-        update={"acquisition": _base().acquisition.model_copy(
-            update={"optics": _base().acquisition.optics.model_copy(update={"na": 0.3})}
-        )}
+        update={
+            "acquisition": _base().acquisition.model_copy(
+                update={
+                    "optics": _base().acquisition.optics.model_copy(update={"na": 0.3})
+                }
+            )
+        }
     )
     assert s.cache_key() == Spec.model_validate(plain.model_dump()).cache_key()
     assert "axes" not in s.model_dump_json()

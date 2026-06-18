@@ -48,7 +48,9 @@ def _spec():
         acquisition=_acq(),
         seed=3,
         steps=[
-            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 50.0)),
+            PlaceNeurons(
+                density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 50.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),

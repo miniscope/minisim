@@ -67,7 +67,9 @@ def test_make_recording_save_intermediates_snapshots():
 
 def test_make_recording_accepts_overrides():
     rec = make_recording(
-        n_cells=2, duration_s=1.0, activity=CellActivity(active_rate_hz=200.0),
+        n_cells=2,
+        duration_s=1.0,
+        activity=CellActivity(active_rate_hz=200.0),
         sensor=Sensor(photons_per_unit=400.0),
     )
     assert rec.ground_truth.n_units == 2
@@ -78,7 +80,9 @@ def test_make_recording_pins_focal_plane():
     # focal_depth_um holds the plane still wherever the cells are placed - the setup a
     # recall-vs-depth sweep needs (auto-focus would refocus on each depth).
     auto = make_recording(n_cells=4, duration_s=1.0, depth_um=80.0, seed=0)
-    pinned = make_recording(n_cells=4, duration_s=1.0, depth_um=80.0, focal_depth_um=0.0, seed=0)
+    pinned = make_recording(
+        n_cells=4, duration_s=1.0, depth_um=80.0, focal_depth_um=0.0, seed=0
+    )
     assert auto.ground_truth.focal_depth_um == 80.0
     assert pinned.ground_truth.focal_depth_um == 0.0
 
@@ -160,7 +164,9 @@ def test_report_f1_is_harmonic_mean():
     rec = make_recording(n_cells=5, duration_s=1.0, seed=0)
     est, _ = _perfect_estimate(rec)
     report = score(est, rec.ground_truth)
-    expected = 2.0 * report.precision * report.recall / (report.precision + report.recall)
+    expected = (
+        2.0 * report.precision * report.recall / (report.precision + report.recall)
+    )
     assert report.f1 == pytest.approx(expected)
 
 
@@ -187,7 +193,9 @@ def test_estimate_accepts_both_field_spellings():
     np.testing.assert_array_equal(terse.traces, spelled.C)
     np.testing.assert_array_equal(terse.activity, spelled.S)
     # The two estimates score identically.
-    assert score(terse, rec.ground_truth).recall == score(spelled, rec.ground_truth).recall
+    assert (
+        score(terse, rec.ground_truth).recall == score(spelled, rec.ground_truth).recall
+    )
 
 
 def test_estimate_requires_footprints():
@@ -223,7 +231,9 @@ def test_score_absorbs_global_footprint_offset_from_motion():
     det = gt.detectable_subset()
     bias = (6, 4)
     A_off = _shift_stack(np.asarray(det.A_observed), *bias)
-    est_shifts = -np.asarray(gt.shifts) + np.array(bias)  # correction over-shoots by bias
+    est_shifts = -np.asarray(gt.shifts) + np.array(
+        bias
+    )  # correction over-shoots by bias
     est = Estimate(A=A_off, C=det.C, S=det.S, shifts=est_shifts)
     no_shift = score(est, gt, footprint_shift=None)
     aligned = score(est, gt)  # default "auto" -> trajectory-derived offset

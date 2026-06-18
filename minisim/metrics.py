@@ -102,7 +102,9 @@ class Match:
 
     def matched_pairs(self, threshold: float = 0.5) -> list[tuple[int, int]]:
         """The assigned pairs whose similarity is at least ``threshold`` (true positives)."""
-        return [(i, j) for i, j in self.pairing if self.similarity_matrix[i, j] >= threshold]
+        return [
+            (i, j) for i, j in self.pairing if self.similarity_matrix[i, j] >= threshold
+        ]
 
     def recall(self, threshold: float = 0.5) -> float:
         """True positives over the number of true cells (``0.0`` if there are none)."""
@@ -198,7 +200,9 @@ def hungarian_match(
     applied = _resolve_shift(shift, A_est, A_true)
     sim = _similarity_matrix(A_est, A_true, metric, energy_frac)
     if applied != (0, 0):
-        sim_shifted = _similarity_matrix(_shift_stack(A_est, *applied), A_true, metric, energy_frac)
+        sim_shifted = _similarity_matrix(
+            _shift_stack(A_est, *applied), A_true, metric, energy_frac
+        )
         # An *estimated* shift is only adopted if it genuinely improves the matched
         # overlap; a known/explicit shift is trusted as given. This keeps a misfired
         # auto-estimate (a flat overlap surface, a dominant false positive) from
@@ -269,7 +273,9 @@ def activity_similarity(S_est, S_true, pairing) -> ActivityScore:
     )
 
 
-def shift_rmse(shifts_est, shifts_true, *, correction: bool = False, align: bool = False) -> float:
+def shift_rmse(
+    shifts_est, shifts_true, *, correction: bool = False, align: bool = False
+) -> float:
     """Root-mean-square error (pixels) between two ``(frame, 2)`` shift trajectories.
 
     RMSE over all frames and both axes. The two arrays must share a **sign
@@ -297,7 +303,9 @@ def shift_rmse(shifts_est, shifts_true, *, correction: bool = False, align: bool
     return float(np.sqrt(np.mean(diff**2)))
 
 
-def global_shift_from_trajectories(shifts_est, shifts_true, *, correction: bool = True) -> tuple[int, int]:
+def global_shift_from_trajectories(
+    shifts_est, shifts_true, *, correction: bool = True
+) -> tuple[int, int]:
     """The constant ``(dy, dx)`` offset between two motion trajectories, in pixels.
 
     The estimated correction and the true applied motion track the same brain
@@ -405,7 +413,9 @@ def _resolve_shift(
     if shift == "auto":
         return _overlap_shift(A_est, A_true)
     if isinstance(shift, str):
-        raise ValueError(f"Unknown shift mode {shift!r}; use 'auto', a (dy, dx) tuple, or None.")
+        raise ValueError(
+            f"Unknown shift mode {shift!r}; use 'auto', a (dy, dx) tuple, or None."
+        )
     dy, dx = shift
     return int(round(float(dy))), int(round(float(dx)))
 
@@ -448,7 +458,9 @@ def _overlap_shift(A_est: np.ndarray, A_true: np.ndarray) -> tuple[int, int]:
     est_sup = (est_img > _SUPPORT_REL_THRESHOLD * est_img.max()).astype(float)
     true_sup = (true_img > _SUPPORT_REL_THRESHOLD * true_img.max()).astype(float)
     cross = np.fft.rfft2(true_sup) * np.conj(np.fft.rfft2(est_sup))
-    cross /= np.abs(cross) + 1e-12  # phase only: a delta at the translation, no envelope drift
+    cross /= (
+        np.abs(cross) + 1e-12
+    )  # phase only: a delta at the translation, no envelope drift
     cc = np.fft.fftshift(np.fft.irfft2(cross, s=(h, w)))
     cy, cx = h // 2, w // 2
     my = min(int(_MAX_AUTO_SHIFT_FRAC * h), cy)
@@ -461,7 +473,9 @@ def _overlap_shift(A_est: np.ndarray, A_true: np.ndarray) -> tuple[int, int]:
 def _assign(sim: np.ndarray) -> tuple[tuple[int, int], ...]:
     """Optimal one-to-one ``(est, true)`` pairing maximizing total similarity, sim > 0 pairs."""
     rows, cols = linear_sum_assignment(sim, maximize=True)
-    return tuple((int(i), int(j)) for i, j in zip(rows, cols, strict=True) if sim[i, j] > 0)
+    return tuple(
+        (int(i), int(j)) for i, j in zip(rows, cols, strict=True) if sim[i, j] > 0
+    )
 
 
 def _assigned_total(sim: np.ndarray) -> float:
@@ -473,8 +487,16 @@ def _shift_stack(A: np.ndarray, dy: int, dx: int) -> np.ndarray:
     """Translate the ``(height, width)`` axes of a footprint stack by ``(dy, dx)``, zero-filled."""
     out = np.zeros_like(A)
     h, w = A.shape[-2:]
-    sy, dy_dst = (slice(0, h - dy), slice(dy, h)) if dy >= 0 else (slice(-dy, h), slice(0, h + dy))
-    sx, dx_dst = (slice(0, w - dx), slice(dx, w)) if dx >= 0 else (slice(-dx, w), slice(0, w + dx))
+    sy, dy_dst = (
+        (slice(0, h - dy), slice(dy, h))
+        if dy >= 0
+        else (slice(-dy, h), slice(0, h + dy))
+    )
+    sx, dx_dst = (
+        (slice(0, w - dx), slice(dx, w))
+        if dx >= 0
+        else (slice(-dx, w), slice(0, w + dx))
+    )
     out[..., dy_dst, dx_dst] = A[..., sy, sx]
     return out
 
@@ -570,8 +592,12 @@ def _iou_matrix(masks_est: np.ndarray, masks_true: np.ndarray) -> np.ndarray:
     rows); unions are ``area_est + area_true − intersection``.
     """
     # Flatten each mask to its pixel count, keeping a 0-row stack valid.
-    e = masks_est.reshape(masks_est.shape[0], int(np.prod(masks_est.shape[1:]))).astype(np.float32)
-    t = masks_true.reshape(masks_true.shape[0], int(np.prod(masks_true.shape[1:]))).astype(np.float32)
+    e = masks_est.reshape(masks_est.shape[0], int(np.prod(masks_est.shape[1:]))).astype(
+        np.float32
+    )
+    t = masks_true.reshape(
+        masks_true.shape[0], int(np.prod(masks_true.shape[1:]))
+    ).astype(np.float32)
     intersection = e @ t.T  # (n_est, n_true)
     area_e = e.sum(axis=1)[:, None]
     area_t = t.sum(axis=1)[None, :]

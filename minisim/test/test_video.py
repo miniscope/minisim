@@ -6,6 +6,7 @@ independent of chunk size -- is tested without any video dependency via the
 (opencv is a core dependency that bundles ffmpeg), so they need no extra and no
 system ffmpeg; frames are decoded back with ``cv2.VideoCapture``.
 """
+
 from __future__ import annotations
 
 import cv2
@@ -37,8 +38,15 @@ from minisim.video import _default_vmax, _iter_count_frames, _to_uint8
 
 
 def _spec(
-    duration_s=1.5, motion=True, sensor=True, neuropil=True, bleaching=True,
-    vasculature=False, n_px=48, seed=3, exposure=120.0,
+    duration_s=1.5,
+    motion=True,
+    sensor=True,
+    neuropil=True,
+    bleaching=True,
+    vasculature=False,
+    n_px=48,
+    seed=3,
+    exposure=120.0,
 ):
     """A small but complete forward pipeline for streaming tests.
 
@@ -50,10 +58,14 @@ def _spec(
         duration_s=duration_s,
         focal_depth_in_tissue_um="auto",
         optics=Optics(magnification=8.0, field_curvature_radius_um=600.0),
-        image_sensor=ImageSensor(n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=8.0, bit_depth=8),
+        image_sensor=ImageSensor(
+            n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=8.0, bit_depth=8
+        ),
     )
     steps = [
-        PlaceNeurons(density_per_mm3=40000.0, soma_radius_um=5.0, depth_range_um=(0.0, 60.0)),
+        PlaceNeurons(
+            density_per_mm3=40000.0, soma_radius_um=5.0, depth_range_um=(0.0, 60.0)
+        ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
     ]
     if bleaching:
@@ -62,7 +74,9 @@ def _spec(
     if neuropil:
         steps.append(Neuropil(n_components=2))
     if vasculature:
-        steps.append(Vasculature(enabled=True, layers=[VesselLayer(depth_um=20.0, n_roots=2)]))
+        steps.append(
+            Vasculature(enabled=True, layers=[VesselLayer(depth_um=20.0, n_roots=2)])
+        )
     if motion:
         steps.append(BrainMotion())
     steps += [IlluminationProfile(), Vignette(), Leakage()]
@@ -83,15 +97,24 @@ def _stream(spec, chunk):
         (True, False, True, False),  # no neuropil
         (True, True, False, False),  # no bleaching
         (False, False, False, False),  # the minimal count-producing chain
-        (True, True, True, True),  # + vasculature (an RNG-consuming multiplicative mask)
+        (
+            True,
+            True,
+            True,
+            True,
+        ),  # + vasculature (an RNG-consuming multiplicative mask)
         (False, False, False, True),  # vasculature alone over the minimal chain
     ],
 )
-def test_streamed_frames_match_simulate_bit_for_bit(motion, neuropil, bleaching, vasculature):
+def test_streamed_frames_match_simulate_bit_for_bit(
+    motion, neuropil, bleaching, vasculature
+):
     # Sweep a matrix of pipelines (not one fixed spec): each RNG-consuming effect
     # toggled, so a draw-order desync in any of them is caught. Sensor stays on so
     # the counts are integer-valued (exact in float32) and the equality is meaningful.
-    spec = _spec(motion=motion, neuropil=neuropil, bleaching=bleaching, vasculature=vasculature)
+    spec = _spec(
+        motion=motion, neuropil=neuropil, bleaching=bleaching, vasculature=vasculature
+    )
     observed = simulate(spec).observed
     streamed = _stream(spec, chunk=8)
     assert streamed.shape == observed.shape
@@ -129,8 +152,10 @@ def test_to_uint8_maps_range_to_full_gray():
     assert out.dtype == np.uint8
     np.testing.assert_array_equal(out, np.array([[0, 128, 255]], dtype=np.uint8))
     # values past vmax clip to white, below vmin clip to black
-    np.testing.assert_array_equal(_to_uint8(np.array([[-5.0, 999.0]]), 0.0, 255.0),
-                                  np.array([[0, 255]], dtype=np.uint8))
+    np.testing.assert_array_equal(
+        _to_uint8(np.array([[-5.0, 999.0]]), 0.0, 255.0),
+        np.array([[0, 255]], dtype=np.uint8),
+    )
 
 
 def test_default_vmax_is_adc_range_with_sensor_else_errors():
@@ -182,7 +207,9 @@ def test_write_video_and_simulate_video_agree(tmp_path):
     # Recording.write_video (in-memory) and simulate_video (streamed) encode the same
     # frames, so the decoded videos are identical.
     spec = _spec()
-    p_stream = simulate_video(spec, tmp_path / "stream.avi", chunk_frames=8, progress=False)
+    p_stream = simulate_video(
+        spec, tmp_path / "stream.avi", chunk_frames=8, progress=False
+    )
     p_mem = simulate(spec).write_video(tmp_path / "mem.avi", progress=False)
     np.testing.assert_array_equal(_decode(p_stream), _decode(p_mem))
 

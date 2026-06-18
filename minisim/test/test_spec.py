@@ -89,7 +89,10 @@ def test_defaults_construct():
 def test_sensor_hardware_lives_on_image_sensor():
     # Hardware moved off the Sensor step onto Acquisition.image_sensor; the step
     # keeps only the (non-hardware) exposure scale.
-    assert ImageSensor(read_noise_e=3.0, quantum_efficiency=0.8, bit_depth=12).bit_depth == 12
+    assert (
+        ImageSensor(read_noise_e=3.0, quantum_efficiency=0.8, bit_depth=12).bit_depth
+        == 12
+    )
     assert Sensor(photons_per_unit=80.0).photons_per_unit == pytest.approx(80.0)
     with pytest.raises(ValidationError):
         Sensor(read_noise_e=3.0)  # hardware no longer accepted on the step
@@ -192,7 +195,11 @@ def test_oversized_soma_in_any_population_fails():
 
 def test_unresolvable_decay_fails():
     acq = _tiny_acquisition(fps=1.0)
-    steps = [PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.5), Composite()]
+    steps = [
+        PlaceNeurons(soma_radius_um=3.0),
+        CellActivity(tau_decay_s=0.5),
+        Composite(),
+    ]
     with pytest.raises(ValidationError, match="unresolvable"):
         Spec(acquisition=acq, steps=steps)
 
@@ -203,15 +210,29 @@ def test_steps_are_canonicalized_regardless_of_listing_order():
     # before their producers) is silently normalized rather than rejected. The Scene
     # data-dependencies - cell_activity needs place_neurons, composite needs both -
     # are all satisfied once canonicalized.
-    steps = [Composite(), Sensor(), CellActivity(tau_decay_s=0.4), PlaceNeurons(soma_radius_um=3.0)]
+    steps = [
+        Composite(),
+        Sensor(),
+        CellActivity(tau_decay_s=0.4),
+        PlaceNeurons(soma_radius_um=3.0),
+    ]
     spec = _valid_spec(steps=steps)
-    assert [s.kind for s in spec.steps] == ["place_neurons", "cell_activity", "composite", "sensor"]
+    assert [s.kind for s in spec.steps] == [
+        "place_neurons",
+        "cell_activity",
+        "composite",
+        "sensor",
+    ]
 
 
 def test_listing_order_does_not_affect_identity():
     # Two specs differing only in how their steps were listed canonicalize to the
     # same thing, so they compare and cache equal.
-    steps = [PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.4), Composite()]
+    steps = [
+        PlaceNeurons(soma_radius_um=3.0),
+        CellActivity(tau_decay_s=0.4),
+        Composite(),
+    ]
     a = _valid_spec(steps=steps)
     b = _valid_spec(steps=list(reversed(steps)))
     assert a.steps == b.steps
@@ -222,7 +243,10 @@ def test_absent_prerequisite_is_allowed_for_partial_pipelines():
     # A partial pipeline (cells rendered, no cell_activity / motion / sensor) is
     # valid: requires enforces order-when-present, not completeness - so a few
     # stages can be run to make targeted test data. place_neurons precedes render.
-    Spec(acquisition=_tiny_acquisition(), steps=[PlaceNeurons(soma_radius_um=3.0), Composite()])
+    Spec(
+        acquisition=_tiny_acquisition(),
+        steps=[PlaceNeurons(soma_radius_um=3.0), Composite()],
+    )
 
 
 # --- validators: advisory warnings -----------------------------------------
@@ -243,10 +267,21 @@ def test_out_of_order_domains_are_silently_canonicalized():
 def test_order_steps_is_idempotent_and_keeps_unknown_kinds_last():
     from minisim.spec import order_steps
 
-    canonical = [PlaceNeurons(), CellActivity(), Bleaching(), CellOptics(), Composite(), Sensor()]
+    canonical = [
+        PlaceNeurons(),
+        CellActivity(),
+        Bleaching(),
+        CellOptics(),
+        Composite(),
+        Sensor(),
+    ]
     kinds = [s.kind for s in canonical]
-    assert [s.kind for s in order_steps(canonical)] == kinds  # already-canonical unchanged
-    assert [s.kind for s in order_steps(list(reversed(canonical)))] == kinds  # shuffled -> canonical
+    assert [
+        s.kind for s in order_steps(canonical)
+    ] == kinds  # already-canonical unchanged
+    assert [
+        s.kind for s in order_steps(list(reversed(canonical)))
+    ] == kinds  # shuffled -> canonical
 
 
 def test_pipeline_order_matches_catalog_and_respects_requires():
@@ -324,9 +359,7 @@ def test_step_registry_matches_spec_catalog():
     from minisim.spec import StepSpec
     from minisim.steps import STEP_FOR_KIND
 
-    catalog_kinds = {
-        s.model_fields["kind"].default for s in StepSpec.__subclasses__()
-    }
+    catalog_kinds = {s.model_fields["kind"].default for s in StepSpec.__subclasses__()}
     assert set(STEP_FOR_KIND) == catalog_kinds
     for step_cls in STEP_FOR_KIND.values():
         assert issubclass(step_cls, Step)
@@ -354,12 +387,16 @@ def test_defocus_zero_at_focal_plane():
 
 def test_defocus_symmetric_and_grows_with_distance():
     opt = Optics(na=0.45)
-    assert opt.defocus_sigma_um(60.0, 80.0) == pytest.approx(opt.defocus_sigma_um(100.0, 80.0))
+    assert opt.defocus_sigma_um(60.0, 80.0) == pytest.approx(
+        opt.defocus_sigma_um(100.0, 80.0)
+    )
     assert opt.defocus_sigma_um(120.0, 80.0) > opt.defocus_sigma_um(100.0, 80.0)
 
 
 def test_defocus_grows_with_na():
-    assert Optics(na=0.6).defocus_sigma_um(120.0, 80.0) > Optics(na=0.3).defocus_sigma_um(120.0, 80.0)
+    assert Optics(na=0.6).defocus_sigma_um(120.0, 80.0) > Optics(
+        na=0.3
+    ).defocus_sigma_um(120.0, 80.0)
 
 
 # Scatter / attenuation
@@ -377,7 +414,9 @@ def test_round_trip_mfp_is_reciprocal_sum_and_steeper_than_either_leg():
     # reciprocal sum (1/mfp_eff = 1/mfp_ex + 1/mfp_em) - shorter than either leg.
     t = Tissue(scatter_mfp_excitation_um=90.0, scatter_mfp_emission_um=110.0)
     assert t.scatter_mfp_um == pytest.approx(1.0 / (1.0 / 90.0 + 1.0 / 110.0))
-    assert t.scatter_mfp_um < min(t.scatter_mfp_excitation_um, t.scatter_mfp_emission_um)
+    assert t.scatter_mfp_um < min(
+        t.scatter_mfp_excitation_um, t.scatter_mfp_emission_um
+    )
     # Round trip == the two single-leg exponentials applied in series.
     z = 75.0
     leg_product = math.exp(-z / 90.0) * math.exp(-z / 110.0)
@@ -400,7 +439,9 @@ def test_cell_optics_in_focus_surface_cell_is_undegraded():
     acq = _tiny_acquisition()
     sigma_px, brightness = acq.cell_optics(0.0, 0.0)
     assert brightness == pytest.approx(acq.optics.collection_efficiency)
-    assert sigma_px == pytest.approx(acq.optics.diffraction_sigma_um / acq.pixel_size_um)
+    assert sigma_px == pytest.approx(
+        acq.optics.diffraction_sigma_um / acq.pixel_size_um
+    )
 
 
 def test_cell_optics_brightness_scales_with_na_squared():
@@ -430,7 +471,10 @@ def test_cell_optics_defocus_conserves_integrated_intensity():
     # ...and that conserved integral equals the pure (defocus-free) value: the
     # defocus-free peak (σ_0) times the two flat light-losses, scatter attenuation
     # and the NA² collection efficiency.
-    sigma_0_px = math.hypot(acq.optics.diffraction_sigma_um, acq.tissue.scatter_sigma_um(z)) / acq.pixel_size_um
+    sigma_0_px = (
+        math.hypot(acq.optics.diffraction_sigma_um, acq.tissue.scatter_sigma_um(z))
+        / acq.pixel_size_um
+    )
     assert integrals[0] == pytest.approx(
         sigma_0_px**2 * acq.tissue.attenuation(z) * acq.optics.collection_efficiency
     )
@@ -469,7 +513,9 @@ def test_photons_to_counts_are_integer_valued_and_clipped():
 
 def test_photons_to_counts_poisson_mean():
     # With 12-bit headroom (no clipping), mean counts ≈ photons·QE·gain.
-    sensor = _flat_sensor_acq(quantum_efficiency=0.7, gain_adu_per_e=1.0, read_noise_e=2.0, bit_depth=12)
+    sensor = _flat_sensor_acq(
+        quantum_efficiency=0.7, gain_adu_per_e=1.0, read_noise_e=2.0, bit_depth=12
+    )
     rng = np.random.default_rng(1)
     photons = np.full((256, 256), 100.0)
     counts = sensor.photons_to_counts(photons, rng)
@@ -480,16 +526,24 @@ def test_photons_to_counts_read_noise_adds_variance():
     # Shot noise alone vs shot + read noise: the latter has larger variance.
     rng = np.random.default_rng(2)
     photons = np.full((256, 256), 100.0)
-    quiet = _flat_sensor_acq(read_noise_e=0.0, bit_depth=12).photons_to_counts(photons, rng)
-    noisy = _flat_sensor_acq(read_noise_e=10.0, bit_depth=12).photons_to_counts(photons, rng)
+    quiet = _flat_sensor_acq(read_noise_e=0.0, bit_depth=12).photons_to_counts(
+        photons, rng
+    )
+    noisy = _flat_sensor_acq(read_noise_e=10.0, bit_depth=12).photons_to_counts(
+        photons, rng
+    )
     assert noisy.var() > quiet.var()
 
 
 def test_photons_to_counts_gain_scales_counts():
     rng = np.random.default_rng(3)
     photons = np.full((256, 256), 100.0)
-    low = _flat_sensor_acq(gain_adu_per_e=1.0, read_noise_e=2.0, bit_depth=16).photons_to_counts(photons, rng)
-    high = _flat_sensor_acq(gain_adu_per_e=4.0, read_noise_e=2.0, bit_depth=16).photons_to_counts(photons, rng)
+    low = _flat_sensor_acq(
+        gain_adu_per_e=1.0, read_noise_e=2.0, bit_depth=16
+    ).photons_to_counts(photons, rng)
+    high = _flat_sensor_acq(
+        gain_adu_per_e=4.0, read_noise_e=2.0, bit_depth=16
+    ).photons_to_counts(photons, rng)
     assert high.mean() == pytest.approx(4.0 * low.mean(), rel=0.05)
 
 
@@ -500,10 +554,13 @@ def test_spec_internals_are_submodule_only():
     import minisim
 
     for name in ("StepSpec", "order_steps"):
-        assert not hasattr(minisim, name), f"{name} leaked back onto the top-level surface"
+        assert not hasattr(minisim, name), (
+            f"{name} leaked back onto the top-level surface"
+        )
         assert name not in minisim.__all__
     from minisim.spec import (  # noqa: F401  (reachable via submodule)
         StepSpec,
         order_steps,
     )
+
     assert "AnyStep" in minisim.__all__ and hasattr(minisim, "AnyStep")

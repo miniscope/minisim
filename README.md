@@ -8,6 +8,7 @@
 [![PyPI](https://img.shields.io/pypi/v/minisim.svg)](https://pypi.org/project/minisim/)
 [![Python versions](https://img.shields.io/pypi/pyversions/minisim.svg)](https://pypi.org/project/minisim/)
 [![License](https://img.shields.io/pypi/l/minisim.svg)](https://github.com/miniscope/minisim/blob/main/LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 **Physically-driven synthetic 1-photon miniscope data: a forward-model
 generator and teaching tool.**

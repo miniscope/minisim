@@ -84,17 +84,32 @@ class RecordingFormatWarning(UserWarning):
     the warning flags that the spec it is paired with may be stale. A genuine layout
     incompatibility is a *hard* error instead, keyed on ``format_version``.
     """
+
+
 # Plain GroundTruth array fields saved as datasets, split by whether they are always
 # present or optional (None when their producing step is absent). The sparse planted
 # footprints (and the fov crop) are handled separately; A_observed is not stored.
 _GT_REQUIRED = (
-    "C", "S", "centers_um", "amplitude_per_cell", "in_focus", "detectable",
+    "C",
+    "S",
+    "centers_um",
+    "amplitude_per_cell",
+    "in_focus",
+    "detectable",
 )
 _GT_OPTIONAL = (
-    "observed_sigma_px", "observed_gain",
-    "shifts", "illumination", "vignette", "leakage", "bleaching",
-    "neuropil_temporal", "neuropil_spatial", "neuropil_population",
-    "vasculature_mask", "vessel_overlap_fraction",
+    "observed_sigma_px",
+    "observed_gain",
+    "shifts",
+    "illumination",
+    "vignette",
+    "leakage",
+    "bleaching",
+    "neuropil_temporal",
+    "neuropil_spatial",
+    "neuropil_population",
+    "vasculature_mask",
+    "vessel_overlap_fraction",
 )
 
 # Step kinds whose snapshot key differs from the kind, so Recording.stage() (and
@@ -160,7 +175,9 @@ class GroundTruth(BaseModel):
     leakage: NDArray[Shape["* height, * width"], float] | None = None
     bleaching: NDArray[Shape["* unit, * frame"], float] | None = None
     neuropil_temporal: NDArray[Shape["* component, * frame"], float] | None = None
-    neuropil_spatial: NDArray[Shape["* component, * height, * width"], float] | None = None
+    neuropil_spatial: NDArray[Shape["* component, * height, * width"], float] | None = (
+        None
+    )
     neuropil_population: NDArray[Shape["* frame"], float] | None = None
     # The static vessel transmission mask (height, width) in (0, 1] from the
     # vasculature step (cropped to the FOV); None when the step is off / layer-less.
@@ -217,10 +234,14 @@ class GroundTruth(BaseModel):
             if np.isnan(sigma):  # a cell without optics params -> sharp footprint
                 observed.append(fp)
             else:
-                observed.append(degrade_footprint(fp, sigma, float(self.observed_gain[i])))
-        return FootprintStack(tuple(observed), self.planted.canvas_shape).crop(
-            top, left, h, w
-        ).to_dense(dtype=float)
+                observed.append(
+                    degrade_footprint(fp, sigma, float(self.observed_gain[i]))
+                )
+        return (
+            FootprintStack(tuple(observed), self.planted.canvas_shape)
+            .crop(top, left, h, w)
+            .to_dense(dtype=float)
+        )
 
     @property
     def depth_um(self) -> np.ndarray:
@@ -246,8 +267,12 @@ class GroundTruth(BaseModel):
             planted=self.planted[m],
             fov_offset=self.fov_offset,
             fov_shape=self.fov_shape,
-            observed_sigma_px=self.observed_sigma_px[m] if self.observed_sigma_px is not None else None,
-            observed_gain=self.observed_gain[m] if self.observed_gain is not None else None,
+            observed_sigma_px=self.observed_sigma_px[m]
+            if self.observed_sigma_px is not None
+            else None,
+            observed_gain=self.observed_gain[m]
+            if self.observed_gain is not None
+            else None,
             C=self.C[m],
             S=self.S[m],
             centers_um=self.centers_um[m],
@@ -256,7 +281,8 @@ class GroundTruth(BaseModel):
             detectable=self.detectable[m],
             vessel_overlap_fraction=(
                 self.vessel_overlap_fraction[m]
-                if self.vessel_overlap_fraction is not None else None
+                if self.vessel_overlap_fraction is not None
+                else None
             ),
             bleaching=self.bleaching[m] if self.bleaching is not None else None,
             shifts=self.shifts,
@@ -360,7 +386,9 @@ class Recording(BaseModel):
         if snapshot_names:
             snap_group = root.create_group("snapshots")
             for name in snapshot_names:
-                snap_group.create_dataset(name, data=np.asarray(self.snapshots[name].values))
+                snap_group.create_dataset(
+                    name, data=np.asarray(self.snapshots[name].values)
+                )
 
         # focal_depth_um is a scalar, not an array: stash it as a group attr (the
         # resolved "auto" focus depth).
@@ -518,7 +546,11 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     # the canvas size off them, since a brain_motion step crops scene.movie down to
     # the FOV after stamping. Falls back to the bare FOV when there are no cells.
     canvas_h, canvas_w = next(
-        (c.footprint_planted.canvas_shape for c in scene.cells if c.footprint_planted is not None),
+        (
+            c.footprint_planted.canvas_shape
+            for c in scene.cells
+            if c.footprint_planted is not None
+        ),
         (fov_h, fov_w),
     )
     # Centered crop from the canvas (sensor FOV + any motion margin) down to the FOV.
@@ -529,7 +561,9 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     # The sensor exposure (photons per intensity unit), the noise-floor scale
     # detectability is tested against; None when no sensor step ran, in which case
     # detectability falls back on the geometric in_focus flag.
-    exposure_ppu = float(sensor_spec.photons_per_unit) if sensor_spec is not None else None
+    exposure_ppu = (
+        float(sensor_spec.photons_per_unit) if sensor_spec is not None else None
+    )
     # Both falloff fields are FOV-sized (built post-motion-crop), or None. Their
     # product is the per-pixel photon budget a cell's signal is dimmed by.
     illumination = scene.truth.illumination
@@ -564,20 +598,26 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
 
         # Stored in canvas coords; A_planted/A_observed crop to the FOV on access.
         planted_fps.append(cell.footprint_planted)
-        sigmas.append(cell.observed_sigma_px if cell.observed_sigma_px is not None else np.nan)
+        sigmas.append(
+            cell.observed_sigma_px if cell.observed_sigma_px is not None else np.nan
+        )
         gains.append(cell.observed_gain if cell.observed_gain is not None else np.nan)
         traces.append(trace)
         spikes.append(spike)
         bleaches.append(cell.bleach)
         centers.append((z, y_um, x_um))
-        amplitudes.append(cell.amplitude if cell.amplitude is not None else float("nan"))
+        amplitudes.append(
+            cell.amplitude if cell.amplitude is not None else float("nan")
+        )
         in_focus.append(ifocus)
         # A vessel over the cell absorbs part of its light: dim the peak by the
         # transmission at the cell's position (detectability is a peak test) and
         # record the footprint-weighted occlusion as the scoreable confound axis.
         vessel_t = sample_field_at(vasc_mask_fov, y_um, x_um, acq.pixel_size_um)
         detectable.append(
-            _is_detectable(cell, ifocus, y_um, x_um, photon_field, exposure_ppu, acq, vessel_t)
+            _is_detectable(
+                cell, ifocus, y_um, x_um, photon_field, exposure_ppu, acq, vessel_t
+            )
         )
         overlaps.append(_vessel_overlap(cell.observed_footprint(), vasc_mask_canvas))
 
@@ -603,7 +643,10 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         # Per-cell bleaching envelopes (unit, frame), present only if the bleaching
         # step ran; any cell without one (e.g. added afterward) gets a no-fade row.
         bleaching=(
-            _stack([b if b is not None else np.ones(n_frames) for b in bleaches], (0, n_frames))
+            _stack(
+                [b if b is not None else np.ones(n_frames) for b in bleaches],
+                (0, n_frames),
+            )
             if any(b is not None for b in bleaches)
             else None
         ),
@@ -644,7 +687,10 @@ def _movie_dataarray(values: np.ndarray) -> xr.DataArray:
     return xr.DataArray(
         values,
         dims=list(MOVIE_DIMS),
-        coords={dim: np.arange(size) for dim, size in zip(MOVIE_DIMS, values.shape, strict=True)},
+        coords={
+            dim: np.arange(size)
+            for dim, size in zip(MOVIE_DIMS, values.shape, strict=True)
+        },
         name="movie",
     )
 
@@ -671,9 +717,7 @@ def _stack(arrays: list[np.ndarray], empty_shape: tuple[int, ...]) -> np.ndarray
     return np.stack(arrays) if arrays else np.zeros(empty_shape)
 
 
-def _combine_fields(
-    a: np.ndarray | None, b: np.ndarray | None
-) -> np.ndarray | None:
+def _combine_fields(a: np.ndarray | None, b: np.ndarray | None) -> np.ndarray | None:
     """Element-wise product of two optional FOV fields (each absent → identity)."""
     if a is None:
         return b
@@ -764,8 +808,11 @@ def _is_detectable(
     brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
     illum = sample_field_at(photon_field, y_um, x_um, acq.pixel_size_um)
     gain = (
-        brightness * illum * vessel_transmission
-        * photons_per_unit * acq.image_sensor.quantum_efficiency
+        brightness
+        * illum
+        * vessel_transmission
+        * photons_per_unit
+        * acq.image_sensor.quantum_efficiency
     )
     peak_dF = float(cell.trace.max() - cell.trace.min())
     baseline = float(cell.trace.min())
@@ -773,7 +820,9 @@ def _is_detectable(
     return bool(snr >= DETECT_SNR_THRESHOLD)
 
 
-def _vessel_overlap(footprint: Footprint | None, mask_canvas: np.ndarray | None) -> float:
+def _vessel_overlap(
+    footprint: Footprint | None, mask_canvas: np.ndarray | None
+) -> float:
     """Footprint-weighted fraction of a cell's light absorbed by vessels, in [0, 1).
 
     ``mask_canvas`` is the canvas-coordinate transmission mask M in (0, 1]; the

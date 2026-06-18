@@ -46,7 +46,9 @@ def _acq():
         fps=20.0,
         duration_s=1.0,
         optics=Optics(magnification=8.0),
-        image_sensor=ImageSensor(n_px_height=64, n_px_width=64, pixel_pitch_um=8.0, bit_depth=8),
+        image_sensor=ImageSensor(
+            n_px_height=64, n_px_width=64, pixel_pitch_um=8.0, bit_depth=8
+        ),
     )
 
 
@@ -56,7 +58,9 @@ def _minimal_spec(seed=7, **output_kw):
         acquisition=_acq(),
         seed=seed,
         steps=[
-            PlaceNeurons(density_per_mm3=312500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+            PlaceNeurons(
+                density_per_mm3=312500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -72,7 +76,9 @@ def _full_spec(seed=11, **output_kw):
         acquisition=_acq(),
         seed=seed,
         steps=[
-            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
+            PlaceNeurons(
+                density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             Bleaching(),
             CellOptics(),
@@ -101,7 +107,14 @@ def test_save_load_roundtrips_required_ground_truth(tmp_path):
     rec.save(tmp_path / "r.zarr")
     gt, back = rec.ground_truth, Recording.load(tmp_path / "r.zarr").ground_truth
     assert back.n_units == gt.n_units
-    for name in ("A_planted", "A_observed", "C", "S", "centers_um", "amplitude_per_cell"):
+    for name in (
+        "A_planted",
+        "A_observed",
+        "C",
+        "S",
+        "centers_um",
+        "amplitude_per_cell",
+    ):
         np.testing.assert_array_equal(getattr(back, name), getattr(gt, name))
     # bool masks survive as bool, not upcast to int/float
     for name in ("in_focus", "detectable"):
@@ -113,8 +126,16 @@ def test_minimal_recording_keeps_optional_fields_none(tmp_path):
     rec = simulate(_minimal_spec())
     rec.save(tmp_path / "r.zarr")
     back = Recording.load(tmp_path / "r.zarr").ground_truth
-    for name in ("shifts", "vignette", "leakage", "bleaching", "neuropil_temporal",
-                 "neuropil_spatial", "vasculature_mask", "vessel_overlap_fraction"):
+    for name in (
+        "shifts",
+        "vignette",
+        "leakage",
+        "bleaching",
+        "neuropil_temporal",
+        "neuropil_spatial",
+        "vasculature_mask",
+        "vessel_overlap_fraction",
+    ):
         assert getattr(back, name) is None
 
 
@@ -122,8 +143,16 @@ def test_save_load_roundtrips_optional_fields_present(tmp_path):
     rec = simulate(_full_spec())
     rec.save(tmp_path / "r.zarr")
     gt, back = rec.ground_truth, Recording.load(tmp_path / "r.zarr").ground_truth
-    for name in ("shifts", "vignette", "leakage", "bleaching", "neuropil_temporal",
-                 "neuropil_spatial", "vasculature_mask", "vessel_overlap_fraction"):
+    for name in (
+        "shifts",
+        "vignette",
+        "leakage",
+        "bleaching",
+        "neuropil_temporal",
+        "neuropil_spatial",
+        "vasculature_mask",
+        "vessel_overlap_fraction",
+    ):
         assert getattr(back, name) is not None, name
         np.testing.assert_array_equal(getattr(back, name), getattr(gt, name))
     # the resolved "auto" focus depth is a scalar attr, not a dataset; it round-trips too
@@ -162,7 +191,9 @@ def test_empty_ground_truth_roundtrips(tmp_path):
         in_focus=np.zeros((0,), dtype=bool),
         detectable=np.zeros((0,), dtype=bool),
     )
-    rec = Recording(spec=spec, observed=np.zeros((nf, h, w), dtype=np.float32), ground_truth=gt)
+    rec = Recording(
+        spec=spec, observed=np.zeros((nf, h, w), dtype=np.float32), ground_truth=gt
+    )
     rec.save(tmp_path / "r.zarr")
     back = Recording.load(tmp_path / "r.zarr")
     assert back.ground_truth.n_units == 0

@@ -40,7 +40,9 @@ def _acq(n_px=20, fps=20.0, duration_s=1.0, bit_depth=8, **kw):
     kw.setdefault("optics", Optics(magnification=8.0))
     kw.setdefault(
         "image_sensor",
-        ImageSensor(n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=8.0, bit_depth=bit_depth),
+        ImageSensor(
+            n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=8.0, bit_depth=bit_depth
+        ),
     )
     return Acquisition(fps=fps, duration_s=duration_s, **kw)
 
@@ -67,7 +69,9 @@ def _dot(shape, iy, ix, value=1.0):
 def test_finalize_produces_typed_recording():
     acq = _acq(n_px=24, duration_s=1.0)
     steps = [
-        PlaceNeurons(density_per_mm3=250000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+        PlaceNeurons(
+            density_per_mm3=250000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
+        ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
         Composite(),
@@ -92,7 +96,9 @@ def test_finalize_produces_typed_recording():
 def test_observed_footprint_differs_from_planted_under_optics():
     acq = _acq(n_px=40, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=0.0)
     steps = [
-        PlaceNeurons(density_per_mm3=62500.0, soma_radius_um=4.0, depth_range_um=(80.0, 120.0)),
+        PlaceNeurons(
+            density_per_mm3=62500.0, soma_radius_um=4.0, depth_range_um=(80.0, 120.0)
+        ),
         CellActivity(active_rate_hz=5.0),
         CellOptics(),
         Composite(),
@@ -156,7 +162,9 @@ def test_per_effect_fields_present_for_full_pipeline():
     max_shift_um = 3.0
     margin = int(np.ceil(acq.um_to_px(max_shift_um))) + 1
     steps = [
-        PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
+        PlaceNeurons(
+            density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)
+        ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         Bleaching(),
         CellOptics(),
@@ -237,18 +245,38 @@ def test_detectable_is_snr_based_not_focus_gated():
     scene = Scene.zeros(acq)
     scene.cells += [
         # bright, in focus -> well above the sensor floor
-        Cell(center_um=(0.0, 8.0, 8.0), footprint_planted=_dot((16, 16), 8, 8),
-             trace=trace, in_focus=True, optical_brightness=1.0),
+        Cell(
+            center_um=(0.0, 8.0, 8.0),
+            footprint_planted=_dot((16, 16), 8, 8),
+            trace=trace,
+            in_focus=True,
+            optical_brightness=1.0,
+        ),
         # in focus but optically ~dark -> below the floor
-        Cell(center_um=(0.0, 4.0, 4.0), footprint_planted=_dot((16, 16), 4, 4),
-             trace=trace, in_focus=True, optical_brightness=1e-3),
+        Cell(
+            center_um=(0.0, 4.0, 4.0),
+            footprint_planted=_dot((16, 16), 4, 4),
+            trace=trace,
+            in_focus=True,
+            optical_brightness=1e-3,
+        ),
         # bright but out of focus -> STILL detectable (no in_focus gate); its bright
         # transient clears the floor even though the geometric flag is False
-        Cell(center_um=(0.0, 12.0, 12.0), footprint_planted=_dot((16, 16), 12, 12),
-             trace=trace, in_focus=False, optical_brightness=1.0),
+        Cell(
+            center_um=(0.0, 12.0, 12.0),
+            footprint_planted=_dot((16, 16), 12, 12),
+            trace=trace,
+            in_focus=False,
+            optical_brightness=1.0,
+        ),
         # out of focus AND optically dim -> below the floor
-        Cell(center_um=(0.0, 2.0, 2.0), footprint_planted=_dot((16, 16), 2, 2),
-             trace=trace, in_focus=False, optical_brightness=1e-3),
+        Cell(
+            center_um=(0.0, 2.0, 2.0),
+            footprint_planted=_dot((16, 16), 2, 2),
+            trace=trace,
+            in_focus=False,
+            optical_brightness=1e-3,
+        ),
     ]
     gt = finalize(scene, _detect_spec(acq)).ground_truth
     assert gt.detectable.tolist() == [True, False, True, False]
@@ -264,10 +292,20 @@ def test_detectable_subset_keeps_only_detectable_units():
     trace[nf // 2] = 5.0
     scene = Scene.zeros(acq)
     scene.cells += [
-        Cell(center_um=(0.0, 8.0, 8.0), footprint_planted=_dot((16, 16), 8, 8),
-             trace=trace, in_focus=True, optical_brightness=1.0),
-        Cell(center_um=(0.0, 4.0, 4.0), footprint_planted=_dot((16, 16), 4, 4),
-             trace=trace, in_focus=True, optical_brightness=1e-3),
+        Cell(
+            center_um=(0.0, 8.0, 8.0),
+            footprint_planted=_dot((16, 16), 8, 8),
+            trace=trace,
+            in_focus=True,
+            optical_brightness=1.0,
+        ),
+        Cell(
+            center_um=(0.0, 4.0, 4.0),
+            footprint_planted=_dot((16, 16), 4, 4),
+            trace=trace,
+            in_focus=True,
+            optical_brightness=1e-3,
+        ),
     ]
     gt = finalize(scene, _detect_spec(acq)).ground_truth
     sub = gt.detectable_subset()
@@ -289,8 +327,13 @@ def test_vessel_occlusion_dims_detectability_and_records_overlap():
     def _scene():
         s = Scene.zeros(acq)
         s.cells.append(
-            Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=_dot((16, 16), 8, 8),
-                 trace=trace, in_focus=True, optical_brightness=1.0)
+            Cell(
+                center_um=(0.0, 0.0, 0.0),
+                footprint_planted=_dot((16, 16), 8, 8),
+                trace=trace,
+                in_focus=True,
+                optical_brightness=1.0,
+            )
         )
         return s
 
