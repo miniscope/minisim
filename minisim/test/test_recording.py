@@ -32,7 +32,7 @@ from minisim import (
 )
 from minisim.footprint import Footprint, FootprintStack
 from minisim.recording import _vessel_overlap
-from minisim.scene import Cell, Scene
+from minisim.scene import MOVIE_DIMS, Cell, Scene
 
 
 def _acq(n_px=20, fps=20.0, duration_s=1.0, bit_depth=8, **kw):
@@ -87,6 +87,26 @@ def test_finalize_produces_typed_recording():
     assert rec.observed.shape == (acq.n_frames, 24, 24)
     assert rec.observed.dtype == np.float32
     np.testing.assert_array_equal(rec.observed, np.round(rec.observed))
+
+
+def test_observed_movie_is_labeled_dataarray_sharing_observed():
+    # observed is stored bare; observed_movie wraps it in the snapshot MOVIE_DIMS
+    # layout (arange coords) without copying, so a pipeline can consume it directly.
+    acq = _acq(n_px=24, duration_s=0.5)
+    steps = [
+        PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0)),
+        CellActivity(),
+        Composite(),
+        Sensor(),
+    ]
+    rec = finalize(_run(acq, steps), Spec(acquisition=acq, steps=steps))
+    movie = rec.observed_movie
+    assert movie.dims == MOVIE_DIMS
+    assert movie.shape == rec.observed.shape
+    for dim, size in zip(MOVIE_DIMS, movie.shape, strict=True):
+        np.testing.assert_array_equal(movie.coords[dim].values, np.arange(size))
+    np.testing.assert_array_equal(movie.values, np.asarray(rec.observed))
+    assert np.shares_memory(movie.values, np.asarray(rec.observed))
 
 
 def test_observed_footprint_differs_from_planted_under_optics():

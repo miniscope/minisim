@@ -287,6 +287,19 @@ class Recording(BaseModel):
     ground_truth: GroundTruth
     snapshots: dict[str, xr.DataArray] = Field(default_factory=dict)
 
+    @property
+    def observed_movie(self) -> xr.DataArray:
+        """The observed movie as a labeled ``(frame, height, width)`` DataArray.
+
+        :attr:`observed` is stored as a bare array; this wraps it in the same
+        :data:`~minisim.scene.MOVIE_DIMS` layout (with the trivial ``arange``
+        coordinates) that :attr:`snapshots` and :meth:`stage` already return, so a
+        recording can be fed straight into an analysis pipeline that expects
+        labeled axes without re-attaching dim names. The array data is shared with
+        :attr:`observed`, not copied.
+        """
+        return _movie_dataarray(np.asarray(self.observed))
+
     def stage(self, name: str) -> xr.DataArray:
         """Return the snapshot taken after the named stage.
 
