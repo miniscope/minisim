@@ -346,6 +346,62 @@ def build_neuropil_frames(clean, withbg, gt, picks, colors, t, vmax, px_um, down
     return frames
 
 
+def build_naive_overlay_frames(movie, gt, picks, colors, t, vmax, px_um,
+                               naive_traces, own_traces, downsample=1, target_h=300):
+    """Movie | per-cell (footprint + naive ROI vs the cell's own light) with a time cursor.
+
+    The NB02 sibling of :func:`build_dashboard_frames`: instead of one true-``C`` trace
+    per cell it overlays the naive footprint-ROI read-out (solid, the cell's colour)
+    against the cell's *own light* (dashed black) so the cross-talk reads directly as the
+    cursor sweeps - the naive trace bumps up on a neighbour's transient while the own-light
+    line stays flat. ``naive_traces`` and ``own_traces`` are ``(len(picks), frames)`` arrays
+    in the same units (sensor counts). The drawing machinery (rings, once-rendered panel,
+    per-frame cursor column) is shared with the other dashboards.
+
+    This notebook's recording is small (100 px) for speed, so the colourized movie is
+    nearest-neighbour upscaled to ~``target_h`` px before the trace panel is height-matched
+    to it - otherwise the frame degenerates into a short, very wide strip.
+    """
+    mov_rgb = _colorize_with_rings(movie, gt, picks, colors, vmax, downsample)
+    scale = max(1, round(target_h / mov_rgb.shape[1]))   # crisp integer upscale (keep pixels sharp)
+    if scale > 1:
+        mov_rgb = np.repeat(np.repeat(mov_rgb, scale, axis=1), scale, axis=2)
+    n, h, wm = mov_rgb.shape[:3]
+
+    rfig = plt.figure(figsize=(5.4, h / 100.0), dpi=100)
+    gs = rfig.add_gridspec(len(picks), 2, width_ratios=[0.5, 4], wspace=0.08, hspace=0.3,
+                           left=0.015, right=0.985, top=0.92, bottom=0.13)
+    axts = []
+    for i, u in enumerate(picks):
+        # optical-center frame -> FOV pixel: the axis (0, 0) is the movie center.
+        cy = (movie.shape[1] - 1) / 2.0 + gt.centers_um[u, 1] / px_um
+        cx = (movie.shape[2] - 1) / 2.0 + gt.centers_um[u, 2] / px_um
+        hw = 26
+        y0, y1 = max(int(cy) - hw, 0), min(int(cy) + hw, movie.shape[1])
+        x0, x1 = max(int(cx) - hw, 0), min(int(cx) + hw, movie.shape[2])
+        axf = rfig.add_subplot(gs[i, 0])
+        axf.imshow(np.asarray(gt.A_observed[u])[y0:y1, x0:x1], cmap=GCAMP)
+        axf.set_xticks([]); axf.set_yticks([])
+        for sp in axf.spines.values():
+            sp.set_color(colors[i]); sp.set_linewidth(2.2)
+        axt = rfig.add_subplot(gs[i, 1])
+        axt.plot(t, naive_traces[i], color=colors[i], lw=0.9, label="naive ROI")
+        axt.plot(t, own_traces[i], color="k", lw=0.9, ls="--", label="own light")
+        axt.set_xlim(t[0], t[-1]); axt.set_yticks([])
+        axt.set_xlabel("time (s)", fontsize=9) if i == len(picks) - 1 else axt.set_xticklabels([])
+        if i == 0:
+            axt.set_title("naive ROI (solid) vs the cell's own light (dashed); gap = cross-talk",
+                          fontsize=8.5)
+            axt.legend(fontsize=6, ncol=2, loc="upper right", framealpha=0.6)
+        axts.append(axt)
+    right, xpix, row_top, row_bot = _cursor_panel(rfig, axts, t, h)
+
+    frames = np.empty((n, h, wm + right.shape[1], 3), np.uint8)
+    frames[:, :, :wm] = mov_rgb
+    _paint_right_panel(frames, right, xpix, row_top, row_bot, wm)
+    return frames
+
+
 def interactive_panel(sliders, draw, canvas, ncols=2):
     """Wire every slider to redraw the SAME persistent canvas in place.
 
