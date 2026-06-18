@@ -416,24 +416,38 @@ def _resolve_shift(
 # bright false positive landing on a true cell - from inventing a large translation.
 _MAX_AUTO_SHIFT_FRAC = 0.25
 
+# Fraction of the peak below which a summed-footprint pixel is treated as background
+# when forming the binary support for registration (see _overlap_shift). Drops the
+# near-zero blur tail (a degraded footprint spans many orders of magnitude) without
+# eating into the real footprint body.
+_SUPPORT_REL_THRESHOLD = 1e-2
+
 
 def _overlap_shift(A_est: np.ndarray, A_true: np.ndarray) -> tuple[int, int]:
     """Whole-pixel ``(dy, dx)`` for ``A_est`` that best aligns it onto ``A_true``.
 
-    Uses **phase correlation** on the summed footprint images: the normalized
-    cross-power spectrum has a sharp peak at the translation between the two, robust
-    to the broad low-frequency envelope that makes a raw cross-correlation drift to
-    large lags. The peak is searched within ``_MAX_AUTO_SHIFT_FRAC`` of the FOV per
-    axis. The candidate is only a *proposal* - :func:`hungarian_match` adopts it only
-    if it improves the matched overlap. Returns ``(0, 0)`` when either stack carries
-    no mass.
+    Uses **phase correlation on the binary supports** of the summed footprint images:
+    the normalized cross-power spectrum has a sharp peak at the translation between
+    the two, robust to the broad low-frequency envelope that makes a raw cross-
+    correlation drift to large lags. Registering the *binary support* (rather than the
+    raw intensity sum) is what makes it robust on real footprints: a summed footprint
+    image spans many orders of magnitude - bright cores over a near-zero blur tail -
+    and the phase-only whitening would otherwise amplify that near-zero tail to equal
+    weight with the real signal, drowning the peak. Thresholding to a support at
+    ``_SUPPORT_REL_THRESHOLD`` of the peak gives clean, well-conditioned edges to
+    align, and caps any single footprint - real or false-positive - at weight 1. The
+    peak is searched within ``_MAX_AUTO_SHIFT_FRAC`` of the FOV per axis. The candidate
+    is only a *proposal* - :func:`hungarian_match` adopts it only if it improves the
+    matched overlap. Returns ``(0, 0)`` when either stack carries no mass.
     """
     est_img = A_est.sum(axis=0)
     true_img = A_true.sum(axis=0)
-    if est_img.sum() <= 0.0 or true_img.sum() <= 0.0:
+    if est_img.max() <= 0.0 or true_img.max() <= 0.0:
         return (0, 0)
     h, w = est_img.shape
-    cross = np.fft.rfft2(true_img) * np.conj(np.fft.rfft2(est_img))
+    est_sup = (est_img > _SUPPORT_REL_THRESHOLD * est_img.max()).astype(float)
+    true_sup = (true_img > _SUPPORT_REL_THRESHOLD * true_img.max()).astype(float)
+    cross = np.fft.rfft2(true_sup) * np.conj(np.fft.rfft2(est_sup))
     cross /= np.abs(cross) + 1e-12  # phase only: a delta at the translation, no envelope drift
     cc = np.fft.fftshift(np.fft.irfft2(cross, s=(h, w)))
     cy, cx = h // 2, w // 2
@@ -529,6 +543,15 @@ def _energy_masks(A: np.ndarray, energy_frac: float) -> np.ndarray:
     n_pix = int(np.prod(A.shape[1:]))
     flat = np.clip(A, 0.0, None).reshape(A.shape[0], n_pix)
     masks = np.zeros(flat.shape, dtype=bool)
+    if energy_frac >= 1.0:
+        # The whole support. Going through the cumulative-energy search here is not
+        # just wasteful but numerically unstable: for a footprint spanning many orders
+        # of magnitude (e.g. a blurred footprint with a near-zero tail), the descending
+        # cumulative sum goes flat across the tail, and `searchsorted` for the total -
+        # which is summed in a different order and so differs by rounding - can land in
+        # that flat region and collapse the mask to the bright core. Keep every
+        # positive pixel directly instead.
+        return (flat > 0).reshape(A.shape)
     for i, f in enumerate(flat):
         total = f.sum()
         if total <= 0:

@@ -56,10 +56,12 @@ def _acq(n_px=96, focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration
 
 
 def test_detectability_falls_with_depth():
-    # Focal plane fixed at the surface (z=0): as the cell band descends past the
-    # depth of field, cells defocus out (geometric in_focus -> 0) and scatter dims
-    # them, so both the in-focus and the detectable fraction fall with depth. The
-    # in-focus fraction is the rock-solid geometric signal; detectability tracks it.
+    # Focal plane fixed at the surface (z=0): as the cell band descends, defocus and
+    # scatter dim each cell's transient, so its SNR falls and the detectable fraction
+    # falls with it. Detectability is a pure SNR test, not a focus gate, so it falls
+    # *smoothly* with depth rather than snapping off at the depth of field - and a
+    # band can be fully out of focus (geometric in_focus -> 0) yet still have plenty of
+    # detectable cells, because a bright, blurred transient still clears the floor.
     base = Spec(
         acquisition=_acq(focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration_s=3.0),
         seed=10,
@@ -73,11 +75,11 @@ def test_detectability_falls_with_depth():
                          p_quiescent_to_active=0.08, brightness_cv=0.0),
             CellOptics(),
             Composite(),
-            # photons ~ 200 / NA² (NA 0.45): the NA²-collection factor moved into
-            # cell_optics dims the signal, and photons_per_unit (the exposure scale
-            # that absorbs collection's absolute constant) compensates so the
-            # detectability regime is unchanged.
-            Sensor(photons_per_unit=1000.0),
+            # An exposure where the depth-driven SNR falloff straddles the floor over
+            # this depth range, so the detectable fraction descends through the bands
+            # (too bright and every cell clears the floor at all depths; too dim and
+            # none do).
+            Sensor(photons_per_unit=250.0),
         ],
     )
     bands = [(0.0, 10.0), (40.0, 50.0), (80.0, 90.0), (120.0, 130.0)]
@@ -90,10 +92,14 @@ def test_detectability_falls_with_depth():
     assert in_focus[0] > 0.9
     assert in_focus[-1] < 0.1
     assert all(later <= earlier + 0.05 for earlier, later in pairwise(in_focus))
-    # detectability tracks the focus down: a meaningful shallow fraction, ~none deep
-    assert detectable[0] > 0.2
+    # detectability falls smoothly with depth: most cells detectable at the surface,
+    # essentially none in the deepest band, monotone in between.
+    assert detectable[0] > 0.8
     assert detectable[-1] < 0.05
-    assert detectable[0] > detectable[-1]
+    assert all(later <= earlier + 0.05 for earlier, later in pairwise(detectable))
+    # the model change made explicit: the second band is fully OUT of focus, yet a
+    # substantial fraction of its cells are still detectable on SNR alone.
+    assert in_focus[1] < 0.1 and detectable[1] > 0.2
 
 
 def test_strong_vignette_concentrates_detection_centrally():

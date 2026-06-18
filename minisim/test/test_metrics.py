@@ -93,6 +93,22 @@ def test_energy_frac_validated():
         hungarian_match(A, A, energy_frac=1.5)
 
 
+def test_full_energy_mask_keeps_whole_support_under_huge_dynamic_range():
+    # energy_frac=1.0 must keep the entire support, even when the footprint spans many
+    # orders of magnitude (a bright core over a near-zero blur tail). Re-scaling the
+    # weight profile (raising to a power) leaves the support unchanged, so the binary
+    # IoU between the original and every rescaled version must stay exactly 1.0.
+    # Regression: a separately-summed total vs the descending cumulative sum used to
+    # collapse the mask to the bright core for some scalings, giving IoU ~0.08.
+    yy, xx = np.ogrid[:48, :48]
+    true = np.exp(-((yy - 24) ** 2 + (xx - 24) ** 2) / (2 * 5.0 ** 2))  # peak 1 -> tail ~1e-10
+    support = true > 0
+    for gamma in np.linspace(1.0, 0.0, 11):
+        est = np.where(support, true ** gamma, 0.0)  # same support, flattened profile
+        m = hungarian_match(est[None], true[None], metric="iou", energy_frac=1.0)
+        assert m.similarity_matrix[0, 0] == pytest.approx(1.0)
+
+
 def test_xarray_input_matches_ndarray():
     A = np.stack([_disk(32, 32, 8, 8, 4), _disk(32, 32, 22, 22, 5)])
     xA = xr.DataArray(A, dims=["unit_id", "height", "width"])
@@ -152,6 +168,28 @@ def test_auto_shift_recovers_global_translation():
     assert shifted.shift == (-3, -2)  # shift applied to A_est to align onto A_true
     assert shifted.recall(0.5) == 1.0
     assert shifted.mean_iou > plain.mean_iou
+
+
+def test_auto_shift_recovers_translation_with_high_dynamic_range_footprints():
+    # Regression: real (blurred) footprints span many orders of magnitude - bright
+    # cores over a near-zero tail - and overlap into a broad summed image. The earlier
+    # phase correlation whitened the raw intensity sum, which amplified that near-zero
+    # tail to equal weight and lost the peak, so a uniform offset went unrecovered.
+    # Registering the binary supports finds it. Build several wide overlapping
+    # Gaussians (peak 1 down to ~1e-9 tails) and shift them all by a known offset.
+    from minisim.metrics import _shift_stack
+
+    yy, xx = np.ogrid[:64, :64]
+    centers = [(20, 22), (24, 40), (40, 26), (44, 44)]
+    A_true = np.stack([np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 4.0 ** 2)))
+                       for cy, cx in centers])
+    assert A_true.sum(0).max() / A_true.sum(0)[A_true.sum(0) > 0].min() > 1e6  # huge range
+    A_est = _shift_stack(A_true, 6, 5)
+    plain = hungarian_match(A_est, A_true)
+    shifted = hungarian_match(A_est, A_true, shift="auto")
+    assert plain.recall(0.5) < 0.5            # the raw offset wrecks the match
+    assert shifted.shift == (-6, -5)          # ...and auto recovers it exactly
+    assert shifted.recall(0.5) == 1.0
 
 
 def test_explicit_shift_is_applied_and_recorded():

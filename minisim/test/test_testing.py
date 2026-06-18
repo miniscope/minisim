@@ -73,6 +73,16 @@ def test_make_recording_accepts_overrides():
     assert rec.ground_truth.n_units == 2
 
 
+def test_make_recording_pins_focal_plane():
+    # The default "auto" focus resolves the plane onto the cells; a fixed
+    # focal_depth_um holds the plane still wherever the cells are placed - the setup a
+    # recall-vs-depth sweep needs (auto-focus would refocus on each depth).
+    auto = make_recording(n_cells=4, duration_s=1.0, depth_um=80.0, seed=0)
+    pinned = make_recording(n_cells=4, duration_s=1.0, depth_um=80.0, focal_depth_um=0.0, seed=0)
+    assert auto.ground_truth.focal_depth_um == 80.0
+    assert pinned.ground_truth.focal_depth_um == 0.0
+
+
 # --- score: perfect and empty estimates ------------------------------------
 
 
