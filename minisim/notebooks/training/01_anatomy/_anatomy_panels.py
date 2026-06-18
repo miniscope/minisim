@@ -712,13 +712,15 @@ class IlluminationPanel:
         self.ctr = falloff_center_px(self.hw, acq8, (0.0, 0.0))
         self.px = acq8.pixel_size_um
         self.qe, self.read = acq8.image_sensor.quantum_efficiency, acq8.image_sensor.read_noise_e
-        self.incells = [c for c in sc.cells if c.in_focus and c.trace is not None]
+        # every cell with a trace; the DETECT_SNR_THRESHOLD floor alone decides who is
+        # detectable - defocus shows up as a lower SNR here, never as a hard exclusion
+        self.cells = [c for c in sc.cells if c.trace is not None]
         self.rmax = math.hypot((self.hw[0] - 1) / 2.0, (self.hw[1] - 1) / 2.0) * self.px
         self.rprof = np.linspace(0.0, self.rmax, 200)
         # cells are in the optical-center frame (origin = optical axis = FOV center),
         # so distance from center is just hypot(y, x)
         self.rad_cells = np.array([math.hypot(c.center_um[1], c.center_um[2])
-                                   for c in self.incells])
+                                   for c in self.cells])
         self.fig = plt.figure(figsize=(11.0, 3.7))
         if hasattr(self.fig.canvas, "header_visible"):
             self.fig.canvas.header_visible = False
@@ -764,7 +766,7 @@ class IlluminationPanel:
         self._ai.set_xticks([])
         self._ai.set_yticks([])
         self._ai.set_title("FOV with falloff applied")
-        snr = np.array([self._cell_snr(c, field) for c in self.incells])
+        snr = np.array([self._cell_snr(c, field) for c in self.cells])
         plot_snr_vs_radius(self._ad, self.rad_cells, snr, DETECT_SNR_THRESHOLD,
                            title="outer cells fall below the floor")
         self.fig.canvas.draw_idle()
@@ -804,7 +806,9 @@ class SensorPanel:
         sig_px = acq9.um_to_px(0.25 * min(acq9.fov_um))
         self.glow = np.exp(-(radius_grid(self.hw, ((self.hw[0] - 1) / 2.0, (self.hw[1] - 1) / 2.0)) ** 2)
                            / (2.0 * sig_px ** 2))
-        cells = [c for c in sc.cells if c.in_focus and c.trace is not None]
+        # every cell with a trace; the floor alone decides detectability (defocus only
+        # dims the SNR), so out-of-focus cells that still clear it are shown, not hidden
+        cells = [c for c in sc.cells if c.trace is not None]
         # optical-center frame: distance from FOV center is hypot(y, x)
         self.rad = np.array([math.hypot(c.center_um[1], c.center_um[2]) for c in cells])
         self.fcell = np.array([sample_field_at(self.field, c.center_um[1], c.center_um[2], self.px)
