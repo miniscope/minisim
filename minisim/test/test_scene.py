@@ -83,9 +83,7 @@ def test_canvas_shape_includes_margin_without_allocating():
 def test_canvas_shape_reads_a_hand_set_movie():
     # An explicitly assigned (oversized) movie defines the canvas the steps see.
     scene = Scene.zeros(_tiny_acquisition())
-    scene.movie = xr.DataArray(
-        np.zeros((scene.acq.n_frames, 50, 40)), dims=MOVIE_DIMS
-    )
+    scene.movie = xr.DataArray(np.zeros((scene.acq.n_frames, 50, 40)), dims=MOVIE_DIMS)
     assert scene.has_movie is True
     assert scene.canvas_shape == (50, 40)
 
@@ -153,6 +151,8 @@ def test_scene_internals_are_submodule_only():
     import minisim
 
     for name in ("Scene", "Cell", "GroundTruthBuilder"):
-        assert not hasattr(minisim, name), f"{name} leaked back onto the top-level surface"
+        assert not hasattr(minisim, name), (
+            f"{name} leaked back onto the top-level surface"
+        )
         assert name not in minisim.__all__
         assert hasattr(__import__("minisim.scene", fromlist=[name]), name)

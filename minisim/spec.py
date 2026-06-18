@@ -94,9 +94,19 @@ class Optics(_Base):
     emission ~510–540 nm.
     """
 
-    na: float = Field(gt=0, default=0.45, description="Numerical aperture of the GRIN objective.")
-    magnification: float = Field(gt=0, default=8.0, description="Optical magnification (sensor side / object side).")
-    emission_nm: float = Field(gt=0, default=525.0, description="Fluorophore emission wavelength, nm (GCaMP ≈ 525).")
+    na: float = Field(
+        gt=0, default=0.45, description="Numerical aperture of the GRIN objective."
+    )
+    magnification: float = Field(
+        gt=0,
+        default=8.0,
+        description="Optical magnification (sensor side / object side).",
+    )
+    emission_nm: float = Field(
+        gt=0,
+        default=525.0,
+        description="Fluorophore emission wavelength, nm (GCaMP ≈ 525).",
+    )
     depth_of_field_um: float | Literal["auto"] = Field(
         default="auto",
         description="±in-focus half-depth around the focal plane, µm. 'auto' (default) "
@@ -232,13 +242,27 @@ class ImageSensor(_Base):
 
     n_px_height: int = Field(gt=0, default=256, description="Sensor height, pixels.")
     n_px_width: int = Field(gt=0, default=256, description="Sensor width, pixels.")
-    pixel_pitch_um: float = Field(gt=0, default=3.0, description="Physical sensor pixel pitch, µm.")
-    quantum_efficiency: float = Field(gt=0, le=1, default=0.7, description="Photon → electron conversion efficiency.")
-    read_noise_e: float = Field(ge=0, default=2.0, description="Read noise, electrons RMS.")
-    gain_adu_per_e: float = Field(gt=0, default=1.0, description="Camera gain, ADU per electron.")
-    bit_depth: int = Field(gt=0, default=8, description="ADC bit depth; counts clipped to [0, 2^bit_depth − 1].")
+    pixel_pitch_um: float = Field(
+        gt=0, default=3.0, description="Physical sensor pixel pitch, µm."
+    )
+    quantum_efficiency: float = Field(
+        gt=0, le=1, default=0.7, description="Photon → electron conversion efficiency."
+    )
+    read_noise_e: float = Field(
+        ge=0, default=2.0, description="Read noise, electrons RMS."
+    )
+    gain_adu_per_e: float = Field(
+        gt=0, default=1.0, description="Camera gain, ADU per electron."
+    )
+    bit_depth: int = Field(
+        gt=0,
+        default=8,
+        description="ADC bit depth; counts clipped to [0, 2^bit_depth − 1].",
+    )
 
-    def photons_to_counts(self, photons: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    def photons_to_counts(
+        self, photons: np.ndarray, rng: np.random.Generator
+    ) -> np.ndarray:
         """Forward sensor model: incident photons → digitized ADC counts.
 
         The only place fluorescence becomes integer counts::
@@ -347,7 +371,9 @@ class Tissue(_Base):
         emission leg, since the diffuse excitation leg attenuates little over
         imaging depths (see the class docstring for why the legs are asymmetric).
         """
-        return 1.0 / (1.0 / self.scatter_mfp_excitation_um + 1.0 / self.scatter_mfp_emission_um)
+        return 1.0 / (
+            1.0 / self.scatter_mfp_excitation_um + 1.0 / self.scatter_mfp_emission_um
+        )
 
     def attenuation(self, z_um: float) -> float:
         """Fraction of light surviving the round-trip scatter from depth ``z_um`` - in (0, 1].
@@ -391,7 +417,9 @@ class Acquisition(_Base):
     image_sensor: ImageSensor = Field(default_factory=ImageSensor)
     tissue: Tissue = Field(default_factory=Tissue)
     fps: float = Field(gt=0, default=20.0, description="Frame rate, frames per second.")
-    duration_s: float = Field(gt=0, default=150.0, description="Recording duration, seconds.")
+    duration_s: float = Field(
+        gt=0, default=150.0, description="Recording duration, seconds."
+    )
     focal_depth_in_tissue_um: float | Literal["auto"] = Field(
         default="auto",
         description="Depth of the focal plane below the tissue surface, µm (0 = surface), "
@@ -442,7 +470,9 @@ class Acquisition(_Base):
         """Convert a physical distance (µm) to pixels."""
         return um / self.pixel_size_um
 
-    def um_to_index(self, y_um: float, x_um: float, shape: tuple[int, int]) -> tuple[float, float]:
+    def um_to_index(
+        self, y_um: float, x_um: float, shape: tuple[int, int]
+    ) -> tuple[float, float]:
         """Array ``(row, col)`` for an optical-center µm position on a centered grid.
 
         Lateral positions live in the **optical-center frame**: the optical axis
@@ -492,7 +522,9 @@ class Acquisition(_Base):
         brightness used (with the illumination field and sensor floor) to decide
         detectability at ``finalize()``.
         """
-        sigma_0 = math.hypot(self.optics.diffraction_sigma_um, self.tissue.scatter_sigma_um(z_um))
+        sigma_0 = math.hypot(
+            self.optics.diffraction_sigma_um, self.tissue.scatter_sigma_um(z_um)
+        )
         sigma_total = math.hypot(sigma_0, self.optics.defocus_sigma_um(z_um, focal_um))
         brightness = (
             (sigma_0**2 / sigma_total**2)
@@ -630,7 +662,11 @@ class NeuronPopulation(_Base):
         "× depth thickness, the thickness floored at one soma diameter so a thin or "
         "planar layer still yields cells.",
     )
-    soma_radius_um: float = Field(gt=0, default=7.0, description="Soma radius, µm (typical cortical neuron ≈ 5–10).")
+    soma_radius_um: float = Field(
+        gt=0,
+        default=7.0,
+        description="Soma radius, µm (typical cortical neuron ≈ 5–10).",
+    )
     irregularity: float = Field(
         ge=0,
         le=1,
@@ -661,7 +697,9 @@ class NeuronPopulation(_Base):
         default=(0.0, 200.0), description="(min, max) depth into tissue, µm."
     )
     min_distance_um: float = Field(
-        ge=0, default=0.0, description="3-D center-to-center minimum (Poisson-disk if > 0)."
+        ge=0,
+        default=0.0,
+        description="3-D center-to-center minimum (Poisson-disk if > 0).",
     )
     positions_um: list[tuple[float, float, float]] | None = Field(
         default=None,
@@ -730,7 +768,9 @@ class PlaceNeurons(StepSpec, NeuronPopulation):
         if self.populations is not None:
             return self.populations
         return [
-            NeuronPopulation(**{f: getattr(self, f) for f in NeuronPopulation.model_fields})
+            NeuronPopulation(
+                **{f: getattr(self, f) for f in NeuronPopulation.model_fields}
+            )
         ]
 
     @model_validator(mode="after")
@@ -738,7 +778,9 @@ class PlaceNeurons(StepSpec, NeuronPopulation):
         if self.populations is None:
             return self
         if not self.populations:
-            raise ValueError("populations must list at least one NeuronPopulation, or be None.")
+            raise ValueError(
+                "populations must list at least one NeuronPopulation, or be None."
+            )
         # Flag step-level population fields left at a *non-default* value (they would
         # be silently ignored alongside `populations`). Comparing against the defaults
         # rather than `model_fields_set` keeps this stable across a serialization
@@ -747,7 +789,9 @@ class PlaceNeurons(StepSpec, NeuronPopulation):
         # (by `sweep()`, a cache/JSON reload, ...), making such a spec impossible to use.
         step_defaults = NeuronPopulation()
         clash = sorted(
-            f for f in NeuronPopulation.model_fields if getattr(self, f) != getattr(step_defaults, f)
+            f
+            for f in NeuronPopulation.model_fields
+            if getattr(self, f) != getattr(step_defaults, f)
         )
         if clash:
             raise ValueError(
@@ -781,14 +825,34 @@ class CellActivity(StepSpec):
     domain: ClassVar[str] = "cell"
     kind: Literal["cell_activity"] = "cell_activity"
     requires: ClassVar[tuple[str, ...]] = ("place_neurons",)  # needs cells to animate
-    spike_sim_hz: float = Field(gt=0, default=300.0, description="High-res spike-simulation rate, Hz (~300 = a ~3 ms refractory); binned to the frame rate.")
+    spike_sim_hz: float = Field(
+        gt=0,
+        default=300.0,
+        description="High-res spike-simulation rate, Hz (~300 = a ~3 ms refractory); binned to the frame rate.",
+    )
     # Defaults = CaLab's "moderate" SPIKE_ACTIVITY level; see spike_activity_params.
-    p_quiescent_to_active: float = Field(gt=0, default=0.005, description="Per-frame quiescent→active transition prob.")
-    p_active_to_quiescent: float = Field(gt=0, default=0.3, description="Per-frame active→quiescent transition prob.")
-    active_rate_hz: float = Field(gt=0, default=150.0, description="Instantaneous firing rate while active, Hz (the in-burst rate).")
-    quiescent_rate_hz: float = Field(ge=0, default=0.6, description="Instantaneous firing rate while quiescent, Hz (the intrinsic background).")
-    tau_rise_s: float = Field(gt=0, default=0.05, description="Calcium rise time constant, s.")
-    tau_decay_s: float = Field(gt=0, default=0.5, description="Calcium decay time constant, s.")
+    p_quiescent_to_active: float = Field(
+        gt=0, default=0.005, description="Per-frame quiescent→active transition prob."
+    )
+    p_active_to_quiescent: float = Field(
+        gt=0, default=0.3, description="Per-frame active→quiescent transition prob."
+    )
+    active_rate_hz: float = Field(
+        gt=0,
+        default=150.0,
+        description="Instantaneous firing rate while active, Hz (the in-burst rate).",
+    )
+    quiescent_rate_hz: float = Field(
+        ge=0,
+        default=0.6,
+        description="Instantaneous firing rate while quiescent, Hz (the intrinsic background).",
+    )
+    tau_rise_s: float = Field(
+        gt=0, default=0.05, description="Calcium rise time constant, s."
+    )
+    tau_decay_s: float = Field(
+        gt=0, default=0.5, description="Calcium decay time constant, s."
+    )
     brightness_cv: float = Field(
         ge=0,
         default=0.3,
@@ -819,7 +883,9 @@ class CellOptics(StepSpec):
 
     domain: ClassVar[str] = "cell"
     kind: Literal["optics"] = "optics"
-    requires: ClassVar[tuple[str, ...]] = ("place_neurons",)  # degrades planted footprints
+    requires: ClassVar[tuple[str, ...]] = (
+        "place_neurons",
+    )  # degrades planted footprints
 
 
 class Composite(StepSpec):
@@ -856,12 +922,31 @@ class Neuropil(StepSpec):
     # Couples to the local population's calcium; falls back to independent drift if
     # absent, so cell_activity is order-only (must precede when present), not required.
     requires: ClassVar[tuple[str, ...]] = ("cell_activity",)
-    spatial_sigma_um: float = Field(gt=0, default=40.0, description="Spatial smoothness of the mesh, µm.")
-    temporal_tau_s: float = Field(gt=0, default=10.0, description="OU correlation time of the independent slow-drift leg, s (slow).")
-    population_tau_s: float = Field(gt=0, default=1.5, description="Low-pass time constant of the population-coupled leg, s: the felt's integration/lag, short relative to the drift.")
-    amplitude: float = Field(gt=0, default=0.5, description="Background amplitude relative to cell signal.")
-    n_components: int = Field(ge=1, default=3, description="Number of independent diffuse components.")
-    population_coupling: float = Field(ge=0, le=1, default=0.7, description="Fraction of the temporal envelope driven by local population activity vs independent slow drift (0=pure drift, 1=pure population).")
+    spatial_sigma_um: float = Field(
+        gt=0, default=40.0, description="Spatial smoothness of the mesh, µm."
+    )
+    temporal_tau_s: float = Field(
+        gt=0,
+        default=10.0,
+        description="OU correlation time of the independent slow-drift leg, s (slow).",
+    )
+    population_tau_s: float = Field(
+        gt=0,
+        default=1.5,
+        description="Low-pass time constant of the population-coupled leg, s: the felt's integration/lag, short relative to the drift.",
+    )
+    amplitude: float = Field(
+        gt=0, default=0.5, description="Background amplitude relative to cell signal."
+    )
+    n_components: int = Field(
+        ge=1, default=3, description="Number of independent diffuse components."
+    )
+    population_coupling: float = Field(
+        ge=0,
+        le=1,
+        default=0.7,
+        description="Fraction of the temporal envelope driven by local population activity vs independent slow drift (0=pure drift, 1=pure population).",
+    )
 
 
 class VesselLayer(_Base):
@@ -884,17 +969,62 @@ class VesselLayer(_Base):
     below them.
     """
 
-    depth_um: float = Field(ge=0, default=30.0, description="Depth of this vessel layer below the surface, µm (same coord as cell z / focal plane).")
-    n_roots: int = Field(ge=1, default=4, description="Number of vessel trees entering this layer from the field edges.")
-    root_radius_um: float = Field(gt=0, default=22.0, description="Trunk (thickest) vessel radius, µm.")
-    min_radius_um: float = Field(gt=0, default=2.0, description="Capillary floor: a branch terminates once Murray-law tapering drops below this, µm.")
-    opacity: float = Field(gt=0, le=1, default=0.85, description="Peak absorption of a thick trunk in (0, 1]; transmission floors at 1 − opacity (real vessels are never fully black).")
-    absorption_per_um: float = Field(gt=0, default=0.04, description="Beer-Lambert absorption per µm of blood path length: sets the capillary-vs-trunk contrast.")
-    branch_prob: float = Field(ge=0, lt=1, default=0.2, description="Per-step bifurcation probability (a side branch peels off, the main vessel continues).")
-    tortuosity_deg: float = Field(ge=0, default=8.0, description="Std of the per-step heading perturbation, degrees (0 = ruler-straight vessels).")
-    branch_angle_deg: float = Field(ge=0, default=30.0, description="Base heading deviation at a bifurcation, degrees; the thinner child turns more.")
-    branch_area_main: float = Field(gt=0.5, lt=1.0, default=0.7, description="Main child's share of the conserved Murray cube-sum at a bifurcation (0.5 = symmetric, →1 = a thin twig off a barely-thinned trunk).")
-    step_per_radius: float = Field(gt=0, default=1.5, description="Growth step length as a multiple of the current radius.")
+    depth_um: float = Field(
+        ge=0,
+        default=30.0,
+        description="Depth of this vessel layer below the surface, µm (same coord as cell z / focal plane).",
+    )
+    n_roots: int = Field(
+        ge=1,
+        default=4,
+        description="Number of vessel trees entering this layer from the field edges.",
+    )
+    root_radius_um: float = Field(
+        gt=0, default=22.0, description="Trunk (thickest) vessel radius, µm."
+    )
+    min_radius_um: float = Field(
+        gt=0,
+        default=2.0,
+        description="Capillary floor: a branch terminates once Murray-law tapering drops below this, µm.",
+    )
+    opacity: float = Field(
+        gt=0,
+        le=1,
+        default=0.85,
+        description="Peak absorption of a thick trunk in (0, 1]; transmission floors at 1 − opacity (real vessels are never fully black).",
+    )
+    absorption_per_um: float = Field(
+        gt=0,
+        default=0.04,
+        description="Beer-Lambert absorption per µm of blood path length: sets the capillary-vs-trunk contrast.",
+    )
+    branch_prob: float = Field(
+        ge=0,
+        lt=1,
+        default=0.2,
+        description="Per-step bifurcation probability (a side branch peels off, the main vessel continues).",
+    )
+    tortuosity_deg: float = Field(
+        ge=0,
+        default=8.0,
+        description="Std of the per-step heading perturbation, degrees (0 = ruler-straight vessels).",
+    )
+    branch_angle_deg: float = Field(
+        ge=0,
+        default=30.0,
+        description="Base heading deviation at a bifurcation, degrees; the thinner child turns more.",
+    )
+    branch_area_main: float = Field(
+        gt=0.5,
+        lt=1.0,
+        default=0.7,
+        description="Main child's share of the conserved Murray cube-sum at a bifurcation (0.5 = symmetric, →1 = a thin twig off a barely-thinned trunk).",
+    )
+    step_per_radius: float = Field(
+        gt=0,
+        default=1.5,
+        description="Growth step length as a multiple of the current radius.",
+    )
 
     @model_validator(mode="after")
     def _check_radii(self) -> VesselLayer:
@@ -941,8 +1071,14 @@ class Vasculature(StepSpec):
 
     domain: ClassVar[str] = "tissue"
     kind: Literal["vasculature"] = "vasculature"
-    enabled: bool = Field(default=False, description="Master switch; with no layers the step is a no-op regardless.")
-    layers: list[VesselLayer] = Field(default_factory=list, description="Vessel layers to grow, each at its own depth/caliber. Empty = no vessels.")
+    enabled: bool = Field(
+        default=False,
+        description="Master switch; with no layers the step is a no-op regardless.",
+    )
+    layers: list[VesselLayer] = Field(
+        default_factory=list,
+        description="Vessel layers to grow, each at its own depth/caliber. Empty = no vessels.",
+    )
 
 
 class Bleaching(StepSpec):
@@ -962,19 +1098,24 @@ class Bleaching(StepSpec):
 
     domain: ClassVar[str] = "cell"
     kind: Literal["bleaching"] = "bleaching"
-    requires: ClassVar[tuple[str, ...]] = ("cell_activity",)  # bleaches each cell's emission
+    requires: ClassVar[tuple[str, ...]] = (
+        "cell_activity",
+    )  # bleaches each cell's emission
     bleach_susceptibility: float = Field(
-        ge=0, default=6.3e-6,
+        ge=0,
+        default=6.3e-6,
         description="Bleach rate per second at unit excitation and baseline emission (the "
         "per-photon hazard); 0 disables bleaching. Calibrated to CA1 GCaMP6f.",
     )
     turnover_tau_s: float = Field(
-        gt=0, default=20000.0,
+        gt=0,
+        default=20000.0,
         description="Effective fluorophore-recovery time constant, s (≈5.5 h, from the "
         "measured replenish rate). Restores the intact pool toward 1, opposing bleaching.",
     )
     excitation_intensity: float = Field(
-        ge=0, default=1.0,
+        ge=0,
+        default=1.0,
         description="Excitation level, dimensionless (1 = a typical continuous miniscope "
         "level). Deliberately unitless - absolute irradiance depends on the rig, depth, and "
         "optics. Scales the bleach rate linearly: the brighter-but-faster-fading trade-off.",
@@ -1017,31 +1158,45 @@ class BrainMotion(StepSpec):
         default=None, description="Explicit per-frame (dy, dx) in µm; overrides model."
     )
     max_shift_um: float = Field(
-        gt=0, default=15.0,
+        gt=0,
+        default=15.0,
         description="Hard safety clamp on cumulative shift magnitude, µm (also sizes the tissue margin).",
     )
     # --- physical model ---
     locomotion_freq_hz: float = Field(
-        gt=0, default=7.0, description="Locomotion (stride) drive frequency, Hz; mice/rats run at ~6-8 Hz."
+        gt=0,
+        default=7.0,
+        description="Locomotion (stride) drive frequency, Hz; mice/rats run at ~6-8 Hz.",
     )
     motion_amplitude_um: float = Field(
-        gt=0, default=10.0, description="Extreme excursion (99th-percentile displacement radius), µm; most frames move less."
+        gt=0,
+        default=10.0,
+        description="Extreme excursion (99th-percentile displacement radius), µm; most frames move less.",
     )
     locomotion_axis: Literal["y", "x"] = Field(
-        default="y", description="Dominant motion axis the locomotion rhythm drives (y = height; the cross axis gets noise only)."
+        default="y",
+        description="Dominant motion axis the locomotion rhythm drives (y = height; the cross axis gets noise only).",
     )
     resonance_freq_hz: float = Field(
-        gt=0, default=6.0, description="Natural frequency of the brain-on-skull oscillator, Hz."
+        gt=0,
+        default=6.0,
+        description="Natural frequency of the brain-on-skull oscillator, Hz.",
     )
     damping_ratio: float = Field(
-        gt=0, default=0.5, description="Damping ratio ζ of the oscillator (<1 under-damped, sloshy; ≥1 over-damped)."
+        gt=0,
+        default=0.5,
+        description="Damping ratio ζ of the oscillator (<1 under-damped, sloshy; ≥1 over-damped).",
     )
     locomotion_fraction: float = Field(
-        ge=0, le=1, default=0.25,
+        ge=0,
+        le=1,
+        default=0.25,
         description="Share of motion amplitude carried by the locomotion rhythm vs broadband sloshing noise (noise-dominated by default).",
     )
     # --- walk model ---
-    walk_step_um: float = Field(ge=0, default=0.3, description="Random-walk step size, µm/frame (model='walk').")
+    walk_step_um: float = Field(
+        ge=0, default=0.3, description="Random-walk step size, µm/frame (model='walk')."
+    )
 
     @model_validator(mode="after")
     def _amplitude_within_clamp(self) -> BrainMotion:
@@ -1071,11 +1226,19 @@ class IlluminationProfile(StepSpec):
     domain: ClassVar[str] = "sensor"
     kind: Literal["illumination_profile"] = "illumination_profile"
     falloff: float = Field(
-        ge=0, le=1, default=0.7, description="Edge excitation relative to center (1 = uniform)."
+        ge=0,
+        le=1,
+        default=0.7,
+        description="Edge excitation relative to center (1 = uniform).",
     )
-    exponent: float = Field(gt=0, default=2.0, description="Radial falloff exponent (gentle/broad by default).")
+    exponent: float = Field(
+        gt=0,
+        default=2.0,
+        description="Radial falloff exponent (gentle/broad by default).",
+    )
     center_offset_um: tuple[float, float] = Field(
-        default=(0.0, 0.0), description="(dy, dx) offset of the bright center from FOV center, µm."
+        default=(0.0, 0.0),
+        description="(dy, dx) offset of the bright center from FOV center, µm.",
     )
 
 
@@ -1094,11 +1257,15 @@ class Vignette(StepSpec):
     domain: ClassVar[str] = "sensor"
     kind: Literal["vignette"] = "vignette"
     falloff: float = Field(
-        ge=0, le=1, default=0.5, description="Corner brightness relative to center (1 = none)."
+        ge=0,
+        le=1,
+        default=0.5,
+        description="Corner brightness relative to center (1 = none).",
     )
     exponent: float = Field(gt=0, default=2.0, description="Radial falloff exponent.")
     center_offset_um: tuple[float, float] = Field(
-        default=(0.0, 0.0), description="(dy, dx) offset of the bright center from FOV center, µm."
+        default=(0.0, 0.0),
+        description="(dy, dx) offset of the bright center from FOV center, µm.",
     )
 
 
@@ -1113,7 +1280,9 @@ class Leakage(StepSpec):
 
     domain: ClassVar[str] = "sensor"
     kind: Literal["leakage"] = "leakage"
-    profile: Literal["uniform", "gaussian"] = Field(default="gaussian", description="Spatial baseline shape.")
+    profile: Literal["uniform", "gaussian"] = Field(
+        default="gaussian", description="Spatial baseline shape."
+    )
     level: float = Field(ge=0, default=0.1, description="Additive baseline level.")
     sigma_um: float | None = Field(
         default=None,
@@ -1217,9 +1386,13 @@ class Spec(_Base):
     def _check_unique_kinds(self) -> None:
         """Rule 4: each ``kind`` appears at most once - lets sweeps address a step
         by kind and keeps the snapshot dict (keyed by step name) collision-free."""
-        dupes = sorted(k for k, n in Counter(s.kind for s in self.steps).items() if n > 1)
+        dupes = sorted(
+            k for k, n in Counter(s.kind for s in self.steps).items() if n > 1
+        )
         if dupes:
-            raise ValueError(f"Duplicate step kind(s) in spec: {dupes}. Each kind must be unique.")
+            raise ValueError(
+                f"Duplicate step kind(s) in spec: {dupes}. Each kind must be unique."
+            )
 
     def _check_step_dependencies(self) -> None:
         """Rule 4b: a step's present ``requires`` kinds must precede it. Steps are
@@ -1287,7 +1460,9 @@ class Spec(_Base):
             return
         min_fov = min(self.acquisition.fov_um)
         if mot.trajectory_um is not None:
-            extent = max((max(abs(dy), abs(dx)) for dy, dx in mot.trajectory_um), default=0.0)
+            extent = max(
+                (max(abs(dy), abs(dx)) for dy, dx in mot.trajectory_um), default=0.0
+            )
         elif mot.model == "physical":
             extent = mot.motion_amplitude_um
         else:

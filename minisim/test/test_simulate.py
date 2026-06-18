@@ -48,7 +48,9 @@ def _minimal_spec(**output_kw):
         acquisition=acq,
         seed=7,
         steps=[
-            PlaceNeurons(density_per_mm3=312500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+            PlaceNeurons(
+                density_per_mm3=312500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -64,13 +66,17 @@ def _full_spec(**output_kw):
         acquisition=acq,
         seed=11,
         steps=[
-            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
+            PlaceNeurons(
+                density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             Bleaching(),
             CellOptics(),
             Composite(),
             Neuropil(n_components=2),
-            BrainMotion(model="walk", walk_step_um=0.3, max_shift_um=2.0),  # ≤ 5% of the 64 µm FOV
+            BrainMotion(
+                model="walk", walk_step_um=0.3, max_shift_um=2.0
+            ),  # ≤ 5% of the 64 µm FOV
             Vignette(falloff=0.6),
             Leakage(profile="gaussian", level=0.1),
             Sensor(photons_per_unit=120.0),
@@ -136,7 +142,9 @@ def test_simulate_physical_motion_runs_end_to_end():
         acquisition=acq,
         seed=5,
         steps=[
-            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 80.0)),
+            PlaceNeurons(
+                density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 80.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -161,7 +169,9 @@ def test_simulate_records_both_illumination_and_vignette_fields():
         acquisition=acq,
         seed=7,
         steps=[
-            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)),
+            PlaceNeurons(
+                density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -175,8 +185,12 @@ def test_simulate_records_both_illumination_and_vignette_fields():
     gt = rec.ground_truth
     assert gt.illumination.shape == (64, 64)
     assert gt.vignette.shape == (64, 64)
-    assert gt.illumination.max() == pytest.approx(1.0, abs=2e-3)  # bright center (even grid)
-    assert gt.illumination[0, 0] == pytest.approx(0.5)  # edge excitation, farthest corner
+    assert gt.illumination.max() == pytest.approx(
+        1.0, abs=2e-3
+    )  # bright center (even grid)
+    assert gt.illumination[0, 0] == pytest.approx(
+        0.5
+    )  # edge excitation, farthest corner
     assert gt.vignette[0, 0] == pytest.approx(0.6)  # corner collection loss
 
 
@@ -191,7 +205,9 @@ def test_combined_falloff_field_matches_the_applied_illumination_vignette_produc
         acquisition=acq,
         seed=7,
         steps=[
-            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)),
+            PlaceNeurons(
+                density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -203,7 +219,9 @@ def test_combined_falloff_field_matches_the_applied_illumination_vignette_produc
     )
     gt = simulate(spec).ground_truth
     predicted = combined_falloff_field(acq, illum, vig)
-    np.testing.assert_allclose(predicted, gt.illumination * gt.vignette, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(
+        predicted, gt.illumination * gt.vignette, rtol=0, atol=1e-12
+    )
 
 
 def test_simulate_records_the_resolved_auto_focus_depth():
@@ -215,7 +233,9 @@ def test_simulate_records_the_resolved_auto_focus_depth():
         acquisition=acq,
         seed=7,
         steps=[
-            PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)),
+            PlaceNeurons(
+                density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 60.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -231,7 +251,12 @@ def test_simulate_records_the_resolved_auto_focus_depth():
 def test_simulate_save_intermediates_records_movie_stage_names():
     rec = simulate(_full_spec(save_intermediates=True))
     assert set(rec.snapshots) == {
-        "cells_only", "neuropil", "brain_motion", "vignette", "leakage", "sensor",
+        "cells_only",
+        "neuropil",
+        "brain_motion",
+        "vignette",
+        "leakage",
+        "sensor",
     }
     # cell-domain steps are not snapshotted (they don't touch the movie)
     assert "place_neurons" not in rec.snapshots

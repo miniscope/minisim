@@ -65,7 +65,10 @@ def falloff_center_px(
 
 
 def radial_falloff(
-    shape: tuple[int, int], center_px: tuple[float, float], falloff: float, exponent: float
+    shape: tuple[int, int],
+    center_px: tuple[float, float],
+    falloff: float,
+    exponent: float,
 ) -> np.ndarray:
     """Static radial falloff field ``1 − (1 − falloff)·(r / r_max)^exponent``.
 
@@ -77,7 +80,11 @@ def radial_falloff(
     (emission/collection loss). A 1×1 FOV (``r_max == 0``) has no falloff.
     """
     h, w = shape
-    r_max = max(np.hypot(center_px[0] - yc, center_px[1] - xc) for yc in (0, h - 1) for xc in (0, w - 1))
+    r_max = max(
+        np.hypot(center_px[0] - yc, center_px[1] - xc)
+        for yc in (0, h - 1)
+        for xc in (0, w - 1)
+    )
     if r_max <= 0:
         return np.ones((h, w))
     return 1.0 - (1.0 - falloff) * (radius_grid(shape, center_px) / r_max) ** exponent

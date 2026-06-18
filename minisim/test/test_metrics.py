@@ -101,10 +101,12 @@ def test_full_energy_mask_keeps_whole_support_under_huge_dynamic_range():
     # Regression: a separately-summed total vs the descending cumulative sum used to
     # collapse the mask to the bright core for some scalings, giving IoU ~0.08.
     yy, xx = np.ogrid[:48, :48]
-    true = np.exp(-((yy - 24) ** 2 + (xx - 24) ** 2) / (2 * 5.0 ** 2))  # peak 1 -> tail ~1e-10
+    true = np.exp(
+        -((yy - 24) ** 2 + (xx - 24) ** 2) / (2 * 5.0**2)
+    )  # peak 1 -> tail ~1e-10
     support = true > 0
     for gamma in np.linspace(1.0, 0.0, 11):
-        est = np.where(support, true ** gamma, 0.0)  # same support, flattened profile
+        est = np.where(support, true**gamma, 0.0)  # same support, flattened profile
         m = hungarian_match(est[None], true[None], metric="iou", energy_frac=1.0)
         assert m.similarity_matrix[0, 0] == pytest.approx(1.0)
 
@@ -112,7 +114,9 @@ def test_full_energy_mask_keeps_whole_support_under_huge_dynamic_range():
 def test_xarray_input_matches_ndarray():
     A = np.stack([_disk(32, 32, 8, 8, 4), _disk(32, 32, 22, 22, 5)])
     xA = xr.DataArray(A, dims=["unit_id", "height", "width"])
-    assert hungarian_match(xA, xA).mean_iou == pytest.approx(hungarian_match(A, A).mean_iou)
+    assert hungarian_match(xA, xA).mean_iou == pytest.approx(
+        hungarian_match(A, A).mean_iou
+    )
 
 
 # --- weighted footprint similarity -----------------------------------------
@@ -181,14 +185,20 @@ def test_auto_shift_recovers_translation_with_high_dynamic_range_footprints():
 
     yy, xx = np.ogrid[:64, :64]
     centers = [(20, 22), (24, 40), (40, 26), (44, 44)]
-    A_true = np.stack([np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 4.0 ** 2)))
-                       for cy, cx in centers])
-    assert A_true.sum(0).max() / A_true.sum(0)[A_true.sum(0) > 0].min() > 1e6  # huge range
+    A_true = np.stack(
+        [
+            np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 4.0**2)))
+            for cy, cx in centers
+        ]
+    )
+    assert (
+        A_true.sum(0).max() / A_true.sum(0)[A_true.sum(0) > 0].min() > 1e6
+    )  # huge range
     A_est = _shift_stack(A_true, 6, 5)
     plain = hungarian_match(A_est, A_true)
     shifted = hungarian_match(A_est, A_true, shift="auto")
-    assert plain.recall(0.5) < 0.5            # the raw offset wrecks the match
-    assert shifted.shift == (-6, -5)          # ...and auto recovers it exactly
+    assert plain.recall(0.5) < 0.5  # the raw offset wrecks the match
+    assert shifted.shift == (-6, -5)  # ...and auto recovers it exactly
     assert shifted.recall(0.5) == 1.0
 
 
@@ -225,7 +235,9 @@ def test_global_shift_from_trajectories_reads_off_the_constant_offset():
 def test_trace_pearson_per_pair():
     t = np.linspace(0, 4 * np.pi, 200)
     C_true = np.stack([np.sin(t), np.cos(t)])
-    C_est = np.stack([np.sin(t), -np.cos(t)])  # unit 0 identical, unit 1 anti-correlated
+    C_est = np.stack(
+        [np.sin(t), -np.cos(t)]
+    )  # unit 0 identical, unit 1 anti-correlated
     r = trace_pearson(C_est, C_true, [(0, 0), (1, 1)])
     assert r[0] == pytest.approx(1.0)
     assert r[1] == pytest.approx(-1.0)
@@ -346,7 +358,9 @@ def test_footprint_roi_trace_averages_over_the_mask():
         footprint_roi_trace(movie, a), movie[:, mask].mean(axis=1)
     )
     # an empty footprint yields zeros, not a divide-by-zero.
-    np.testing.assert_array_equal(footprint_roi_trace(movie, np.zeros((16, 16))), np.zeros(4))
+    np.testing.assert_array_equal(
+        footprint_roi_trace(movie, np.zeros((16, 16))), np.zeros(4)
+    )
 
 
 # --- edge cases: empty / degenerate / robustness ---------------------------
@@ -393,7 +407,9 @@ def test_match_negative_values_are_clipped():
     # "background" does not perturb the similarity.
     A = np.stack([_disk(16, 16, 8, 8, 3)])
     neg = np.where(A > 0, A, -5.0)
-    assert hungarian_match(neg, A, metric="cosine").mean_similarity == pytest.approx(1.0)
+    assert hungarian_match(neg, A, metric="cosine").mean_similarity == pytest.approx(
+        1.0
+    )
 
 
 def test_auto_shift_no_mass_is_zero():
@@ -416,7 +432,9 @@ def test_auto_shift_survives_a_false_positive():
     # true shift, not drift to the search-window edge.
     from minisim.metrics import _shift_stack
 
-    true = np.stack([_disk(64, 64, 16, 16, 5), _disk(64, 64, 44, 20, 5), _disk(64, 64, 28, 48, 5)])
+    true = np.stack(
+        [_disk(64, 64, 16, 16, 5), _disk(64, 64, 44, 20, 5), _disk(64, 64, 28, 48, 5)]
+    )
     est = np.concatenate([_shift_stack(true, 2, 3), _disk(64, 64, 56, 8, 4)[None]])
     m = hungarian_match(est, true, shift="auto")
     assert m.shift == (-2, -3)
@@ -430,9 +448,14 @@ def test_explicit_shift_is_trusted_unbounded_and_unguarded():
     A_est = np.stack([_disk(48, 48, 40, 40, 4)])  # 32 px away, past the 25% auto bound
     far = hungarian_match(A_est, A_true, shift=(-32, -32))
     assert far.shift == (-32, -32) and far.recall(0.5) == 1.0
-    hurt = hungarian_match(A_true, A_true, shift=(20, 0))  # explicit, harmful, still applied
+    hurt = hungarian_match(
+        A_true, A_true, shift=(20, 0)
+    )  # explicit, harmful, still applied
     assert hurt.shift == (20, 0)
-    assert hungarian_match(A_true, A_true, shift="auto").shift == (0, 0)  # auto declines
+    assert hungarian_match(A_true, A_true, shift="auto").shift == (
+        0,
+        0,
+    )  # auto declines
 
 
 def test_trace_pearson_empty_pairing_is_empty():
@@ -441,7 +464,11 @@ def test_trace_pearson_empty_pairing_is_empty():
 
 def test_activity_empty_pairing_is_empty():
     act = activity_similarity(np.zeros((1, 5)), np.zeros((1, 5)), [])
-    assert act.correlation.size == 0 and act.scale.size == 0 and act.variance_explained.size == 0
+    assert (
+        act.correlation.size == 0
+        and act.scale.size == 0
+        and act.variance_explained.size == 0
+    )
 
 
 def test_activity_constant_estimate_explains_nothing():
@@ -455,7 +482,9 @@ def test_activity_constant_estimate_explains_nothing():
 def test_shift_rmse_single_frame():
     assert shift_rmse(np.array([[1.0, 2.0]]), np.array([[1.0, 2.0]])) == 0.0
     # one frame: removing its mean residual always zeroes the aligned error.
-    assert shift_rmse(np.array([[5.0, 5.0]]), np.zeros((1, 2)), align=True) == pytest.approx(0.0)
+    assert shift_rmse(
+        np.array([[5.0, 5.0]]), np.zeros((1, 2)), align=True
+    ) == pytest.approx(0.0)
 
 
 def test_global_shift_rounds_and_honors_correction_flag():
@@ -463,5 +492,6 @@ def test_global_shift_rounds_and_honors_correction_flag():
     correction = np.tile([2.4, -1.6], (5, 1))
     assert global_shift_from_trajectories(correction, np.zeros((5, 2))) == (-2, 2)
     # correction=False compares the trajectories as given.
-    assert global_shift_from_trajectories(np.tile([1.0, 0.0], (4, 1)), np.zeros((4, 2)),
-                                          correction=False) == (1, 0)
+    assert global_shift_from_trajectories(
+        np.tile([1.0, 0.0], (4, 1)), np.zeros((4, 2)), correction=False
+    ) == (1, 0)

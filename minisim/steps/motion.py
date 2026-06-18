@@ -146,7 +146,9 @@ def physical_brain_motion(
     # Locomotion acceleration: a sinusoid whose instantaneous frequency drifts slowly
     # about locomotion_freq_hz (near-periodic gait, not a metronome).
     freq = locomotion_freq_hz * (
-        1.0 + _LOCOMOTION_FREQ_CV * _lowpass(rng.standard_normal(n_hr), _LOCOMOTION_FREQ_TAU_S, dt)
+        1.0
+        + _LOCOMOTION_FREQ_CV
+        * _lowpass(rng.standard_normal(n_hr), _LOCOMOTION_FREQ_TAU_S, dt)
     )
     a_loco = np.zeros((n_hr, 2))
     a_loco[:, locomotion_axis] = np.sin(2.0 * np.pi * np.cumsum(freq) * dt)
@@ -161,12 +163,16 @@ def physical_brain_motion(
     # Decimate each component's position to the frame rate (exposure-window mean),
     # pin frame 0 to the reference, normalize to unit RMS radius, then mix.
     def _frames(accel: np.ndarray) -> np.ndarray:
-        pos = _integrate_dho(accel, dt, w0, zeta).reshape(n_frames, bins, 2).mean(axis=1)
+        pos = (
+            _integrate_dho(accel, dt, w0, zeta).reshape(n_frames, bins, 2).mean(axis=1)
+        )
         pos -= pos[0]
         rms = float(np.sqrt(np.mean(pos[:, 0] ** 2 + pos[:, 1] ** 2)))
         return pos / rms if rms > _EPS else pos
 
-    traj = locomotion_fraction * _frames(a_loco) + (1.0 - locomotion_fraction) * _frames(a_noise)
+    traj = locomotion_fraction * _frames(a_loco) + (
+        1.0 - locomotion_fraction
+    ) * _frames(a_noise)
 
     # One-shot amplitude calibration (linear system), then the hard safety clamp.
     radius = np.hypot(traj[:, 0], traj[:, 1])
@@ -255,8 +261,12 @@ def shift_and_crop(
         dy, dx = float(shifts_px[f, 0]), float(shifts_px[f, 1])
         warp = np.array([[1.0, 0.0, dx - left], [0.0, 1.0, dy - top]], dtype=np.float32)
         out[f] = cv2.warpAffine(
-            frames32[f], warp, (fov_w, fov_h),
-            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0,
+            frames32[f],
+            warp,
+            (fov_w, fov_h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.0,
         )
     return out
 
@@ -282,7 +292,9 @@ class BrainMotionStep(Step["BrainMotion"]):
 
     name = "brain_motion"
     domain = "motion"
-    consumes_rng = True  # trajectory generators draw noise (unless trajectory_um is given)
+    consumes_rng = (
+        True  # trajectory generators draw noise (unless trajectory_um is given)
+    )
 
     def __call__(self, scene: Scene) -> None:
         acq = self.acq
@@ -318,7 +330,9 @@ class BrainMotionStep(Step["BrainMotion"]):
         scene.truth.shifts = shifts_px
 
     @staticmethod
-    def _check_within_margin(shifts_px: np.ndarray, margin_h: int, margin_w: int) -> None:
+    def _check_within_margin(
+        shifts_px: np.ndarray, margin_h: int, margin_w: int
+    ) -> None:
         """Fail fast if any shift exceeds the tissue margin (the crop would expose
         the canvas edge), telling the caller to enlarge the margin."""
         if len(shifts_px) == 0:

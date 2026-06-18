@@ -147,7 +147,9 @@ def generic_1p() -> Scope:
     A convenient, fast neutral baseline when the specific instrument does not
     matter; use :func:`miniscope_v4` for a realistic V4 setup.
     """
-    return Scope(optics=Optics(), image_sensor=ImageSensor(), focal_depth_in_tissue_um="auto")
+    return Scope(
+        optics=Optics(), image_sensor=ImageSensor(), focal_depth_in_tissue_um="auto"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -47,7 +47,9 @@ def _acq(n_px=96, focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration
         duration_s=duration_s,
         focal_depth_in_tissue_um=focal_depth_in_tissue_um,
         optics=Optics(
-            magnification=8.0, na=0.45, depth_of_field_um=depth_of_field_um,
+            magnification=8.0,
+            na=0.45,
+            depth_of_field_um=depth_of_field_um,
         ),
         image_sensor=ImageSensor(
             n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=8.0, bit_depth=8
@@ -63,16 +65,24 @@ def test_detectability_falls_with_depth():
     # band can be fully out of focus (geometric in_focus -> 0) yet still have plenty of
     # detectable cells, because a bright, blurred transient still clears the floor.
     base = Spec(
-        acquisition=_acq(focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration_s=3.0),
+        acquisition=_acq(
+            focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration_s=3.0
+        ),
         seed=10,
         steps=[
-            PlaceNeurons(density_per_mm3=600000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+            PlaceNeurons(
+                density_per_mm3=600000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)
+            ),
             # The default gate (CaLab "moderate") fires sparsely, so over a short 3 s
             # clip most cells never burst; raise the onset prob so ~all cells fire and
             # this measures the depth effect, not whether a cell happened to spike.
             # brightness_cv=0 keeps detectability driven by depth/optics, not gain.
-            CellActivity(active_rate_hz=80.0, tau_decay_s=0.4,
-                         p_quiescent_to_active=0.08, brightness_cv=0.0),
+            CellActivity(
+                active_rate_hz=80.0,
+                tau_decay_s=0.4,
+                p_quiescent_to_active=0.08,
+                brightness_cv=0.0,
+            ),
             CellOptics(),
             Composite(),
             # An exposure where the depth-driven SNR falloff straddles the floor over
@@ -111,7 +121,9 @@ def test_strong_vignette_concentrates_detection_centrally():
         steps=[
             # A dense, shallow population so the vignette gradient - not per-cell
             # amplitude scatter - dominates which cells clear the floor.
-            PlaceNeurons(density_per_mm3=2.5e6, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+            PlaceNeurons(
+                density_per_mm3=2.5e6, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Composite(),
@@ -136,7 +148,9 @@ def test_bleaching_dims_later_frames():
         acquisition=_acq(focal_depth_in_tissue_um=5.0, duration_s=2.0),
         seed=12,
         steps=[
-            PlaceNeurons(density_per_mm3=400000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+            PlaceNeurons(
+                density_per_mm3=400000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)
+            ),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             # Exaggerated susceptibility (at unit intensity) so the per-cell fade (and
             # the neuropil that dims with it) is unambiguous over a short 2 s clip.
@@ -161,11 +175,17 @@ def test_static_fields_are_invariant_to_motion():
             acquisition=_acq(focal_depth_in_tissue_um=5.0),
             seed=13,
             steps=[
-                PlaceNeurons(density_per_mm3=400000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+                PlaceNeurons(
+                    density_per_mm3=400000.0,
+                    soma_radius_um=4.0,
+                    depth_range_um=(0.0, 10.0),
+                ),
                 CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
                 CellOptics(),
                 Composite(),
-                BrainMotion(model="walk", walk_step_um=walk_step_um, max_shift_um=max_shift_um),
+                BrainMotion(
+                    model="walk", walk_step_um=walk_step_um, max_shift_um=max_shift_um
+                ),
                 Vignette(falloff=0.4, exponent=2.0),
                 Leakage(profile="gaussian", level=0.12, sigma_um=80.0),
                 Sensor(photons_per_unit=130.0),

@@ -110,7 +110,9 @@ def _set_path(model: BaseModel, parts: list[str], full_path: str, value) -> Base
 
     child = getattr(model, head)
     if not isinstance(child, BaseModel):
-        raise ValueError(f"sweep path {full_path!r} descends into non-model field {head!r}.")
+        raise ValueError(
+            f"sweep path {full_path!r} descends into non-model field {head!r}."
+        )
     return model.model_copy(update={head: _set_path(child, rest, full_path, value)})
 
 

@@ -74,7 +74,12 @@ _DEFAULT_PHOTONS_PER_UNIT = 40.0
 
 
 def _grid_positions_um(
-    n: int, fov_um: float, depth_um: float, rng: np.random.Generator, *, margin_frac: float = 0.15
+    n: int,
+    fov_um: float,
+    depth_um: float,
+    rng: np.random.Generator,
+    *,
+    margin_frac: float = 0.15,
 ) -> list[tuple[float, float, float]]:
     """``n`` well-separated ``(z, y, x)`` soma centers on a jittered grid.
 
@@ -197,7 +202,9 @@ def make_recording(
     if population is None:
         if n_cells < 1:
             raise ValueError(f"n_cells ({n_cells}) must be >= 1.")
-        positions = _grid_positions_um(n_cells, fov_um, depth_um, np.random.default_rng(seed))
+        positions = _grid_positions_um(
+            n_cells, fov_um, depth_um, np.random.default_rng(seed)
+        )
         population = NeuronPopulation(
             positions_um=positions,
             soma_radius_um=soma_radius_um,
@@ -205,7 +212,9 @@ def make_recording(
         )
     acquisition = Acquisition(
         optics=Optics(magnification=magnification),
-        image_sensor=ImageSensor(n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=pitch_um),
+        image_sensor=ImageSensor(
+            n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=pitch_um
+        ),
         fps=fps,
         duration_s=duration_s,
         focal_depth_in_tissue_um=focal_depth_um,
@@ -343,9 +352,13 @@ class Report:
     recall: float  # n_matched / n_true
     precision: float  # n_matched / n_est
     f1: float  # harmonic mean of precision and recall (0 when both are 0)
-    mean_overlap: float  # mean footprint similarity over matched pairs (the match metric)
+    mean_overlap: (
+        float  # mean footprint similarity over matched pairs (the match metric)
+    )
     trace_corr: float  # median Pearson r of matched traces (nan if no C / no match)
-    activity_corr: float  # median Pearson r of matched activity (nan if no S / no match)
+    activity_corr: (
+        float  # median Pearson r of matched activity (nan if no S / no match)
+    )
     activity_variance_explained: float  # median PVE of true activity by scaled estimate
     activity_scale: float  # median recovered amplitude factor alpha (the unknown gain)
     shift_rmse: float | None  # motion RMSE in px, offset-aligned (None if no motion)
@@ -449,7 +462,9 @@ def score(
     n_matched = len(matched)
     recall = n_matched / match.n_true if match.n_true else 0.0
     precision = n_matched / match.n_est if match.n_est else 0.0
-    f1 = 2.0 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    f1 = (
+        2.0 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    )
 
     if estimate.C is not None and match.pairing:
         r = trace_pearson(estimate.C, gt.C, match.pairing)
@@ -459,12 +474,19 @@ def score(
 
     if estimate.S is not None and match.pairing:
         act = activity_similarity(estimate.S, gt.S, match.pairing)
-        activity_corr = float(np.nanmedian(act.correlation)) if act.correlation.size else float("nan")
+        activity_corr = (
+            float(np.nanmedian(act.correlation))
+            if act.correlation.size
+            else float("nan")
+        )
         activity_var = (
             float(np.nanmedian(act.variance_explained))
-            if act.variance_explained.size else float("nan")
+            if act.variance_explained.size
+            else float("nan")
         )
-        activity_scale = float(np.nanmedian(act.scale)) if act.scale.size else float("nan")
+        activity_scale = (
+            float(np.nanmedian(act.scale)) if act.scale.size else float("nan")
+        )
     else:
         activity_corr = activity_var = activity_scale = float("nan")
 
@@ -495,7 +517,9 @@ def score(
 
 
 def _resolve_footprint_shift(
-    footprint_shift: tuple[float, float] | str | None, estimate: Estimate, gt: GroundTruth
+    footprint_shift: tuple[float, float] | str | None,
+    estimate: Estimate,
+    gt: GroundTruth,
 ) -> tuple[float, float] | str | None:
     """Pick the ``shift`` to hand :func:`~minisim.hungarian_match`.
 
@@ -508,5 +532,7 @@ def _resolve_footprint_shift(
     if footprint_shift != "auto":
         return footprint_shift
     if estimate.shifts is not None and gt.shifts is not None:
-        return global_shift_from_trajectories(estimate.shifts, gt.shifts, correction=True)
+        return global_shift_from_trajectories(
+            estimate.shifts, gt.shifts, correction=True
+        )
     return "auto"

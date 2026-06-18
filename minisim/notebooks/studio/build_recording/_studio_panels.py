@@ -82,7 +82,14 @@ def _styled(w):
 def _slider(cls, lo, hi, step, value, desc):
     """A FloatSlider/IntSlider that only fires on release (snappy heavy previews)."""
     return _styled(
-        cls(min=lo, max=hi, step=step, value=value, description=desc, continuous_update=False)
+        cls(
+            min=lo,
+            max=hi,
+            step=step,
+            value=value,
+            description=desc,
+            continuous_update=False,
+        )
     )
 
 
@@ -138,8 +145,11 @@ class AnatomyPanel:
     # Widget keys that do NOT map 1:1 to a StudioConfig field (handled explicitly in
     # _config_to_widgets/_apply). Everything else is a plain getattr/setattr.
     _SPECIAL = (
-        "focus_auto", "focal_depth_um", "field_curvature_on",
-        "field_curvature_radius_um", "resolution",
+        "focus_auto",
+        "focal_depth_um",
+        "field_curvature_on",
+        "field_curvature_radius_um",
+        "resolution",
     )
 
     # Dependent-control gating: each (controller, [dependents], enable_when) disables
@@ -150,16 +160,41 @@ class AnatomyPanel:
         ("focus_auto", ["focal_depth_um"], lambda v: not v),
         ("field_curvature_on", ["field_curvature_radius_um"], bool),
         ("neuropil_enabled", ["neuropil_amplitude"], bool),
-        ("vasculature_enabled", ["vessel_depth_um", "vessel_root_radius_um", "vessel_opacity",
-                                 "vessel_n_roots", "vessel_branch_prob", "vessel_tortuosity_deg"], bool),
-        ("illumination_enabled", ["illumination_falloff", "illumination_exponent"], bool),
+        (
+            "vasculature_enabled",
+            [
+                "vessel_depth_um",
+                "vessel_root_radius_um",
+                "vessel_opacity",
+                "vessel_n_roots",
+                "vessel_branch_prob",
+                "vessel_tortuosity_deg",
+            ],
+            bool,
+        ),
+        (
+            "illumination_enabled",
+            ["illumination_falloff", "illumination_exponent"],
+            bool,
+        ),
         ("vignette_enabled", ["vignette_falloff", "vignette_exponent"], bool),
         ("leakage_enabled", ["leakage_level", "leakage_profile"], bool),
-        ("motion_enabled", ["motion_model", "motion_amplitude_um", "max_shift_um",
-                            "locomotion_freq_hz", "locomotion_axis"], bool),
+        (
+            "motion_enabled",
+            [
+                "motion_model",
+                "motion_amplitude_um",
+                "max_shift_um",
+                "locomotion_freq_hz",
+                "locomotion_axis",
+            ],
+            bool,
+        ),
     )
 
-    def __init__(self, config: StudioConfig, *, cell_budget: int = 350, preview_seed: int = 0):
+    def __init__(
+        self, config: StudioConfig, *, cell_budget: int = 350, preview_seed: int = 0
+    ):
         self.config = config
         self.cell_budget = cell_budget
         self.preview_seed = preview_seed
@@ -169,7 +204,7 @@ class AnatomyPanel:
         with plt.ioff():
             self.fig = plt.figure(figsize=(5.4, 6.6))
         gs = self.fig.add_gridspec(2, 1, height_ratios=[3.0, 1.25], hspace=0.33)
-        self.ax = self.fig.add_subplot(gs[0])       # max-projection preview
+        self.ax = self.fig.add_subplot(gs[0])  # max-projection preview
         self.ax_side = self.fig.add_subplot(gs[1])  # depth cross-section schematic
         # Reserve room on the right of the side-view axes for an outside legend (done
         # once: ax.clear() in draw keeps the axes position, so this never compounds).
@@ -198,30 +233,51 @@ class AnatomyPanel:
 
         # -- optics --
         w["na"] = _slider(S, 0.1, 0.6, 0.01, c.na, "NA")
-        w["magnification"] = _slider(S, 1.0, 12.0, 0.1, c.magnification, "magnification")
+        w["magnification"] = _slider(
+            S, 1.0, 12.0, 0.1, c.magnification, "magnification"
+        )
         w["emission_nm"] = _slider(S, 480.0, 580.0, 1.0, c.emission_nm, "emission (nm)")
         w["focus_auto"] = _choice(
             Checkbox, value=(c.focal_depth_um == "auto"), description="auto focus"
         )
         w["focal_depth_um"] = _slider(
-            S, 0.0, 400.0, 5.0, 150.0 if c.focal_depth_um == "auto" else float(c.focal_depth_um),
+            S,
+            0.0,
+            400.0,
+            5.0,
+            150.0 if c.focal_depth_um == "auto" else float(c.focal_depth_um),
             "focal depth (um)",
         )
         w["field_curvature_on"] = _choice(
-            Checkbox, value=(c.field_curvature_radius_um is not None), description="field curvature"
+            Checkbox,
+            value=(c.field_curvature_radius_um is not None),
+            description="field curvature",
         )
         w["field_curvature_radius_um"] = _slider(
-            S, 500.0, 8000.0, 100.0, c.field_curvature_radius_um or 2500.0, "curv radius (um)"
+            S,
+            500.0,
+            8000.0,
+            100.0,
+            c.field_curvature_radius_um or 2500.0,
+            "curv radius (um)",
         )
 
         # -- image sensor --
         w["resolution"] = _slider(I, 64, 800, 8, c.n_px_height, "resolution (px/side)")
-        w["pixel_pitch_um"] = _slider(S, 1.0, 8.0, 0.1, c.pixel_pitch_um, "pixel pitch (um)")
+        w["pixel_pitch_um"] = _slider(
+            S, 1.0, 8.0, 0.1, c.pixel_pitch_um, "pixel pitch (um)"
+        )
         w["quantum_efficiency"] = _slider(S, 0.3, 1.0, 0.05, c.quantum_efficiency, "QE")
-        w["read_noise_e"] = _slider(S, 0.0, 10.0, 0.5, c.read_noise_e, "read noise (e-)")
-        w["gain_adu_per_e"] = _slider(S, 0.1, 4.0, 0.1, c.gain_adu_per_e, "gain (ADU/e-)")
+        w["read_noise_e"] = _slider(
+            S, 0.0, 10.0, 0.5, c.read_noise_e, "read noise (e-)"
+        )
+        w["gain_adu_per_e"] = _slider(
+            S, 0.1, 4.0, 0.1, c.gain_adu_per_e, "gain (ADU/e-)"
+        )
         w["bit_depth"] = _slider(I, 8, 12, 1, c.bit_depth, "bit depth")
-        w["photons_per_unit"] = _slider(S, 10.0, 1000.0, 10.0, c.photons_per_unit, "exposure")
+        w["photons_per_unit"] = _slider(
+            S, 10.0, 1000.0, 10.0, c.photons_per_unit, "exposure"
+        )
 
         # -- tissue --
         w["scatter_mfp_emission_um"] = _slider(
@@ -235,22 +291,35 @@ class AnatomyPanel:
         )
 
         # -- cells (placement only; activity is panel 2) --
-        w["density_per_mm3"] = _slider(S, 2000.0, 120000.0, 1000.0, c.density_per_mm3, "density/mm3")
+        w["density_per_mm3"] = _slider(
+            S, 2000.0, 120000.0, 1000.0, c.density_per_mm3, "density/mm3"
+        )
         w["depth_lo_um"] = _slider(S, 0.0, 400.0, 5.0, c.depth_lo_um, "depth lo (um)")
         w["depth_hi_um"] = _slider(S, 0.0, 400.0, 5.0, c.depth_hi_um, "depth hi (um)")
-        w["soma_radius_um"] = _slider(S, 2.0, 12.0, 0.5, c.soma_radius_um, "soma r (um)")
+        w["soma_radius_um"] = _slider(
+            S, 2.0, 12.0, 0.5, c.soma_radius_um, "soma r (um)"
+        )
         w["irregularity"] = _slider(S, 0.0, 1.0, 0.05, c.irregularity, "irregularity")
         w["morphology"] = _choice(
-            ToggleButtons, options=["soma", "cytosolic"], value=c.morphology, description="GCaMP"
+            ToggleButtons,
+            options=["soma", "cytosolic"],
+            value=c.morphology,
+            description="GCaMP",
         )
         w["dendrite_length_um"] = _slider(
             S, 5.0, 60.0, 1.0, c.dendrite_length_um, "dendrite len (um)"
         )
-        w["dendrite_width_um"] = _slider(S, 1.0, 6.0, 0.5, c.dendrite_width_um, "dendrite w (um)")
-        w["min_distance_um"] = _slider(S, 0.0, 40.0, 1.0, c.min_distance_um, "min dist (um)")
+        w["dendrite_width_um"] = _slider(
+            S, 1.0, 6.0, 0.5, c.dendrite_width_um, "dendrite w (um)"
+        )
+        w["min_distance_um"] = _slider(
+            S, 0.0, 40.0, 1.0, c.min_distance_um, "min dist (um)"
+        )
 
         # -- neuropil --
-        w["neuropil_enabled"] = _choice(Checkbox, value=c.neuropil_enabled, description="neuropil")
+        w["neuropil_enabled"] = _choice(
+            Checkbox, value=c.neuropil_enabled, description="neuropil"
+        )
         w["neuropil_amplitude"] = _slider(
             S, 0.0, 3.0, 0.1, c.neuropil_amplitude, "neuropil amp"
         )
@@ -259,13 +328,17 @@ class AnatomyPanel:
         w["vasculature_enabled"] = _choice(
             Checkbox, value=c.vasculature_enabled, description="vasculature"
         )
-        w["vessel_depth_um"] = _slider(S, 0.0, 200.0, 5.0, c.vessel_depth_um, "vessel depth (um)")
+        w["vessel_depth_um"] = _slider(
+            S, 0.0, 200.0, 5.0, c.vessel_depth_um, "vessel depth (um)"
+        )
         w["vessel_root_radius_um"] = _slider(
             S, 3.0, 40.0, 1.0, c.vessel_root_radius_um, "trunk r (um)"
         )
         w["vessel_opacity"] = _slider(S, 0.1, 1.0, 0.05, c.vessel_opacity, "opacity")
         w["vessel_n_roots"] = _slider(I, 1, 10, 1, c.vessel_n_roots, "n roots")
-        w["vessel_branch_prob"] = _slider(S, 0.0, 0.5, 0.02, c.vessel_branch_prob, "branchiness")
+        w["vessel_branch_prob"] = _slider(
+            S, 0.0, 0.5, 0.02, c.vessel_branch_prob, "branchiness"
+        )
         w["vessel_tortuosity_deg"] = _slider(
             S, 0.0, 25.0, 1.0, c.vessel_tortuosity_deg, "waviness (deg)"
         )
@@ -280,49 +353,117 @@ class AnatomyPanel:
         w["illumination_exponent"] = _slider(
             S, 0.5, 6.0, 0.5, c.illumination_exponent, "illum rolloff"
         )
-        w["vignette_enabled"] = _choice(Checkbox, value=c.vignette_enabled, description="vignette")
-        w["vignette_falloff"] = _slider(S, 0.0, 1.0, 0.05, c.vignette_falloff, "vignette corner")
-        w["vignette_exponent"] = _slider(S, 0.5, 6.0, 0.5, c.vignette_exponent, "vignette rolloff")
-        w["leakage_enabled"] = _choice(Checkbox, value=c.leakage_enabled, description="leakage glow")
-        w["leakage_level"] = _slider(S, 0.0, 1.0, 0.02, c.leakage_level, "leakage level")
+        w["vignette_enabled"] = _choice(
+            Checkbox, value=c.vignette_enabled, description="vignette"
+        )
+        w["vignette_falloff"] = _slider(
+            S, 0.0, 1.0, 0.05, c.vignette_falloff, "vignette corner"
+        )
+        w["vignette_exponent"] = _slider(
+            S, 0.5, 6.0, 0.5, c.vignette_exponent, "vignette rolloff"
+        )
+        w["leakage_enabled"] = _choice(
+            Checkbox, value=c.leakage_enabled, description="leakage glow"
+        )
+        w["leakage_level"] = _slider(
+            S, 0.0, 1.0, 0.02, c.leakage_level, "leakage level"
+        )
         w["leakage_profile"] = _choice(
-            Dropdown, options=["uniform", "gaussian"], value=c.leakage_profile, description="glow shape"
+            Dropdown,
+            options=["uniform", "gaussian"],
+            value=c.leakage_profile,
+            description="glow shape",
         )
 
         # -- brain motion --
-        w["motion_enabled"] = _choice(Checkbox, value=c.motion_enabled, description="brain motion")
+        w["motion_enabled"] = _choice(
+            Checkbox, value=c.motion_enabled, description="brain motion"
+        )
         w["motion_model"] = _choice(
-            Dropdown, options=["physical", "walk"], value=c.motion_model, description="motion model"
+            Dropdown,
+            options=["physical", "walk"],
+            value=c.motion_model,
+            description="motion model",
         )
         w["motion_amplitude_um"] = _slider(
             S, 0.0, 30.0, 0.5, c.motion_amplitude_um, "motion amp (um)"
         )
         w["max_shift_um"] = _slider(S, 1.0, 40.0, 1.0, c.max_shift_um, "max shift (um)")
-        w["locomotion_freq_hz"] = _slider(S, 1.0, 12.0, 0.5, c.locomotion_freq_hz, "stride (Hz)")
+        w["locomotion_freq_hz"] = _slider(
+            S, 1.0, 12.0, 0.5, c.locomotion_freq_hz, "stride (Hz)"
+        )
         w["locomotion_axis"] = _choice(
-            Dropdown, options=["y", "x"], value=c.locomotion_axis, description="motion axis"
+            Dropdown,
+            options=["y", "x"],
+            value=c.locomotion_axis,
+            description="motion axis",
         )
 
         self._widgets = w
         self._groups = {
-            "Optics": ["na", "magnification", "emission_nm", "focus_auto", "focal_depth_um",
-                       "field_curvature_on", "field_curvature_radius_um"],
-            "Image sensor": ["resolution", "pixel_pitch_um", "quantum_efficiency", "read_noise_e",
-                             "gain_adu_per_e", "bit_depth", "photons_per_unit"],
-            "Tissue": ["scatter_mfp_emission_um", "scatter_mfp_excitation_um", "scatter_blur_per_um"],
-            "Cells (placement)": ["density_per_mm3", "depth_lo_um", "depth_hi_um", "soma_radius_um",
-                                  "irregularity", "morphology", "dendrite_length_um",
-                                  "dendrite_width_um", "min_distance_um"],
+            "Optics": [
+                "na",
+                "magnification",
+                "emission_nm",
+                "focus_auto",
+                "focal_depth_um",
+                "field_curvature_on",
+                "field_curvature_radius_um",
+            ],
+            "Image sensor": [
+                "resolution",
+                "pixel_pitch_um",
+                "quantum_efficiency",
+                "read_noise_e",
+                "gain_adu_per_e",
+                "bit_depth",
+                "photons_per_unit",
+            ],
+            "Tissue": [
+                "scatter_mfp_emission_um",
+                "scatter_mfp_excitation_um",
+                "scatter_blur_per_um",
+            ],
+            "Cells (placement)": [
+                "density_per_mm3",
+                "depth_lo_um",
+                "depth_hi_um",
+                "soma_radius_um",
+                "irregularity",
+                "morphology",
+                "dendrite_length_um",
+                "dendrite_width_um",
+                "min_distance_um",
+            ],
             "Neuropil": ["neuropil_enabled", "neuropil_amplitude"],
-            "Vasculature": ["vasculature_enabled", "vessel_depth_um", "vessel_root_radius_um",
-                            "vessel_opacity", "vessel_n_roots", "vessel_branch_prob",
-                            "vessel_tortuosity_deg"],
-            "Illumination / vignette / glow": ["illumination_enabled", "illumination_falloff",
-                                               "illumination_exponent", "vignette_enabled",
-                                               "vignette_falloff", "vignette_exponent",
-                                               "leakage_enabled", "leakage_level", "leakage_profile"],
-            "Brain motion": ["motion_enabled", "motion_model", "motion_amplitude_um", "max_shift_um",
-                             "locomotion_freq_hz", "locomotion_axis"],
+            "Vasculature": [
+                "vasculature_enabled",
+                "vessel_depth_um",
+                "vessel_root_radius_um",
+                "vessel_opacity",
+                "vessel_n_roots",
+                "vessel_branch_prob",
+                "vessel_tortuosity_deg",
+            ],
+            "Illumination / vignette / glow": [
+                "illumination_enabled",
+                "illumination_falloff",
+                "illumination_exponent",
+                "vignette_enabled",
+                "vignette_falloff",
+                "vignette_exponent",
+                "leakage_enabled",
+                "leakage_level",
+                "leakage_profile",
+            ],
+            "Brain motion": [
+                "motion_enabled",
+                "motion_model",
+                "motion_amplitude_um",
+                "max_shift_um",
+                "locomotion_freq_hz",
+                "locomotion_axis",
+            ],
         }
         # Guards that turn the panel's two implicit contracts into loud failures: every
         # non-special widget key must be a real config field, and the accordion groups
@@ -392,9 +533,13 @@ class AnatomyPanel:
         """Read every widget back into ``self.config``."""
         w = self._widgets
         c = self.config
-        c.focal_depth_um = "auto" if w["focus_auto"].value else float(w["focal_depth_um"].value)
+        c.focal_depth_um = (
+            "auto" if w["focus_auto"].value else float(w["focal_depth_um"].value)
+        )
         c.field_curvature_radius_um = (
-            float(w["field_curvature_radius_um"].value) if w["field_curvature_on"].value else None
+            float(w["field_curvature_radius_um"].value)
+            if w["field_curvature_on"].value
+            else None
         )
         c.n_px_height = c.n_px_width = int(w["resolution"].value)
         for key, widget in w.items():  # the rest map 1:1 to config fields
@@ -420,8 +565,17 @@ class AnatomyPanel:
                 )
                 rec = simulate(spec)
         except Exception as err:
-            self.ax.text(0.5, 0.5, f"invalid configuration:\n{err}", ha="center", va="center",
-                         color="#b00020", fontsize=8, wrap=True, transform=self.ax.transAxes)
+            self.ax.text(
+                0.5,
+                0.5,
+                f"invalid configuration:\n{err}",
+                ha="center",
+                va="center",
+                color="#b00020",
+                fontsize=8,
+                wrap=True,
+                transform=self.ax.transAxes,
+            )
             self._draw_side_view()  # the geometry schematic still reads from the config
             self.fig.canvas.draw_idle()
             return
@@ -456,7 +610,11 @@ class AnatomyPanel:
         _, fov_w = c.fov_um
         lo, hi = c.depth_lo_um, c.depth_hi_um
         if resolved_focal is None:
-            resolved_focal = (lo + hi) / 2.0 if c.focal_depth_um == "auto" else float(c.focal_depth_um)
+            resolved_focal = (
+                (lo + hi) / 2.0
+                if c.focal_depth_um == "auto"
+                else float(c.focal_depth_um)
+            )
 
         # z extent: cover every drawn feature, a little headroom below the deepest.
         depths = [hi, resolved_focal, lo]
@@ -471,35 +629,63 @@ class AnatomyPanel:
         ax.axhspan(lo, max(hi, lo + 0.1), color="#2ca02c", alpha=0.13, lw=0)
         rng = np.random.default_rng(0)
         n_expected = c.estimated_cell_count()
-        n_dots = int(min(n_expected, 1500))  # capped for legibility/speed at high density
-        ax.scatter(rng.uniform(-fov_w / 2, fov_w / 2, n_dots),
-                   rng.uniform(lo, max(hi, lo + 0.1), n_dots),
-                   s=5, color="#2ca02c", alpha=0.45, edgecolors="none", label="cells")
+        n_dots = int(
+            min(n_expected, 1500)
+        )  # capped for legibility/speed at high density
+        ax.scatter(
+            rng.uniform(-fov_w / 2, fov_w / 2, n_dots),
+            rng.uniform(lo, max(hi, lo + 0.1), n_dots),
+            s=5,
+            color="#2ca02c",
+            alpha=0.45,
+            edgecolors="none",
+            label="cells",
+        )
 
         # focal surface: a field-curvature curve (shallower off-axis) or a flat plane.
         # x is the optical-center frame, so the field radius is |x| (the axis is 0).
         xs = np.linspace(-fov_w / 2, fov_w / 2, 120)
         optics = c.optics()
-        z_focal = resolved_focal - np.array([optics.focal_curvature_shift_um(x) for x in xs])
+        z_focal = resolved_focal - np.array(
+            [optics.focal_curvature_shift_um(x) for x in xs]
+        )
         flabel = "focal (curved)" if c.field_curvature_radius_um else "focal plane"
         ax.plot(xs, z_focal, color="#1f77b4", lw=1.6, label=flabel)
 
         # vasculature layer.
         if c.vasculature_enabled:
-            ax.axhline(c.vessel_depth_um, color="#8B0000", lw=1.4, ls="--", label="vessels")
+            ax.axhline(
+                c.vessel_depth_um, color="#8B0000", lw=1.4, ls="--", label="vessels"
+            )
 
         ax.axhline(0.0, color="0.4", lw=1.0)  # tissue surface
-        ax.text(fov_w / 2 * 0.99, 1.0, "tissue surface", ha="right", va="top", fontsize=6.5, color="0.4")
+        ax.text(
+            fov_w / 2 * 0.99,
+            1.0,
+            "tissue surface",
+            ha="right",
+            va="top",
+            fontsize=6.5,
+            color="0.4",
+        )
         ax.set_xlim(-fov_w / 2, fov_w / 2)
         ax.set_ylim(z_max, -0.04 * z_max)  # depth increases downward; surface near top
         ax.set_xlabel("position across FOV (um)", fontsize=8)
         ax.set_ylabel("depth z (um)", fontsize=8)
         ax.tick_params(labelsize=7)
         # legend outside, to the right - it no longer covers the cell/tissue band.
-        ax.legend(fontsize=6.5, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                  framealpha=0.9, borderaxespad=0.0)
-        ax.set_title(f"side view: ~{n_expected} expected neurons in FOV, across depth",
-                     fontsize=8.5, loc="left")
+        ax.legend(
+            fontsize=6.5,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            framealpha=0.9,
+            borderaxespad=0.0,
+        )
+        ax.set_title(
+            f"side view: ~{n_expected} expected neurons in FOV, across depth",
+            fontsize=8.5,
+            loc="left",
+        )
 
     def _readout(self, rec, spec) -> str:
         """Two-line summary: full-FOV geometry/count, then the preview-window stats."""
@@ -509,7 +695,10 @@ class AnatomyPanel:
         gt = rec.ground_truth
         n_pv = len(gt.centers_um)
         det = int(np.asarray(gt.detectable).sum()) if n_pv else 0
-        ph, pw = spec.acquisition.image_sensor.n_px_height, spec.acquisition.image_sensor.n_px_width
+        ph, pw = (
+            spec.acquisition.image_sensor.n_px_height,
+            spec.acquisition.image_sensor.n_px_width,
+        )
         focal = "auto" if c.focal_depth_um == "auto" else f"{c.focal_depth_um:.0f}um"
         # Line 1 is the density-driven number (full FOV); line 2 makes clear the preview
         # is a window auto-sized to a ~fixed cell budget, so its count stays ~constant as
@@ -526,7 +715,9 @@ class AnatomyPanel:
     def ui(self) -> VBox:
         """The assembled widget: preset bar, the preview canvas, and the knob accordion."""
         accordion = Accordion(
-            children=[VBox([self._widgets[k] for k in keys]) for keys in self._groups.values()]
+            children=[
+                VBox([self._widgets[k] for k in keys]) for keys in self._groups.values()
+            ]
         )
         for i, title in enumerate(self._groups):
             accordion.set_title(i, title)
@@ -590,9 +781,15 @@ class ActivityPanel:
         w["quiescent_rate_hz"] = _slider(
             FloatSlider, 0.0, 3.0, 0.1, c.quiescent_rate_hz, "baseline rate (Hz)"
         )
-        w["tau_rise_s"] = _slider(FloatSlider, 0.01, 0.3, 0.01, c.tau_rise_s, "tau rise (s)")
-        w["tau_decay_s"] = _slider(FloatSlider, 0.1, 2.0, 0.05, c.tau_decay_s, "tau decay (s)")
-        w["brightness_cv"] = _slider(FloatSlider, 0.0, 1.0, 0.05, c.brightness_cv, "bright spread")
+        w["tau_rise_s"] = _slider(
+            FloatSlider, 0.01, 0.3, 0.01, c.tau_rise_s, "tau rise (s)"
+        )
+        w["tau_decay_s"] = _slider(
+            FloatSlider, 0.1, 2.0, 0.05, c.tau_decay_s, "tau decay (s)"
+        )
+        w["brightness_cv"] = _slider(
+            FloatSlider, 0.0, 1.0, 0.05, c.brightness_cv, "bright spread"
+        )
         w["f0"] = _slider(FloatSlider, 0.0, 3.0, 0.1, c.f0, "baseline F0")
         self._widgets = w
 
@@ -630,25 +827,44 @@ class ActivityPanel:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 spec = self.config.activity_preview_spec(
-                    cell_budget=self.cell_budget, duration_s=self.duration_s,
-                    fps=self.fps, seed=self.preview_seed,
+                    cell_budget=self.cell_budget,
+                    duration_s=self.duration_s,
+                    fps=self.fps,
+                    seed=self.preview_seed,
                 )
                 rec = simulate(spec, until="cell_activity")
         except Exception as err:
-            self.ax.text(0.5, 0.5, f"invalid configuration:\n{err}", ha="center", va="center",
-                         color="#b00020", fontsize=8, wrap=True, transform=self.ax.transAxes)
+            self.ax.text(
+                0.5,
+                0.5,
+                f"invalid configuration:\n{err}",
+                ha="center",
+                va="center",
+                color="#b00020",
+                fontsize=8,
+                wrap=True,
+                transform=self.ax.transAxes,
+            )
             self.fig.canvas.draw_idle()
             return
 
         gt = rec.ground_truth
         C, S = np.asarray(gt.C, dtype=float), np.asarray(gt.S, dtype=float)
         if not len(C):
-            self.ax.text(0.5, 0.5, "no cells placed", ha="center", va="center",
-                         transform=self.ax.transAxes)
+            self.ax.text(
+                0.5,
+                0.5,
+                "no cells placed",
+                ha="center",
+                va="center",
+                transform=self.ax.transAxes,
+            )
             self.fig.canvas.draw_idle()
             return
         t = np.arange(C.shape[1]) / self.fps
-        plot_traces(self.ax, t, C, spikes=S, n=min(6, len(C)), title=self._readout(C, S))
+        plot_traces(
+            self.ax, t, C, spikes=S, n=min(6, len(C)), title=self._readout(C, S)
+        )
         self.fig.canvas.draw_idle()
 
     def _readout(self, C, S) -> str:
@@ -662,11 +878,18 @@ class ActivityPanel:
 
     def ui(self) -> VBox:
         """The assembled widget: activity preset bar, trace canvas, and sliders."""
-        return VBox([
-            self._preset_bar(),
-            self.fig.canvas,
-            HBox([VBox(list(self._widgets.values())[:4]), VBox(list(self._widgets.values())[4:])]),
-        ])
+        return VBox(
+            [
+                self._preset_bar(),
+                self.fig.canvas,
+                HBox(
+                    [
+                        VBox(list(self._widgets.values())[:4]),
+                        VBox(list(self._widgets.values())[4:]),
+                    ]
+                ),
+            ]
+        )
 
 
 def _format_bytes(n: float) -> str:
@@ -711,19 +934,28 @@ class GeneratePanel:
         out_path: str = "recording",
     ):
         self.config = config
-        self.duration_s = _num_box(BoundedFloatText, duration_s, "duration (s)", lo=1.0, hi=7200.0, step=10.0)
+        self.duration_s = _num_box(
+            BoundedFloatText, duration_s, "duration (s)", lo=1.0, hi=7200.0, step=10.0
+        )
         self.fps = _num_box(BoundedFloatText, fps, "fps", lo=1.0, hi=120.0, step=1.0)
         self.seed = _num_box(IntText, seed, "seed", step=1)
         self.out_path = _choice(Text, value=out_path, description="output path")
         self.fmt = _choice(
             Dropdown,
-            options=[("zarr (movie + ground truth)", "zarr"), ("avi (movie only)", "avi")],
+            options=[
+                ("zarr (movie + ground truth)", "zarr"),
+                ("avi (movie only)", "avi"),
+            ],
             value="zarr",
             description="format",
         )
         self.estimate = HTML()
-        self.button = Button(description="Generate recording", button_style="success",
-                             icon="play", layout=Layout(width="auto"))
+        self.button = Button(
+            description="Generate recording",
+            button_style="success",
+            icon="play",
+            layout=Layout(width="auto"),
+        )
         self.log = Output()
         self.button.on_click(self._on_generate)
         for w in (self.duration_s, self.fps, self.fmt):
@@ -740,10 +972,12 @@ class GeneratePanel:
         else:  # streamed 8-bit grayscale
             size = n_frames * h * w
             note = f"~{_format_bytes(size)} on disk (streamed, flat memory)"
-        warn = " <b style='color:#b06000'>- large; consider a shorter clip or avi</b>" if size > 2e9 else ""
-        self.estimate.value = (
-            f"{n_frames} frames @ {w}x{h}px - {note}{warn}"
+        warn = (
+            " <b style='color:#b06000'>- large; consider a shorter clip or avi</b>"
+            if size > 2e9
+            else ""
         )
+        self.estimate.value = f"{n_frames} frames @ {w}x{h}px - {note}{warn}"
 
     def _on_generate(self, _b) -> None:
         self.button.disabled = True
@@ -761,8 +995,10 @@ class GeneratePanel:
         dur, fps, seed = self.duration_s.value, self.fps.value, int(self.seed.value)
         spec = c.spec(duration_s=dur, fps=fps, seed=seed)
         n_frames = spec.acquisition.n_frames
-        print(f"simulating {n_frames} frames @ {c.n_px_width}x{c.n_px_height}px, "
-              f"{dur:.0f}s @ {fps:.0f}fps, seed {seed} ...")
+        print(
+            f"simulating {n_frames} frames @ {c.n_px_width}x{c.n_px_height}px, "
+            f"{dur:.0f}s @ {fps:.0f}fps, seed {seed} ..."
+        )
 
         if self.fmt.value == "zarr":
             path = Path(self.out_path.value).with_suffix(".zarr")
@@ -774,8 +1010,10 @@ class GeneratePanel:
             n, det = len(gt.centers_um), int(np.asarray(gt.detectable).sum())
             size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
             print(f"saved {path}  ({_format_bytes(size)})")
-            print(f"  {n} cells, {det} detectable ({100 * det / max(n, 1):.0f}%); "
-                  f"ground truth A/C/S + spec included")
+            print(
+                f"  {n} cells, {det} detectable ({100 * det / max(n, 1):.0f}%); "
+                f"ground truth A/C/S + spec included"
+            )
             print(f"  reload: minisim.Recording.load({str(path)!r})")
         else:
             path = Path(self.out_path.value).with_suffix(".avi")
@@ -787,15 +1025,19 @@ class GeneratePanel:
             size = path.stat().st_size if path.exists() else 0
             print(f"saved {path}  ({_format_bytes(size)})")
             print(f"  movie only (no ground truth); spec written to {spec_path}")
-            print(f"  re-simulate with ground truth: "
-                  f"minisim.simulate(Spec.model_validate_json(open({str(spec_path)!r}).read()))")
+            print(
+                f"  re-simulate with ground truth: "
+                f"minisim.simulate(Spec.model_validate_json(open({str(spec_path)!r}).read()))"
+            )
 
     def ui(self) -> VBox:
         """The assembled widget: settings row, estimate, generate button, output log."""
-        return VBox([
-            HBox([self.duration_s, self.fps, self.seed]),
-            HBox([self.out_path, self.fmt]),
-            self.estimate,
-            self.button,
-            self.log,
-        ])
+        return VBox(
+            [
+                HBox([self.duration_s, self.fps, self.seed]),
+                HBox([self.out_path, self.fmt]),
+                self.estimate,
+                self.button,
+                self.log,
+            ]
+        )

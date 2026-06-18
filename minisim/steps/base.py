@@ -84,9 +84,7 @@ class Step(Generic[SpecT]):
     domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
     consumes_rng: ClassVar[bool] = False
 
-    def __init__(
-        self, spec: SpecT, acq: Acquisition, rng: np.random.Generator
-    ) -> None:
+    def __init__(self, spec: SpecT, acq: Acquisition, rng: np.random.Generator) -> None:
         self.spec: SpecT = spec
         self.acq = acq
         self.rng = rng

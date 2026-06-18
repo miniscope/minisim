@@ -109,7 +109,9 @@ def test_build_spec_can_drop_vasculature():
 def test_build_spec_simulates_end_to_end():
     # a small generic scope keeps this fast; explicit cells near the optical axis
     # (optical-center frame) so it is deterministic
-    cells = NeuronPopulation(positions_um=[(0.0, 0.0, -5.0), (0.0, 0.0, 5.0)], soma_radius_um=4.0)
+    cells = NeuronPopulation(
+        positions_um=[(0.0, 0.0, -5.0), (0.0, 0.0, 5.0)], soma_radius_um=4.0
+    )
     spec = build_spec(
         presets.generic_1p(),
         presets.cortex_l23(),
@@ -124,7 +126,9 @@ def test_build_spec_simulates_end_to_end():
     w = spec.acquisition.image_sensor.n_px_width
     assert rec.observed.shape == (spec.acquisition.n_frames, h, w)
     assert rec.ground_truth.n_units == 2
-    np.testing.assert_array_equal(rec.observed, np.round(rec.observed))  # integer counts
+    np.testing.assert_array_equal(
+        rec.observed, np.round(rec.observed)
+    )  # integer counts
 
 
 def test_positions_um_round_trip_to_centers_um_under_motion():
@@ -157,8 +161,14 @@ def test_positions_um_round_trip_to_centers_um_under_motion():
 
 def test_build_spec_is_a_valid_sweep_base():
     base = build_spec(presets.miniscope_v4(), presets.ca1(), duration_s=1.0)
-    specs = list(sweep(base, {"acquisition.focal_depth_in_tissue_um": [140.0, 150.0, 160.0]}))
-    assert [s.acquisition.focal_depth_in_tissue_um for s in specs] == [140.0, 150.0, 160.0]
+    specs = list(
+        sweep(base, {"acquisition.focal_depth_in_tissue_um": [140.0, 150.0, 160.0]})
+    )
+    assert [s.acquisition.focal_depth_in_tissue_um for s in specs] == [
+        140.0,
+        150.0,
+        160.0,
+    ]
 
 
 def test_studio_presets_match_library_presets():

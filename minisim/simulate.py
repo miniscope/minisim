@@ -91,7 +91,9 @@ def build_context(spec: Spec, acq: Acquisition) -> PipelineContext:
     both paths resolve the same context and make identical focus/bleaching
     decisions, keeping the streamed counts bit-for-bit equal to ``simulate``.
     """
-    illumination = next((s for s in spec.steps if s.kind == "illumination_profile"), None)
+    illumination = next(
+        (s for s in spec.steps if s.kind == "illumination_profile"), None
+    )
     vignette = next((s for s in spec.steps if s.kind == "vignette"), None)
     sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
     photon_field = combined_falloff_field(acq, illumination, vignette)

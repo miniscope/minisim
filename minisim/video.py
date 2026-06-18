@@ -101,7 +101,9 @@ def simulate_video(
     )
 
 
-def _write_gray_video(frames, total, path, fov, fps, vmin, vmax, codec, progress, perf=None):
+def _write_gray_video(
+    frames, total, path, fov, fps, vmin, vmax, codec, progress, perf=None
+):
     """Encode an iterable of float ``(H, W)`` frames to a grayscale video at ``path``.
 
     The shared write tail behind both :func:`simulate_video` (streaming the
@@ -123,7 +125,9 @@ def _write_gray_video(frames, total, path, fov, fps, vmin, vmax, codec, progress
     return path
 
 
-def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | None = None):
+def _iter_count_frames(
+    spec: Spec, chunk_frames: int, *, perf: PerfTracker | None = None
+):
     """Yield ``(frame_index, frame)`` count arrays, frame-for-frame equal to
     ``simulate(spec).observed`` - without ever materializing the full movie.
 
@@ -212,15 +216,23 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
     with measure(perf, "footprint_build"):
         footprints, emissions = [], []
         for cell in scene.cells:
-            fp = cell.observed_footprint()  # regenerated from planted (see CompositeStep)
+            fp = (
+                cell.observed_footprint()
+            )  # regenerated from planted (see CompositeStep)
             if fp is None or cell.trace is None:
                 continue
             footprints.append(fp)
-            emissions.append(cell.trace if cell.bleach is None else cell.trace * cell.bleach)
+            emissions.append(
+                cell.trace if cell.bleach is None else cell.trace * cell.bleach
+            )
         # A and CB are float32 (RENDER_DTYPE), matching CompositeStep, so the
         # per-chunk contraction is single-precision and bit-identical to simulate().
-        A = stack_dense(footprints, canvas_shape) if footprints else None  # (unit, Hc, Wc)
-        CB = np.stack(emissions).astype(RENDER_DTYPE) if emissions else None  # (unit, frame)
+        A = (
+            stack_dense(footprints, canvas_shape) if footprints else None
+        )  # (unit, Hc, Wc)
+        CB = (
+            np.stack(emissions).astype(RENDER_DTYPE) if emissions else None
+        )  # (unit, frame)
     # The sensor exposure scale, applied per frame at digitization exactly as
     # SensorStep does; None when there is no sensor step (the movie stays continuous).
     ppu = float(sensor_spec.photons_per_unit) if sensor_spec is not None else None
@@ -234,9 +246,11 @@ def _iter_count_frames(spec: Spec, chunk_frames: int, *, perf: PerfTracker | Non
         if neuropil is not None:
             with measure(perf, "neuropil"):
                 amp, spatial, temporal = neuropil
-                canvas += amp * np.tensordot(
-                    temporal[:, t0:t1], spatial, axes=([0], [0])
-                ) / spatial.shape[0]
+                canvas += (
+                    amp
+                    * np.tensordot(temporal[:, t0:t1], spatial, axes=([0], [0]))
+                    / spatial.shape[0]
+                )
         if vasc_mask is not None:
             # Multiplicative vessel shadow, in the brain frame before the motion crop
             # (broadcasts the static (Hc,Wc) mask over the chunk's frames) - exactly
@@ -299,7 +313,7 @@ def _default_vmax(spec: Spec) -> float:
     natural scale, so the caller must pass ``vmax`` explicitly.
     """
     if any(s.kind == "sensor" for s in spec.steps):
-        return float(2 ** spec.acquisition.image_sensor.bit_depth - 1)
+        return float(2**spec.acquisition.image_sensor.bit_depth - 1)
     raise ValueError(
         "vmax is required for a spec with no 'sensor' step (the movie is continuous "
         "intensity with no natural white point); pass an explicit vmax."
@@ -340,8 +354,11 @@ class _ProgressBar:
             self._tqdm.update(1)
         elif self.total and (self.n % self._step == 0 or self.n == self.total):
             pct = 100.0 * self.n / self.total
-            print(f"{self.desc}: {self.n}/{self.total} frames ({pct:.0f}%)",
-                  file=sys.stderr, flush=True)
+            print(
+                f"{self.desc}: {self.n}/{self.total} frames ({pct:.0f}%)",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def close(self) -> None:
         if self._tqdm is not None:

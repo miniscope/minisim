@@ -85,7 +85,9 @@ class CompositeStep(Step["Composite"]):
                 continue
             footprints.append(footprint)
             # The emitted trace: clean calcium, dimmed by bleaching when present.
-            traces.append(cell.trace if cell.bleach is None else cell.trace * cell.bleach)
+            traces.append(
+                cell.trace if cell.bleach is None else cell.trace * cell.bleach
+            )
         if not footprints:
             return
         # Footprints are stored sparse (a small patch each); rebuild the dense
@@ -219,11 +221,13 @@ def neuropil_components(
     traces = [cell.trace for cell in cells if cell.trace is not None]
     population = population_envelope(traces, pop_tau_frames)
     c = spec.population_coupling if population is not None else 0.0
-    temporal = np.stack([
-        (1.0 - c) * neuropil_envelope(n_frames, drift_tau_frames, rng)
-        + (c * population if population is not None else 0.0)
-        for _ in range(spec.n_components)
-    ])
+    temporal = np.stack(
+        [
+            (1.0 - c) * neuropil_envelope(n_frames, drift_tau_frames, rng)
+            + (c * population if population is not None else 0.0)
+            for _ in range(spec.n_components)
+        ]
+    )
     bleaches = [cell.bleach for cell in cells if cell.bleach is not None]
     if bleaches:
         temporal = temporal * np.mean(np.stack(bleaches), axis=0)[None, :]
@@ -276,7 +280,9 @@ class NeuropilStep(Step["Neuropil"]):
             self.spec, self.acq, scene.cells, (h, w), n_frames, self.rng
         )
         # mean over components of the (frame, h, w) outer products, then scale.
-        contrib = np.tensordot(temporal, spatial, axes=([0], [0])) / self.spec.n_components
+        contrib = (
+            np.tensordot(temporal, spatial, axes=([0], [0])) / self.spec.n_components
+        )
         scene.movie.values[:] += self.spec.amplitude * contrib
         scene.truth.neuropil_spatial = spatial
         scene.truth.neuropil_temporal = temporal
@@ -327,7 +333,9 @@ def bleaching_pool(
     return out
 
 
-def bleaching_floor(q: float, intensity: float, emission: float, tau_turn: float) -> float:
+def bleaching_floor(
+    q: float, intensity: float, emission: float, tau_turn: float
+) -> float:
     """Steady-state intact fraction ``B*`` under constant illumination and emission.
 
     The fixed point of the :func:`bleaching_pool` ODE for a constant drive:
@@ -436,7 +444,9 @@ class BleachingStep(Step["Bleaching"]):
         acq = self.acq
         shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
         center = falloff_center_px(shape, acq, self.illumination.center_offset_um)
-        field = radial_falloff(shape, center, self.illumination.falloff, self.illumination.exponent)
+        field = radial_falloff(
+            shape, center, self.illumination.falloff, self.illumination.exponent
+        )
         # Cells live in the optical-center frame whose origin is the FOV center, so
         # each maps to a FOV pixel via um_to_index - no motion-margin bookkeeping.
         rows, cols = [], []
@@ -588,8 +598,12 @@ def grow_vessel_tree(
                 # base angle by the radius ratio, so a fine offshoot leaves sharply
                 # while the trunk barely bends.
                 ratio = r / r_side if r_side > _EPS else 1.0
-                stack.append((y, x, theta + side * growth.branch_angle_rad * ratio, r_side))
-                theta -= side * growth.branch_angle_rad  # main bends slightly the other way
+                stack.append(
+                    (y, x, theta + side * growth.branch_angle_rad * ratio, r_side)
+                )
+                theta -= (
+                    side * growth.branch_angle_rad
+                )  # main bends slightly the other way
                 r = r_main
     if not segments:
         return np.zeros((0, 5), dtype=float)
@@ -682,12 +696,20 @@ def _seed_edge_root(
     h_um, w_um = bounds_um
     side = int(rng.integers(4))
     if side == 0:  # top edge -> grow downward (dy > 0)
-        return (0.0, float(rng.uniform(0.0, w_um))), float(rng.uniform(0.25, 0.75) * math.pi)
+        return (0.0, float(rng.uniform(0.0, w_um))), float(
+            rng.uniform(0.25, 0.75) * math.pi
+        )
     if side == 1:  # bottom edge -> grow upward (dy < 0)
-        return (h_um, float(rng.uniform(0.0, w_um))), float(rng.uniform(1.25, 1.75) * math.pi)
+        return (h_um, float(rng.uniform(0.0, w_um))), float(
+            rng.uniform(1.25, 1.75) * math.pi
+        )
     if side == 2:  # left edge -> grow rightward (dx > 0)
-        return (float(rng.uniform(0.0, h_um)), 0.0), float(rng.uniform(-0.4, 0.4) * math.pi)
-    return (float(rng.uniform(0.0, h_um)), w_um), float(rng.uniform(0.6, 1.4) * math.pi)  # right -> left
+        return (float(rng.uniform(0.0, h_um)), 0.0), float(
+            rng.uniform(-0.4, 0.4) * math.pi
+        )
+    return (float(rng.uniform(0.0, h_um)), w_um), float(
+        rng.uniform(0.6, 1.4) * math.pi
+    )  # right -> left
 
 
 def vasculature_mask_field(
