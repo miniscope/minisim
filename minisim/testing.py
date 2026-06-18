@@ -111,8 +111,10 @@ def make_recording(
     fps: float = 20.0,
     seed: int = 0,
     depth_um: float = 50.0,
+    focal_depth_um: float | Literal["auto"] = "auto",
     soma_radius_um: float = 5.0,
     morphology: Literal["soma", "cytosolic"] = "soma",
+    population: NeuronPopulation | None = None,
     motion: bool = False,
     activity: CellActivity | None = None,
     sensor: Sensor | None = None,
@@ -147,11 +149,28 @@ def make_recording(
     duration_s, fps, seed
         Sampling and the master RNG seed.
     depth_um
-        Common depth of every soma below the tissue surface, µm. The focal plane
-        is ``"auto"``, so it resolves here and the cells are in focus.
+        Common depth of every soma below the tissue surface, µm. With the default
+        ``focal_depth_um="auto"`` the focal plane resolves here and the cells are in
+        focus. Ignored when ``population`` is given (the population carries its own
+        depth distribution).
+    focal_depth_um
+        Focal plane depth in tissue, µm, or ``"auto"`` (the default) to let the
+        simulator pick the most-recoverable plane. Pin it to a fixed depth (e.g.
+        ``0.0``, the surface) to hold the plane still while sweeping cell depth - the
+        setup a recall-vs-depth study needs, since auto-focus refocuses on each band
+        and would otherwise keep every cell in focus and detectable.
     soma_radius_um, morphology
         Cell shape: ``"soma"`` (body only, fast) or ``"cytosolic"`` (soma plus
-        proximal dendrites).
+        proximal dendrites). Ignored when ``population`` is given.
+    population
+        A :class:`~minisim.NeuronPopulation` to place verbatim, bypassing the
+        well-separated grid. Use minisim's native volumetric placement - a
+        ``density_per_mm3`` over a ``depth_range_um``, optionally Poisson-disk-spaced
+        by ``min_distance_um`` - to get a realistic, variable layout where footprints
+        overlap and a depth spread leaves some cells off the focal plane (so not every
+        planted cell is detectable). ``None`` (the default) keeps the exact-count
+        grid; when given, ``n_cells``, ``depth_um``, ``soma_radius_um``, and
+        ``morphology`` are ignored (the population sets them).
     motion
         When ``True``, append a default :class:`~minisim.BrainMotion` step, so
         ``ground_truth.shifts`` is populated (lets you exercise motion correction).
@@ -171,30 +190,28 @@ def make_recording(
     Recording
         ``rec.observed`` is the movie, ``rec.ground_truth`` the exact truth.
     """
-    if n_cells < 1:
-        raise ValueError(f"n_cells ({n_cells}) must be >= 1.")
     fov_um = n_px * pixel_size_um
     # Realize pixel_size_um as pitch / magnification with a fixed 8 µm pitch.
     pitch_um = 8.0
     magnification = pitch_um / pixel_size_um
-    positions = _grid_positions_um(n_cells, fov_um, depth_um, np.random.default_rng(seed))
+    if population is None:
+        if n_cells < 1:
+            raise ValueError(f"n_cells ({n_cells}) must be >= 1.")
+        positions = _grid_positions_um(n_cells, fov_um, depth_um, np.random.default_rng(seed))
+        population = NeuronPopulation(
+            positions_um=positions,
+            soma_radius_um=soma_radius_um,
+            morphology=morphology,
+        )
     acquisition = Acquisition(
         optics=Optics(magnification=magnification),
         image_sensor=ImageSensor(n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=pitch_um),
         fps=fps,
         duration_s=duration_s,
-        focal_depth_in_tissue_um="auto",
+        focal_depth_in_tissue_um=focal_depth_um,
     )
     steps: list[AnyStep] = [
-        PlaceNeurons(
-            populations=[
-                NeuronPopulation(
-                    positions_um=positions,
-                    soma_radius_um=soma_radius_um,
-                    morphology=morphology,
-                )
-            ]
-        ),
+        PlaceNeurons(populations=[population]),
         # Lively by default: every cell fires a transient in the short clip.
         activity or CellActivity(p_quiescent_to_active=0.05),
         CellOptics(),

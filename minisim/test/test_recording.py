@@ -225,7 +225,11 @@ def _detect_spec(acq):
     )
 
 
-def test_detectable_reflects_brightness_and_focus():
+def test_detectable_is_snr_based_not_focus_gated():
+    # Detectability is purely a signal test (SNR >= threshold). Defocus is not a hard
+    # gate: it enters only by dimming optical_brightness, so a bright cell that is out
+    # of focus stays detectable as long as its (already-dimmed) transient clears the
+    # floor - matching what a real pipeline recovers outside the depth of field.
     acq = _acq(n_px=16)
     nf = acq.n_frames
     trace = np.ones(nf)
@@ -238,14 +242,19 @@ def test_detectable_reflects_brightness_and_focus():
         # in focus but optically ~dark -> below the floor
         Cell(center_um=(0.0, 4.0, 4.0), footprint_planted=_dot((16, 16), 4, 4),
              trace=trace, in_focus=True, optical_brightness=1e-3),
-        # bright but out of focus -> gated out by in_focus
+        # bright but out of focus -> STILL detectable (no in_focus gate); its bright
+        # transient clears the floor even though the geometric flag is False
         Cell(center_um=(0.0, 12.0, 12.0), footprint_planted=_dot((16, 16), 12, 12),
              trace=trace, in_focus=False, optical_brightness=1.0),
+        # out of focus AND optically dim -> below the floor
+        Cell(center_um=(0.0, 2.0, 2.0), footprint_planted=_dot((16, 16), 2, 2),
+             trace=trace, in_focus=False, optical_brightness=1e-3),
     ]
     gt = finalize(scene, _detect_spec(acq)).ground_truth
-    assert gt.detectable.tolist() == [True, False, False]
-    # detectable is always a subset of in_focus.
-    assert not (gt.detectable & ~gt.in_focus).any()
+    assert gt.detectable.tolist() == [True, False, True, False]
+    # Detectability is no longer a subset of in_focus: an out-of-focus bright cell is
+    # detectable, so the two flags are now independent.
+    assert (gt.detectable & ~gt.in_focus).any()
 
 
 def test_detectable_subset_keeps_only_detectable_units():

@@ -812,10 +812,12 @@ def _max_yield_focus(
     candidate focal ``F`` the per-cell detection SNR is computed fully vectorized
     over (candidates × cells): the defocus peak-drop ``σ₀²/(σ₀² + (NA·(e−F))²)``
     times the focal-independent gain (scatter attenuation × NA² collection ×
-    illumination × exposure × QE), against the shot + read floor. A cell counts
-    when it is within the depth of field of ``F`` **and** clears
-    ``DETECT_SNR_THRESHOLD``. Ties in count are broken by total in-focus signal so
-    the plane sits where the detectable cells are brightest.
+    illumination × exposure × QE), against the shot + read floor. A cell counts when
+    it clears ``DETECT_SNR_THRESHOLD`` - there is no separate depth-of-field gate, so
+    the objective matches the realized ``detectable`` flag (see
+    :func:`~minisim.recording._is_detectable`): defocus dims a cell through the SNR
+    rather than excluding it at a hard cutoff. Ties in count are broken by total
+    detected signal so the plane sits where the detectable cells are brightest.
 
     Vessel occlusion is **not** folded in here: vasculature is a later tissue-domain
     effect, not yet grown when the focus is chosen. So a vessel over a soma can drop
@@ -845,14 +847,13 @@ def _max_yield_focus(
         baseline_list.append(float(trace.min()))
     peak_dF = np.array(peak_dF_list)
     baseline = np.array(baseline_list)
-    dof = optics.resolved_depth_of_field_um
 
     candidates = np.linspace(eff.min(), eff.max(), _FOCUS_SCAN_N)
     d = eff[None, :] - candidates[:, None]  # (n_candidates, n_cells)
     peak_drop = sigma0_sq / (sigma0_sq + (optics.na * d) ** 2)
     gain = gain_const * peak_drop
     snr = detection_snr(peak_dF, baseline, gain, read_e)
-    detectable = (np.abs(d) <= dof) & (snr >= DETECT_SNR_THRESHOLD)
+    detectable = snr >= DETECT_SNR_THRESHOLD
     yields = detectable.sum(axis=1)
     signals = np.where(detectable, peak_dF * gain, 0.0).sum(axis=1)
 

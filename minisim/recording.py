@@ -16,10 +16,14 @@ Two things that were deliberately deferred from earlier steps land here:
   back to - and drops cells whose reference footprint falls entirely in the
   margin (real tissue, but background that only flickers in transiently, not a
   recoverable unit).
-* **Detectability.** ``detectable`` is not an optics-only property: a cell's peak
-  signal (``optical_brightness``) is further dimmed by the illumination/vignette
-  field at its position and then judged against a sensor-derived noise floor.
-  ``finalize`` is the first point all three exist, so it is where the flag is set.
+* **Detectability.** ``detectable`` is a pure signal test, not an optics-only
+  property: a cell's peak signal (``optical_brightness``, which already folds in
+  defocus and scatter) is further dimmed by the illumination/vignette field at its
+  position and then judged against a sensor-derived noise floor (``SNR ≥
+  DETECT_SNR_THRESHOLD``). Defocus is not a hard gate - it lowers the SNR
+  continuously, so a blurred but bright cell outside the depth of field can still be
+  detectable, matching what a real pipeline recovers. ``finalize`` is the first point
+  all the terms exist, so it is where the flag is set.
 """
 
 from __future__ import annotations
@@ -40,9 +44,13 @@ from minisim.scene import MOVIE_DIMS, Cell, Scene
 from minisim.spec import Acquisition, Spec
 
 # Minimum realized peak SNR (signal electrons over the sensor noise floor) for a
-# cell to count as detectable. A provisional value: a future threshold
-# calibration revisits it against observed metric distributions. Kept here, named,
-# rather than buried as a literal so that calibration is a one-line change.
+# cell to count as detectable. This is the *sole* detectability criterion: a cell is
+# detectable iff its realized transient (already dimmed by defocus, scatter,
+# illumination, and any vessel) clears this SNR, with no separate in-focus/depth-of-
+# field gate (defocus enters continuously through the SNR, the way a real pipeline
+# experiences it). A provisional value: a future threshold calibration revisits it
+# against observed metric distributions. Kept here, named, rather than buried as a
+# literal so that calibration is a one-line change.
 #
 # STABILITY CONTRACT. This single constant sets the `detectable` flag, the
 # `restrict_to_detectable` recall denominator in `minisim.testing.score`, and the
@@ -739,9 +747,13 @@ def _is_detectable(
     test; the footprint-weighted occlusion is recorded separately as
     ``vessel_overlap_fraction``.
 
-    ``photons_per_unit`` is the sensor exposure scale. ``detectable`` requires
-    ``in_focus`` and ``SNR ≥ DETECT_SNR_THRESHOLD``. With no activity (no trace) a
-    cell emits no transient and is not detectable; with no ``sensor`` step
+    ``photons_per_unit`` is the sensor exposure scale. ``detectable`` is purely a
+    signal test: ``SNR ≥ DETECT_SNR_THRESHOLD``. Defocus is **not** a separate hard
+    gate - it dims ``optical_brightness`` (and so the SNR) continuously, exactly as a
+    real pipeline experiences it, so an out-of-focus cell stays detectable as long as
+    its blurred transient still clears the floor (this is why a CNMF-style pipeline
+    recovers cells well outside the diffraction depth of field). With no activity (no
+    trace) a cell emits no transient and is not detectable; with no ``sensor`` step
     (``photons_per_unit is None``) there is no noise floor to test against, so
     detectability falls back to the geometric ``in_focus`` flag.
     """
@@ -749,8 +761,6 @@ def _is_detectable(
         return False
     if photons_per_unit is None:
         return in_focus
-    if not in_focus:
-        return False
     brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
     illum = sample_field_at(photon_field, y_um, x_um, acq.pixel_size_um)
     gain = (
