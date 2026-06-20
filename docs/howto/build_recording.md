@@ -66,8 +66,15 @@ The anatomy panel ships three starting points, applied with one click:
 - **Miniscope V4 - cortex L2/3** - a V4 imaging sparser neocortical layer 2/3
   cells, with thick vessels sitting on top of the band.
 
-The V4 optics (NA, sensor format, pixel pitch, working distance) are the real
-values; the activity panel adds its own `Quiet`/`Moderate`/`Active` firing presets.
+Every physical number behind the **two V4 buttons** - the V4 optics (NA, sensor
+format, pixel pitch, bit depth, working distance), its static field signature
+(illumination falloff, vignette, stray-light glow) and exposure, plus the region
+anatomy, neuropil, and vasculature - is read straight from {mod}`minisim.presets`,
+the single source of truth (a parity test fails if the two drift). The **Generic
+1p scope** button is instead the studio's own ready-to-use defaults (brightly
+exposed, confounds on), tuned for a usable starting recording rather than
+mirroring the bare library scope. The activity panel adds its own
+`Quiet`/`Moderate`/`Active` firing presets.
 
 ## Output formats
 

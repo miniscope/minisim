@@ -8,6 +8,7 @@ from the top level (`from minisim import ...`); the testing helpers live in the
 :maxdepth: 2
 
 spec
+presets
 simulate
 recording
 scene
@@ -27,6 +28,8 @@ stability
   - Role
 * - {py:class}`~minisim.Spec`
   - The typed, validated recording specification (the input you build).
+* - {py:func}`~minisim.build_spec`
+  - Compose a {py:class}`~minisim.Scope` × {py:class}`~minisim.Region` preset into a `Spec`.
 * - {py:func}`~minisim.simulate`
   - Run the forward pipeline; returns a {py:class}`~minisim.Recording`.
 * - {py:func}`~minisim.simulate_cached`
