@@ -235,9 +235,15 @@ def test_studio_presets_match_library_presets():
     assert cfg.front_working_distance_um == scope.front_working_distance_um
     # the scope's static field signature + exposure flow through too
     assert cfg.photons_per_unit == scope.photons_per_unit
+    assert cfg.illumination_enabled == (scope.illumination is not None)
     assert cfg.illumination_falloff == scope.illumination.falloff
+    assert cfg.illumination_exponent == scope.illumination.exponent
+    assert cfg.vignette_enabled == (scope.vignette is not None)
     assert cfg.vignette_falloff == scope.vignette.falloff
+    assert cfg.vignette_exponent == scope.vignette.exponent
+    assert cfg.leakage_enabled == (scope.leakage is not None)
     assert cfg.leakage_level == scope.leakage.level
+    assert cfg.leakage_profile == scope.leakage.profile
     assert cfg.density_per_mm3 == region.population.density_per_mm3
     assert (cfg.depth_lo_um, cfg.depth_hi_um) == region.population.depth_range_um
     assert cfg.neuropil_enabled == (region.neuropil is not None)
