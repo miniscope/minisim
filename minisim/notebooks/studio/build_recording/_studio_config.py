@@ -16,10 +16,11 @@ toggles so the config spans a bare cells-only movie up to the full forward chain
 
 :data:`STUDIO_PRESETS` seeds the whole config from a named, realistic starting
 point (a generic scope, or a Miniscope V4 imaging a particular brain region).
-The physical numbers behind those presets - the V4 optics/sensor and the
-standard-region anatomy - have their source of truth in :mod:`minisim.presets`;
-the studio reads them from there and adds only its own presentation choices (the
-vignette/glow look, neuropil/motion defaults). A parity test
+The physical numbers behind those presets - the V4 optics/sensor, its static
+field signature (illumination/vignette/leakage) and exposure, and the
+standard-region anatomy/neuropil - have their source of truth in
+:mod:`minisim.presets`; the studio reads them from there and adds only its own
+presentation choices (the motion defaults). A parity test
 (``test_studio_presets_match_library_presets``) fails if the studio's numbers
 ever drift from the library presets.
 """
@@ -420,7 +421,12 @@ def _generic() -> StudioConfig:
 
 
 def _stamp_scope(cfg: StudioConfig, scope: presets.Scope) -> None:
-    """Copy a :class:`minisim.presets.Scope`'s optics/sensor onto the flat ``cfg``."""
+    """Copy a :class:`minisim.presets.Scope`'s optics/sensor/fields onto ``cfg``.
+
+    Includes the scope's static field signature (illumination, vignette, leakage)
+    and its exposure, so the studio's "V4 look" comes straight from the library
+    scope rather than a separate presentation overlay.
+    """
     cfg.na = scope.optics.na
     cfg.magnification = scope.optics.magnification
     cfg.emission_nm = scope.optics.emission_nm
@@ -428,8 +434,22 @@ def _stamp_scope(cfg: StudioConfig, scope: presets.Scope) -> None:
     cfg.n_px_height = scope.image_sensor.n_px_height
     cfg.n_px_width = scope.image_sensor.n_px_width
     cfg.pixel_pitch_um = scope.image_sensor.pixel_pitch_um
+    cfg.bit_depth = scope.image_sensor.bit_depth
+    cfg.photons_per_unit = scope.photons_per_unit
     cfg.front_working_distance_um = scope.front_working_distance_um
     cfg.focal_depth_um = scope.focal_depth_in_tissue_um
+    cfg.illumination_enabled = scope.illumination is not None
+    if scope.illumination is not None:
+        cfg.illumination_falloff = scope.illumination.falloff
+        cfg.illumination_exponent = scope.illumination.exponent
+    cfg.vignette_enabled = scope.vignette is not None
+    if scope.vignette is not None:
+        cfg.vignette_falloff = scope.vignette.falloff
+        cfg.vignette_exponent = scope.vignette.exponent
+    cfg.leakage_enabled = scope.leakage is not None
+    if scope.leakage is not None:
+        cfg.leakage_level = scope.leakage.level
+        cfg.leakage_profile = scope.leakage.profile
 
 
 def _stamp_region(cfg: StudioConfig, region: presets.Region) -> None:
@@ -446,6 +466,10 @@ def _stamp_region(cfg: StudioConfig, region: presets.Region) -> None:
     cfg.scatter_mfp_excitation_um = region.tissue.scatter_mfp_excitation_um
     cfg.scatter_mfp_emission_um = region.tissue.scatter_mfp_emission_um
     cfg.scatter_blur_per_um = region.tissue.scatter_blur_per_um
+    cfg.neuropil_enabled = region.neuropil is not None
+    if region.neuropil is not None:
+        cfg.neuropil_amplitude = region.neuropil.amplitude
+        cfg.neuropil_n_components = region.neuropil.n_components
     cfg.vasculature_enabled = region.vasculature is not None
     if region.vasculature is not None:
         layer = region.vasculature.layers[0]
@@ -457,28 +481,16 @@ def _stamp_region(cfg: StudioConfig, region: presets.Region) -> None:
         cfg.vessel_tortuosity_deg = layer.tortuosity_deg
 
 
-def _v4_look(cfg: StudioConfig) -> None:
-    """Add the V4's characteristic vignette + center-illumination glow (studio look).
-
-    The V4 has moderate emission vignetting and a center-weighted excitation glow.
-    These are *presentation* choices the studio layers on top of the physical
-    :func:`minisim.presets.miniscope_v4` scope, not part of the scope's spec.
-    """
-    cfg.illumination_enabled = True
-    cfg.illumination_falloff = 0.7
-    cfg.vignette_enabled = True
-    cfg.vignette_falloff = 0.6  # moderate (corner ~60% of center)
-    cfg.leakage_enabled = True
-    cfg.leakage_profile = "gaussian"
-    cfg.leakage_level = 0.08  # gentle center glow; higher buries cells under the bloom
-
-
 def _miniscope_v4_region(region: presets.Region) -> StudioConfig:
-    """A studio config for the Miniscope V4 imaging a standard region preset."""
-    cfg = StudioConfig(neuropil_amplitude=0.4)
-    _stamp_scope(cfg, presets.miniscope_v4())
-    _stamp_region(cfg, region)
-    _v4_look(cfg)
+    """A studio config for the Miniscope V4 imaging a standard region preset.
+
+    Every physical number - optics, sensor, exposure, the V4's static field
+    signature (illumination/vignette/leakage), and the region anatomy/neuropil -
+    is stamped from :mod:`minisim.presets`, the single source of truth.
+    """
+    cfg = StudioConfig()
+    _stamp_scope(cfg, presets.miniscope_v4())  # optics/sensor/exposure + V4 fields
+    _stamp_region(cfg, region)  # anatomy + neuropil amplitude/components
     return cfg
 
 

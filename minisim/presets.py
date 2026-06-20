@@ -9,8 +9,8 @@ fields:
   everything that does not depend on what tissue you point it at
   (:func:`miniscope_v4`, :func:`generic_1p`);
 * a :class:`Region` is the biology you point it at - the cell population (depth,
-  density, morphology), the tissue scatter, and the region's characteristic
-  vessel confound (:func:`ca1`, :func:`cortex_l23`).
+  density, morphology), the tissue scatter, the diffuse neuropil haze, and the
+  region's characteristic vessel confound (:func:`ca1`, :func:`cortex_l23`).
 
 The two compose: :func:`build_spec` assembles any scope × any region into a
 validated :class:`~minisim.Spec`, so you can swap the scope or the region
@@ -28,8 +28,9 @@ anatomy notebook teaches.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Literal
+
+from pydantic import Field
 
 from minisim.spec import (
     Acquisition,
@@ -37,8 +38,11 @@ from minisim.spec import (
     CellActivity,
     CellOptics,
     Composite,
+    IlluminationProfile,
     ImageSensor,
+    Leakage,
     NeuronPopulation,
+    Neuropil,
     Optics,
     Output,
     PlaceNeurons,
@@ -47,6 +51,8 @@ from minisim.spec import (
     Tissue,
     Vasculature,
     VesselLayer,
+    Vignette,
+    _Base,
 )
 
 # A focal plane is either a concrete depth into tissue (µm) or "auto" (resolved to
@@ -54,20 +60,51 @@ from minisim.spec import (
 FocalDepth = float | Literal["auto"]
 
 
-@dataclass(frozen=True)
-class Scope:
+class Scope(_Base):
     """A miniscope's measurable hardware: objective optics + image sensor.
 
     The reusable physical front-end - everything independent of the tissue you
-    image. ``focal_depth_in_tissue_um`` and ``front_working_distance_um`` are the
-    two acquisition-level fields that travel with the scope rather than the
+    image. Besides the objective ``optics`` and the bare ``image_sensor``, a scope
+    carries its own static field signature: the excitation-side ``illumination``
+    falloff, the collection-side ``vignette``, and the stray-light ``leakage``
+    glow - all fixed to the instrument, not the tissue (``None`` to omit any).
+    ``photons_per_unit`` is the rig's typical exposure/flux scale (excitation
+    power x integration time), the brightness :func:`build_spec` gives the sensor
+    by default. ``focal_depth_in_tissue_um`` and ``front_working_distance_um`` are
+    the two acquisition-level fields that travel with the scope rather than the
     region. Compose with a :class:`Region` via :func:`build_spec`.
     """
 
-    optics: Optics
-    image_sensor: ImageSensor
-    focal_depth_in_tissue_um: FocalDepth = "auto"
-    front_working_distance_um: float | None = None
+    optics: Optics = Field(
+        description="Objective optics (NA, magnification, emission)."
+    )
+    image_sensor: ImageSensor = Field(
+        description="The bare image sensor (pixel count/pitch, QE, noise, bit depth)."
+    )
+    illumination: IlluminationProfile | None = Field(
+        default=None,
+        description="Excitation-side illumination falloff (center-bright LED), or None.",
+    )
+    vignette: Vignette | None = Field(
+        default=None, description="Collection-side emission vignette, or None."
+    )
+    leakage: Leakage | None = Field(
+        default=None, description="Additive stray-light leakage glow, or None."
+    )
+    photons_per_unit: float = Field(
+        gt=0,
+        default=100.0,
+        description="The rig's typical exposure/flux scale; the default brightness "
+        "build_spec gives the sensor.",
+    )
+    focal_depth_in_tissue_um: FocalDepth = Field(
+        default="auto",
+        description="Focal-plane depth into tissue, µm, or 'auto' (median cell depth).",
+    )
+    front_working_distance_um: float | None = Field(
+        default=None,
+        description="Front working distance (lens front → focal point), µm; informational.",
+    )
 
     @property
     def pixel_size_um(self) -> float:
@@ -81,20 +118,31 @@ class Scope:
         return (self.image_sensor.n_px_height * px, self.image_sensor.n_px_width * px)
 
 
-@dataclass(frozen=True)
-class Region:
+class Region(_Base):
     """A standard imaging target: cell population + tissue scatter + vessels.
 
     The biology half of a recording - what a :class:`Scope` is pointed at.
     ``population`` carries the cell distribution (depth range, density,
-    morphology); ``tissue`` the depth-dependent scatter; ``vasculature`` the
-    region's characteristic dark-vessel confound, or ``None`` for no vessels.
-    Compose with a scope via :func:`build_spec`.
+    morphology); ``tissue`` the depth-dependent scatter; ``neuropil`` the diffuse
+    background haze from the surrounding dendritic/axonal felt, or ``None`` for a
+    clean background; ``vasculature`` the region's characteristic dark-vessel
+    confound, or ``None`` for no vessels. Compose with a scope via
+    :func:`build_spec`.
     """
 
-    population: NeuronPopulation
-    tissue: Tissue
-    vasculature: Vasculature | None = None
+    population: NeuronPopulation = Field(
+        description="The cell distribution to place (depth, density, morphology)."
+    )
+    tissue: Tissue = Field(
+        description="Depth-dependent light scatter of the imaged tissue."
+    )
+    neuropil: Neuropil | None = Field(
+        default=None,
+        description="Diffuse background haze from the surrounding felt, or None.",
+    )
+    vasculature: Vasculature | None = Field(
+        default=None, description="The region's dark-vessel confound, or None."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +161,14 @@ _V4_FIELD_CURVATURE_UM = 2500.0
 _V4_N_PX = 608
 _V4_PIXEL_PITCH_UM = 4.8
 _V4_FWD_UM = 700.0
+_V4_BIT_DEPTH = 8  # V4 digitizes to 8-bit raw counts (confirmed); the rest of the
+# sensor noise model (QE, read noise, gain) stays at the library defaults for now.
+# The V4's characteristic static field signature (excitation glow, emission vignette,
+# stray-light leakage) and its bright deep-tissue exposure - the "V4 look".
+_V4_PHOTONS_PER_UNIT = 600.0  # bright enough that a deep field clears the noise floor
+_V4_ILLUMINATION_FALLOFF = 0.7  # gentle center-bright excitation rolloff
+_V4_VIGNETTE_FALLOFF = 0.6  # moderate emission vignette (corner ~60% of center)
+_V4_LEAKAGE_LEVEL = 0.08  # gentle center glow; higher buries cells under the bloom
 
 
 def miniscope_v4() -> Scope:
@@ -120,8 +176,14 @@ def miniscope_v4() -> Scope:
 
     Confirmed V4 numbers (D. Aharoni): magnification 2.9 so the sensor sees a
     ~1.0 mm field of view, 525 nm GCaMP emission, a ~2500 µm field-curvature
-    radius, and a 700 µm front working distance. The focal plane defaults to
-    ``"auto"`` (tracks the placed layer), as the anatomy notebook does.
+    radius, an 8-bit sensor ADC, and a 700 µm front working distance. The scope
+    also carries the V4's characteristic static field signature - a gentle
+    center-bright excitation glow, a moderate emission vignette, and a soft
+    stray-light leakage - plus a bright deep-tissue exposure, so a
+    :func:`build_spec` recording reproduces the V4 look without hand-adding it.
+    The focal plane defaults to ``"auto"`` (tracks the placed layer), as the
+    anatomy notebook does. The remaining sensor-noise fields (QE, read noise,
+    gain) are left at the library defaults until measured V4 values land.
     """
     return Scope(
         optics=Optics(
@@ -134,7 +196,12 @@ def miniscope_v4() -> Scope:
             n_px_height=_V4_N_PX,
             n_px_width=_V4_N_PX,
             pixel_pitch_um=_V4_PIXEL_PITCH_UM,
+            bit_depth=_V4_BIT_DEPTH,
         ),
+        illumination=IlluminationProfile(falloff=_V4_ILLUMINATION_FALLOFF),
+        vignette=Vignette(falloff=_V4_VIGNETTE_FALLOFF),
+        leakage=Leakage(profile="gaussian", level=_V4_LEAKAGE_LEVEL),
+        photons_per_unit=_V4_PHOTONS_PER_UNIT,
         focal_depth_in_tissue_um="auto",
         front_working_distance_um=_V4_FWD_UM,
     )
@@ -162,8 +229,11 @@ def ca1() -> Region:
 
     CA1 reads as a thin pyramidal band: cytosolic GCaMP somata (radius ~5 µm) at
     ~45000 cells/mm³ over a ~140-160 µm slab (the anatomy notebook's CA1 preset).
-    Vasculature is on but *less pronounced* than cortex - thinner, lower-contrast
-    vessels just above the pyramidal band (D. Aharoni).
+    Neuropil haze is *moderate*: the imaged band is the densely-packed pyramidal
+    soma layer, with most of the dendritic/axonal felt in the adjacent strata
+    (radiatum/oriens) outside the thin imaged slab. Vasculature is on but *less
+    pronounced* than cortex - thinner, lower-contrast vessels just above the
+    pyramidal band (D. Aharoni).
     """
     return Region(
         population=NeuronPopulation(
@@ -173,6 +243,7 @@ def ca1() -> Region:
             depth_range_um=(140.0, 160.0),
         ),
         tissue=Tissue(),
+        neuropil=Neuropil(amplitude=0.4),
         vasculature=Vasculature(
             enabled=True,
             layers=[
@@ -192,9 +263,11 @@ def cortex_l23() -> Region:
 
     L2/3 excitatory cells: cytosolic GCaMP somata (radius ~6 µm), sparsely
     labeled (~8000 cells/mm³) and spread through a deeper, thicker 100-200 µm
-    band than CA1, so depth-dependent scatter and defocus matter more.
-    Vasculature is *thick and on top of the cells* (D. Aharoni): a shallow layer
-    of large-caliber, high-contrast vessels above the imaged band.
+    band than CA1, so depth-dependent scatter and defocus matter more. Neuropil
+    haze is *prominent*: the imaged band is dense with dendrites and axons woven
+    among the sparse somata, so the diffuse background reads strongly relative to
+    the cells. Vasculature is *thick and on top of the cells* (D. Aharoni): a
+    shallow layer of large-caliber, high-contrast vessels above the imaged band.
     """
     return Region(
         population=NeuronPopulation(
@@ -204,6 +277,7 @@ def cortex_l23() -> Region:
             depth_range_um=(100.0, 200.0),
         ),
         tissue=Tissue(),
+        neuropil=Neuropil(amplitude=0.6),
         vasculature=Vasculature(
             enabled=True,
             layers=[
@@ -236,7 +310,9 @@ def build_spec(
     activity: CellActivity | None = None,
     sensor: Sensor | None = None,
     extra_steps: Sequence[AnyStep] = (),
+    include_neuropil: bool = True,
     include_vasculature: bool = True,
+    include_scope_fields: bool = True,
     save_intermediates: bool = False,
 ) -> Spec:
     """Assemble a validated :class:`~minisim.Spec` from a scope × a region.
@@ -244,7 +320,9 @@ def build_spec(
     Builds the :class:`~minisim.Acquisition` from the scope's optics/sensor and
     the region's tissue, then the minimal forward chain
     (``place_neurons → cell_activity → optics → composite → sensor``) plus the
-    region's vasculature when present. The result is a real frozen ``Spec``: drop
+    region's neuropil and vasculature and the scope's static fields
+    (illumination, vignette, leakage) when present. The result is a real frozen
+    ``Spec``: drop
     it into :func:`~minisim.simulate`, or pass it to :func:`~minisim.sweep` as the
     base for a parameter grid.
 
@@ -261,16 +339,23 @@ def build_spec(
     activity
         The :class:`~minisim.CellActivity` model; ``None`` uses its defaults.
     sensor
-        The :class:`~minisim.Sensor` exposure step; ``None`` uses its defaults
-        (``photons_per_unit=100``). For a brightly-exposed deep-tissue recording
-        pass e.g. ``Sensor(photons_per_unit=600)``.
+        The :class:`~minisim.Sensor` exposure step; ``None`` uses the scope's own
+        ``photons_per_unit`` exposure (V4 ≈ 600 for a bright deep-tissue field,
+        the generic scope 100). Pass an explicit ``Sensor(...)`` to override.
     extra_steps
         Additional steps to append - ``BrainMotion``, ``Neuropil``,
         ``Vignette``, ``IlluminationProfile``, ``Leakage``, ``Bleaching``. The
         ``Spec`` re-sorts into canonical pipeline order, so order here is free.
+    include_neuropil
+        When ``False``, drop the region's neuropil haze (a clean, background-free
+        movie). Ignored when the region has no neuropil.
     include_vasculature
         When ``False``, drop the region's vessel layer (a clean, vessel-free
         movie). Ignored when the region has no vasculature.
+    include_scope_fields
+        When ``False``, drop the scope's static fields (illumination, vignette,
+        leakage) for a flat-field, glow-free movie. Ignored for a scope that sets
+        none of them.
     save_intermediates
         Persist per-step snapshots (see :class:`~minisim.Output`).
 
@@ -296,9 +381,17 @@ def build_spec(
         CellOptics(),
         Composite(),
     ]
+    if include_neuropil and region.neuropil is not None:
+        steps.append(region.neuropil)
     if include_vasculature and region.vasculature is not None:
         steps.append(region.vasculature)
-    steps.append(sensor or Sensor())
+    if include_scope_fields:
+        steps.extend(
+            f
+            for f in (scope.illumination, scope.vignette, scope.leakage)
+            if f is not None
+        )
+    steps.append(sensor or Sensor(photons_per_unit=scope.photons_per_unit))
     steps.extend(extra_steps)
     return Spec(
         acquisition=acquisition,
