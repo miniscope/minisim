@@ -322,9 +322,8 @@ def build_spec(
     (``place_neurons → cell_activity → optics → composite → sensor``) plus the
     region's neuropil and vasculature and the scope's static fields
     (illumination, vignette, leakage) when present. The result is a real frozen
-    ``Spec``: drop
-    it into :func:`~minisim.simulate`, or pass it to :func:`~minisim.sweep` as the
-    base for a parameter grid.
+    ``Spec``: drop it into :func:`~minisim.simulate`, or pass it to
+    :func:`~minisim.sweep` as the base for a parameter grid.
 
     Parameters
     ----------
@@ -343,9 +342,11 @@ def build_spec(
         ``photons_per_unit`` exposure (V4 ≈ 600 for a bright deep-tissue field,
         the generic scope 100). Pass an explicit ``Sensor(...)`` to override.
     extra_steps
-        Additional steps to append - ``BrainMotion``, ``Neuropil``,
-        ``Vignette``, ``IlluminationProfile``, ``Leakage``, ``Bleaching``. The
-        ``Spec`` re-sorts into canonical pipeline order, so order here is free.
+        Steps the scope/region do not already supply - typically ``BrainMotion``
+        or ``Bleaching`` (the region's neuropil/vasculature and the scope's
+        illumination/vignette/leakage come in automatically; see the
+        ``include_*`` toggles). The ``Spec`` re-sorts into canonical pipeline
+        order, so order here is free, and a duplicate ``kind`` raises.
     include_neuropil
         When ``False``, drop the region's neuropil haze (a clean, background-free
         movie). Ignored when the region has no neuropil.
