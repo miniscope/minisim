@@ -49,11 +49,29 @@ _RGB_CMAPS = [
 
 
 def play(movie, fps=20, height=280, title=None):
-    """Normalize a ``(frame, h, w)`` movie to ``[0, 1]`` and show a looping clip."""
+    """Normalize a ``(frame, h, w)`` movie to ``[0, 1]`` and show a looping clip.
+
+    Given only a ``height``, mediapy derives the width and can land on an *odd*
+    value, which cannot encode as ``yuv420p`` - so browsers (JupyterLab) refuse to
+    play it and show a blank "no supported format" box. We instead pass an explicit
+    *even* ``(height, width)``: the requested height capped to the source (never
+    upscale), the width aspect-matched, both rounded down to even. The source is
+    also padded to even dimensions, covering the case where mediapy declines to
+    upscale a tiny clip to the requested size.
+    """
     arr = np.asarray(movie, dtype=float)
     lo, hi = float(arr.min()), float(arr.max())
+    arr = (arr - lo) / (hi - lo + 1e-9)
+    src_h, src_w = arr.shape[1], arr.shape[2]
+    if src_h % 2 or src_w % 2:  # pad to even so a 1:1 display still encodes yuv420p
+        arr = np.pad(arr, ((0, 0), (0, src_h % 2), (0, src_w % 2)), mode="edge")
+        src_h, src_w = arr.shape[1], arr.shape[2]
+    out_h = min(height, src_h)  # never upscale
+    out_w = round(out_h * src_w / src_h)
+    out_h -= out_h % 2  # round down to even -> yuv420p-encodable
+    out_w -= out_w % 2
     mediapy.show_video(
-        (arr - lo) / (hi - lo + 1e-9), fps=fps, height=height, title=title, codec="h264"
+        arr, fps=fps, height=out_h, width=out_w, title=title, codec="h264"
     )
 
 
