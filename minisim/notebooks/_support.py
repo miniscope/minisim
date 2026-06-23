@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 import mediapy
 import numpy as np
 from IPython.display import Image, display
-from ipywidgets import HBox, VBox
+from ipywidgets import HBox, Output, VBox
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import LinearSegmentedColormap, Normalize, to_rgb
@@ -599,19 +599,30 @@ def build_naive_overlay_frames(
 
 
 def interactive_panel(sliders, draw, canvas, ncols=2):
-    """Wire every slider to redraw the SAME persistent canvas in place.
+    """Wire every slider to re-render its figure as an inline PNG in an Output widget.
 
-    ``draw`` reads the slider values itself and mutates the figure; we never
-    re-display, which keeps redraws smooth and sidesteps VS Code's duplicate-output
-    bug (no Output widget / re-display). If plots ever duplicate after reopening a
-    notebook, run Command Palette -> "Developer: Reload Window".
-
-    The canvas is drawn *after* ``display(canvas)``: an ipympl figure rendered
-    before its view is attached (the natural order, draw-then-display) never pushes
-    that first frame to the frontend, so in browser JupyterLab the panel comes up
-    blank until you nudge a slider. Drawing once the view is live paints it
-    immediately.
+    ``draw`` reads the slider values itself and mutates the figure (``canvas`` is the
+    figure's ipympl canvas - we use it only to reach ``.figure``, never display it).
+    The panels run under ``%matplotlib widget``, but ipympl does not reliably push a
+    live canvas to a browser-JupyterLab view: deep in a long notebook the frame is
+    dropped and the panel comes up blank (sliders show, plot does not), and windowing
+    re-blanks it on scroll. So instead of displaying the canvas we rasterize the
+    figure to a PNG and (re)display it in an :class:`~ipywidgets.Output` on every
+    change - reliable on every frontend. The sliders' ``continuous_update`` is off, so
+    it re-renders on release, not mid-drag, and ``clear_output(wait=True)`` swaps the
+    image without flicker.
     """
+    fig = canvas.figure
+    out = Output()
+
+    def refresh(*_):
+        draw()  # mutate the figure from the current slider values
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=fig.get_dpi(), bbox_inches="tight")
+        with out:
+            out.clear_output(wait=True)
+            display(Image(data=buf.getvalue()))
+
     for s in sliders.values():
         if hasattr(
             s, "continuous_update"
@@ -619,19 +630,12 @@ def interactive_panel(sliders, draw, canvas, ncols=2):
             s.continuous_update = False
         s.style.description_width = "104px"
         s.layout.width = "340px"
-    for s in sliders.values():
-        s.observe(lambda _change: draw(), names="value")
-    # Strip the ipympl chrome (toolbar, status footer, drag-resize handle) - the
-    # panels are fixed-size teaching figures, and the chrome otherwise reserves a
-    # band of empty canvas below the plot in browser JupyterLab.
-    for attr in ("header_visible", "footer_visible", "resizable"):
-        if hasattr(canvas, attr):
-            setattr(canvas, attr, False)
+        s.observe(refresh, names="value")
     vals = list(sliders.values())
     per = -(-len(vals) // ncols)  # ceil
     display(HBox([VBox(vals[i * per : (i + 1) * per]) for i in range(ncols)]))
-    display(canvas)
-    draw()  # after the view is attached, so ipympl pushes the first frame
+    display(out)
+    refresh()
 
 
 def show(fig):
