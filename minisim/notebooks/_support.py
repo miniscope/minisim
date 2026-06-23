@@ -20,10 +20,12 @@ and hand the result to :func:`plot_snr_vs_radius` here purely to draw.
 
 from __future__ import annotations
 
+from io import BytesIO
+
 import matplotlib.pyplot as plt
 import mediapy
 import numpy as np
-from IPython.display import display
+from IPython.display import Image, display
 from ipywidgets import HBox, VBox
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.collections import PatchCollection
@@ -68,8 +70,14 @@ def _agg_figure(figsize, dpi=100):
     return fig
 
 
-def play(movie, fps=20, height=280, title=None):
+def play(movie, fps=20, height=280, title=None, vmax=None):
     """Normalize a ``(frame, h, w)`` movie to ``[0, 1]`` and show a looping clip.
+
+    Maps ``[min, vmax]`` to ``[0, 1]``; ``vmax`` defaults to the movie's max. Pass
+    a percentile (e.g. ``np.percentile(movie, 99.9)``) to keep a few bright pixels
+    from compressing everything else into the dark - the same display scaling the
+    dashboard colourizers use, so a raw ``play`` of a render reads as bright as its
+    dashboard counterpart instead of washing the neuropil haze out to near-black.
 
     Given only a ``height``, mediapy derives the width and can land on an *odd*
     value, which cannot encode as ``yuv420p`` - so browsers (JupyterLab) refuse to
@@ -80,13 +88,14 @@ def play(movie, fps=20, height=280, title=None):
     yuv420p and play in every browser.
     """
     arr = np.asarray(movie, dtype=float)
-    lo, hi = float(arr.min()), float(arr.max())
+    lo = float(arr.min())
+    hi = float(vmax) if vmax is not None else float(arr.max())
     src_h, src_w = arr.shape[1], arr.shape[2]
     out_h = height - height % 2
     out_w = round(out_h * src_w / src_h)
     out_w -= out_w % 2  # round down to even -> yuv420p-encodable
     mediapy.show_video(
-        (arr - lo) / (hi - lo + 1e-9),
+        np.clip((arr - lo) / (hi - lo + 1e-9), 0.0, 1.0),
         fps=fps,
         height=out_h,
         width=out_w,
@@ -620,16 +629,19 @@ def interactive_panel(sliders, draw, canvas, ncols=2):
 
 
 def show(fig):
-    """Display a built (static) ipympl figure so it paints in browser JupyterLab.
+    """Display a built *static* figure as an inline PNG.
 
-    The figure-builder panels (e.g. :func:`optics_reveal_figure`) draw at
-    construction, before their canvas has a view. ipympl never pushes that
-    pre-view frame, so a plain ``display(fig.canvas)`` comes up blank in browser
-    JupyterLab (it works in VS Code's inline backend). Displaying first and forcing
-    a draw afterwards - the same ordering :func:`interactive_panel` relies on -
-    paints it immediately. Hide the ipympl toolbar header for a clean, static plot.
+    The figure-builder panels (e.g. :func:`optics_reveal_figure`) are static - they
+    draw once at construction and are never interacted with. Under
+    ``%matplotlib widget`` they are nonetheless ipympl figures, and ipympl does not
+    reliably push the first frame to a browser JupyterLab view: a canvas drawn
+    before its view attaches comes up blank, and even a post-attach draw is racy
+    deep in a long notebook (and blanks again when windowing scrolls it off and
+    back). Rasterizing to PNG and displaying that sidesteps the live canvas
+    entirely, so the panel always paints, on every frontend. Close the figure so it
+    does not linger as an unshown widget.
     """
-    if hasattr(fig.canvas, "header_visible"):
-        fig.canvas.header_visible = False
-    display(fig.canvas)
-    fig.canvas.draw_idle()
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=fig.get_dpi(), bbox_inches="tight")
+    plt.close(fig)
+    display(Image(data=buf.getvalue()))
