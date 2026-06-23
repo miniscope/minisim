@@ -621,6 +621,12 @@ def interactive_panel(sliders, draw, canvas, ncols=2):
         s.layout.width = "340px"
     for s in sliders.values():
         s.observe(lambda _change: draw(), names="value")
+    # Strip the ipympl chrome (toolbar, status footer, drag-resize handle) - the
+    # panels are fixed-size teaching figures, and the chrome otherwise reserves a
+    # band of empty canvas below the plot in browser JupyterLab.
+    for attr in ("header_visible", "footer_visible", "resizable"):
+        if hasattr(canvas, attr):
+            setattr(canvas, attr, False)
     vals = list(sliders.values())
     per = -(-len(vals) // ncols)  # ceil
     display(HBox([VBox(vals[i * per : (i + 1) * per]) for i in range(ncols)]))
