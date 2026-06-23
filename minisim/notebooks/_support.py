@@ -25,8 +25,10 @@ import mediapy
 import numpy as np
 from IPython.display import display
 from ipywidgets import HBox, VBox
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import LinearSegmentedColormap, Normalize, to_rgb
+from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 from scipy.ndimage import binary_dilation
 from scipy.ndimage import zoom as ndzoom
@@ -48,30 +50,48 @@ _RGB_CMAPS = [
 ]
 
 
+def _agg_figure(figsize, dpi=100):
+    """A standalone Agg-backed figure for offline frame compositing.
+
+    The notebooks run under ``%matplotlib widget`` (ipympl) for the interactive
+    sandboxes, but the dashboards rasterize a figure to an RGB array via
+    :meth:`~matplotlib.backend_bases.FigureCanvasBase.buffer_rgba` (see
+    :func:`_cursor_panel`). Once an ipympl canvas has been displayed, a retina
+    frontend stamps ``device_pixel_ratio = 2`` onto subsequently-created figures,
+    so that buffer comes back at ``2 x (figsize x dpi)`` with the figure drawn into
+    one corner - which dropped all but the first dashboard row in browser
+    JupyterLab. An explicit Agg canvas always rasterizes exactly ``figsize x dpi``,
+    on every frontend, so the composite is backend-independent.
+    """
+    fig = Figure(figsize=figsize, dpi=dpi)
+    FigureCanvasAgg(fig)
+    return fig
+
+
 def play(movie, fps=20, height=280, title=None):
     """Normalize a ``(frame, h, w)`` movie to ``[0, 1]`` and show a looping clip.
 
     Given only a ``height``, mediapy derives the width and can land on an *odd*
     value, which cannot encode as ``yuv420p`` - so browsers (JupyterLab) refuse to
-    play it and show a blank "no supported format" box. We instead pass an explicit
-    *even* ``(height, width)``: the requested height capped to the source (never
-    upscale), the width aspect-matched, both rounded down to even. The source is
-    also padded to even dimensions, covering the case where mediapy declines to
-    upscale a tiny clip to the requested size.
+    play it and show a blank "no supported format" box. We pass an explicit, even
+    ``(height, width)`` instead: the requested ``height`` (mediapy scales the clip
+    up or down to it, so the small dashboards still read), the width aspect-matched
+    to the source, both rounded down to even. Even dimensions always encode as
+    yuv420p and play in every browser.
     """
     arr = np.asarray(movie, dtype=float)
     lo, hi = float(arr.min()), float(arr.max())
-    arr = (arr - lo) / (hi - lo + 1e-9)
     src_h, src_w = arr.shape[1], arr.shape[2]
-    if src_h % 2 or src_w % 2:  # pad to even so a 1:1 display still encodes yuv420p
-        arr = np.pad(arr, ((0, 0), (0, src_h % 2), (0, src_w % 2)), mode="edge")
-        src_h, src_w = arr.shape[1], arr.shape[2]
-    out_h = min(height, src_h)  # never upscale
+    out_h = height - height % 2
     out_w = round(out_h * src_w / src_h)
-    out_h -= out_h % 2  # round down to even -> yuv420p-encodable
-    out_w -= out_w % 2
+    out_w -= out_w % 2  # round down to even -> yuv420p-encodable
     mediapy.show_video(
-        arr, fps=fps, height=out_h, width=out_w, title=title, codec="h264"
+        (arr - lo) / (hi - lo + 1e-9),
+        fps=fps,
+        height=out_h,
+        width=out_w,
+        title=title,
+        codec="h264",
     )
 
 
@@ -265,7 +285,7 @@ def build_dashboard_frames(movie, gt, picks, colors, t, vmax, px_um, downsample=
     n, h, wm = mov_rgb.shape[:3]
 
     # right panel: footprint thumbnail (col 0) + trace (col 1) per cell, drawn once
-    rfig = plt.figure(figsize=(5.0, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.0, h / 100.0))
     gs = rfig.add_gridspec(
         len(picks),
         2,
@@ -376,7 +396,7 @@ def build_components_frames(spatial, temporal, population, t, downsample=2):
     vmax = float(np.percentile(chan, 99.5)) + 1e-9
     left = (np.clip(chan / vmax, 0, 1) * 255).astype(np.uint8)  # (n, h, w, 3)
 
-    rfig = plt.figure(figsize=(5.4, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.4, h / 100.0))
     gs = rfig.add_gridspec(
         nk + 1,
         2,
@@ -439,7 +459,7 @@ def build_neuropil_frames(
     mid = _colorize_with_rings(withbg, gt, picks, colors, vmax, downsample)
     n, h, wm = left.shape[:3]
 
-    rfig = plt.figure(figsize=(5.2, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.2, h / 100.0))
     gs = rfig.add_gridspec(
         len(picks), 1, hspace=0.3, left=0.02, right=0.86, top=0.93, bottom=0.13
     )
@@ -519,7 +539,7 @@ def build_naive_overlay_frames(
         mov_rgb = np.repeat(np.repeat(mov_rgb, scale, axis=1), scale, axis=2)
     n, h, wm = mov_rgb.shape[:3]
 
-    rfig = plt.figure(figsize=(5.4, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.4, h / 100.0))
     gs = rfig.add_gridspec(
         len(picks),
         2,
@@ -576,6 +596,12 @@ def interactive_panel(sliders, draw, canvas, ncols=2):
     re-display, which keeps redraws smooth and sidesteps VS Code's duplicate-output
     bug (no Output widget / re-display). If plots ever duplicate after reopening a
     notebook, run Command Palette -> "Developer: Reload Window".
+
+    The canvas is drawn *after* ``display(canvas)``: an ipympl figure rendered
+    before its view is attached (the natural order, draw-then-display) never pushes
+    that first frame to the frontend, so in browser JupyterLab the panel comes up
+    blank until you nudge a slider. Drawing once the view is live paints it
+    immediately.
     """
     for s in sliders.values():
         if hasattr(
@@ -586,8 +612,24 @@ def interactive_panel(sliders, draw, canvas, ncols=2):
         s.layout.width = "340px"
     for s in sliders.values():
         s.observe(lambda _change: draw(), names="value")
-    draw()
     vals = list(sliders.values())
     per = -(-len(vals) // ncols)  # ceil
     display(HBox([VBox(vals[i * per : (i + 1) * per]) for i in range(ncols)]))
     display(canvas)
+    draw()  # after the view is attached, so ipympl pushes the first frame
+
+
+def show(fig):
+    """Display a built (static) ipympl figure so it paints in browser JupyterLab.
+
+    The figure-builder panels (e.g. :func:`optics_reveal_figure`) draw at
+    construction, before their canvas has a view. ipympl never pushes that
+    pre-view frame, so a plain ``display(fig.canvas)`` comes up blank in browser
+    JupyterLab (it works in VS Code's inline backend). Displaying first and forcing
+    a draw afterwards - the same ordering :func:`interactive_panel` relies on -
+    paints it immediately. Hide the ipympl toolbar header for a clean, static plot.
+    """
+    if hasattr(fig.canvas, "header_visible"):
+        fig.canvas.header_visible = False
+    display(fig.canvas)
+    fig.canvas.draw_idle()
