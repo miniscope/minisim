@@ -1103,11 +1103,15 @@ def test_neuropil_records_smooth_spatial_and_temporal_ground_truth():
     temporal = scene.truth.neuropil_temporal
     assert spatial.shape == (4, 40, 40)
     assert temporal.shape == (4, acq.n_frames)
-    # Spatial fields are non-negative, peak-normalized, and smooth (adjacent-pixel
-    # variation well below the field's overall spread - unlike white noise).
+    # Spatial fields are non-negative and smooth (adjacent-pixel variation well below
+    # the field's overall spread - unlike white noise).
     field = spatial[0]
-    assert field.min() >= 0.0 and field.max() == pytest.approx(1.0)
+    assert field.min() >= 0.0
     assert np.abs(np.diff(field, axis=0)).mean() < field.std()
+    # Mean-balanced: each component is rescaled to the shared average mean, so every
+    # component carries an equal share of the diffuse background.
+    means = spatial.mean(axis=(1, 2))
+    assert np.allclose(means, means.mean())
     # Temporal envelopes are strictly positive (the lognormal guarantee).
     assert (temporal > 0).all()
 

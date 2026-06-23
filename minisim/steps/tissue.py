@@ -208,9 +208,10 @@ def neuropil_components(
     fields, then all ``n_components`` temporal envelopes - :func:`population_envelope`
     is deterministic). ``shape`` is the canvas ``(h, w)``; ``n_frames`` the recording
     length. The diffuse background fades with the population-average bleaching
-    envelope when ``bleaching`` has run. Returns peak-normalized spatial fields
-    ``(component, h, w)``, realized temporal envelopes ``(component, frame)``, and
-    the population driver ``(frame,)`` (or ``None``).
+    envelope when ``bleaching`` has run. Returns mean-balanced spatial fields
+    ``(component, h, w)`` (each rescaled to the shared average mean so the haze
+    splits evenly across components), realized temporal envelopes
+    ``(component, frame)``, and the population driver ``(frame,)`` (or ``None``).
     """
     sigma_px = acq.um_to_px(spec.spatial_sigma_um)
     drift_tau_frames = acq.s_to_frame(spec.temporal_tau_s)
@@ -218,6 +219,14 @@ def neuropil_components(
     spatial = np.stack(
         [smooth_spatial_field(shape, sigma_px, rng) for _ in range(spec.n_components)]
     )
+    # Split the diffuse background evenly across components. smooth_spatial_field is
+    # peak-normalized, but a component's share of the haze scales with its field's
+    # *mean*, which peak-normalization lets float ~1.2-3x across draws - so one
+    # component can dominate. Rescale each field to the shared average mean: equal
+    # contributions, aggregate level (the mean over components) left unchanged.
+    if spec.n_components > 1:
+        means = spatial.mean(axis=(1, 2), keepdims=True)
+        spatial = spatial * (float(means.mean()) / np.clip(means, _EPS, None))
     traces = [cell.trace for cell in cells if cell.trace is not None]
     population = population_envelope(traces, pop_tau_frames)
     c = spec.population_coupling if population is not None else 0.0
@@ -238,7 +247,8 @@ class NeuropilStep(Step["Neuropil"]):
     """Additive diffuse background: ``amplitude · meanₖ(Sₖ(y,x) · Tₖ(t))``.
 
     Sums ``n_components`` diffuse sources, each a smooth spatial field
-    :func:`smooth_spatial_field` (``[0, 1]``, structure on ``spatial_sigma_um``)
+    :func:`smooth_spatial_field` (structure on ``spatial_sigma_um``, rescaled to the
+    shared average mean so each component carries an equal share of the haze)
     modulated by a positive, mean-1 temporal envelope ``Tₖ``. The envelope is the
     biologically driven part: a convex blend, at ``population_coupling`` ``c``,
 
