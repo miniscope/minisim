@@ -109,8 +109,11 @@ def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
 
     Each point is one cell: green if its realized SNR clears ``threshold`` (the
     photon budget can recover it), red if it sinks below the shot+read floor (the
-    dashed line). The log y-axis spans the order-of-magnitude spread. ``radius_um``
-    and ``snr`` are matched per-cell arrays - compute ``snr`` with
+    dashed line). The log y-axis is clamped to the meaningful range around the floor:
+    a few fully-dark outer cells have ~0 SNR (~1e-15) that would otherwise stretch the
+    scale across a dozen empty decades, so they clip off the bottom (still counted in
+    the legend). ``radius_um`` and ``snr`` are matched per-cell arrays - compute ``snr``
+    with
     :func:`minisim.detection_snr` and use :data:`minisim.DETECT_SNR_THRESHOLD` for
     the usual floor. This is the picture of *which cells are recoverable*, the same
     question ``finalize()`` answers with its ``detectable`` flag, so it reads the
@@ -139,6 +142,14 @@ def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
     ax.set(
         yscale="log", xlabel="distance from center (um)", ylabel="cell SNR", title=title
     )
+    # Clamp the log scale to the meaningful range so a few ~0-SNR outer cells do not
+    # blow it out. Bottom: a few-fold below the 1st-percentile cell (outlier-robust)
+    # and the threshold; top: just past the brightest. Always brackets the floor line.
+    pos = snr[snr > 0]
+    if pos.size:
+        lo = min(float(np.percentile(pos, 1)), float(threshold)) / 3.0
+        hi = max(float(pos.max()), float(threshold)) * 3.0
+        ax.set_ylim(lo, hi)
     ax.legend(fontsize=7, loc="lower left", frameon=False)
 
 
