@@ -20,13 +20,17 @@ and hand the result to :func:`plot_snr_vs_radius` here purely to draw.
 
 from __future__ import annotations
 
+from io import BytesIO
+
 import matplotlib.pyplot as plt
 import mediapy
 import numpy as np
-from IPython.display import display
-from ipywidgets import HBox, VBox
+from IPython.display import Image, display
+from ipywidgets import HBox, Output, VBox
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import LinearSegmentedColormap, Normalize, to_rgb
+from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 from scipy.ndimage import binary_dilation
 from scipy.ndimage import zoom as ndzoom
@@ -48,30 +52,55 @@ _RGB_CMAPS = [
 ]
 
 
-def play(movie, fps=20, height=280, title=None):
+def _agg_figure(figsize, dpi=100):
+    """A standalone Agg-backed figure for offline frame compositing.
+
+    The notebooks run under ``%matplotlib widget`` (ipympl) for the interactive
+    sandboxes, but the dashboards rasterize a figure to an RGB array via
+    :meth:`~matplotlib.backend_bases.FigureCanvasBase.buffer_rgba` (see
+    :func:`_cursor_panel`). Once an ipympl canvas has been displayed, a retina
+    frontend stamps ``device_pixel_ratio = 2`` onto subsequently-created figures,
+    so that buffer comes back at ``2 x (figsize x dpi)`` with the figure drawn into
+    one corner - which dropped all but the first dashboard row in browser
+    JupyterLab. An explicit Agg canvas always rasterizes exactly ``figsize x dpi``,
+    on every frontend, so the composite is backend-independent.
+    """
+    fig = Figure(figsize=figsize, dpi=dpi)
+    FigureCanvasAgg(fig)
+    return fig
+
+
+def play(movie, fps=20, height=280, title=None, vmax=None):
     """Normalize a ``(frame, h, w)`` movie to ``[0, 1]`` and show a looping clip.
+
+    Maps ``[min, vmax]`` to ``[0, 1]``; ``vmax`` defaults to the movie's max. Pass
+    a percentile (e.g. ``np.percentile(movie, 99.9)``) to keep a few bright pixels
+    from compressing everything else into the dark - the same display scaling the
+    dashboard colourizers use, so a raw ``play`` of a render reads as bright as its
+    dashboard counterpart instead of washing the neuropil haze out to near-black.
 
     Given only a ``height``, mediapy derives the width and can land on an *odd*
     value, which cannot encode as ``yuv420p`` - so browsers (JupyterLab) refuse to
-    play it and show a blank "no supported format" box. We instead pass an explicit
-    *even* ``(height, width)``: the requested height capped to the source (never
-    upscale), the width aspect-matched, both rounded down to even. The source is
-    also padded to even dimensions, covering the case where mediapy declines to
-    upscale a tiny clip to the requested size.
+    play it and show a blank "no supported format" box. We pass an explicit, even
+    ``(height, width)`` instead: the requested ``height`` (mediapy scales the clip
+    up or down to it, so the small dashboards still read), the width aspect-matched
+    to the source, both rounded down to even. Even dimensions always encode as
+    yuv420p and play in every browser.
     """
     arr = np.asarray(movie, dtype=float)
-    lo, hi = float(arr.min()), float(arr.max())
-    arr = (arr - lo) / (hi - lo + 1e-9)
+    lo = float(arr.min())
+    hi = float(vmax) if vmax is not None else float(arr.max())
     src_h, src_w = arr.shape[1], arr.shape[2]
-    if src_h % 2 or src_w % 2:  # pad to even so a 1:1 display still encodes yuv420p
-        arr = np.pad(arr, ((0, 0), (0, src_h % 2), (0, src_w % 2)), mode="edge")
-        src_h, src_w = arr.shape[1], arr.shape[2]
-    out_h = min(height, src_h)  # never upscale
+    out_h = height - height % 2
     out_w = round(out_h * src_w / src_h)
-    out_h -= out_h % 2  # round down to even -> yuv420p-encodable
-    out_w -= out_w % 2
+    out_w -= out_w % 2  # round down to even -> yuv420p-encodable
     mediapy.show_video(
-        arr, fps=fps, height=out_h, width=out_w, title=title, codec="h264"
+        np.clip((arr - lo) / (hi - lo + 1e-9), 0.0, 1.0),
+        fps=fps,
+        height=out_h,
+        width=out_w,
+        title=title,
+        codec="h264",
     )
 
 
@@ -80,8 +109,11 @@ def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
 
     Each point is one cell: green if its realized SNR clears ``threshold`` (the
     photon budget can recover it), red if it sinks below the shot+read floor (the
-    dashed line). The log y-axis spans the order-of-magnitude spread. ``radius_um``
-    and ``snr`` are matched per-cell arrays - compute ``snr`` with
+    dashed line). The log y-axis is clamped to the meaningful range around the floor:
+    a few fully-dark outer cells have ~0 SNR (~1e-15) that would otherwise stretch the
+    scale across a dozen empty decades, so they clip off the bottom (still counted in
+    the legend). ``radius_um`` and ``snr`` are matched per-cell arrays - compute ``snr``
+    with
     :func:`minisim.detection_snr` and use :data:`minisim.DETECT_SNR_THRESHOLD` for
     the usual floor. This is the picture of *which cells are recoverable*, the same
     question ``finalize()`` answers with its ``detectable`` flag, so it reads the
@@ -110,6 +142,14 @@ def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
     ax.set(
         yscale="log", xlabel="distance from center (um)", ylabel="cell SNR", title=title
     )
+    # Clamp the log scale to the meaningful range so a few ~0-SNR outer cells do not
+    # blow it out. Bottom: a few-fold below the 1st-percentile cell (outlier-robust)
+    # and the threshold; top: just past the brightest. Always brackets the floor line.
+    pos = snr[snr > 0]
+    if pos.size:
+        lo = min(float(np.percentile(pos, 1)), float(threshold)) / 3.0
+        hi = max(float(pos.max()), float(threshold)) * 3.0
+        ax.set_ylim(lo, hi)
     ax.legend(fontsize=7, loc="lower left", frameon=False)
 
 
@@ -265,7 +305,7 @@ def build_dashboard_frames(movie, gt, picks, colors, t, vmax, px_um, downsample=
     n, h, wm = mov_rgb.shape[:3]
 
     # right panel: footprint thumbnail (col 0) + trace (col 1) per cell, drawn once
-    rfig = plt.figure(figsize=(5.0, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.0, h / 100.0))
     gs = rfig.add_gridspec(
         len(picks),
         2,
@@ -376,7 +416,7 @@ def build_components_frames(spatial, temporal, population, t, downsample=2):
     vmax = float(np.percentile(chan, 99.5)) + 1e-9
     left = (np.clip(chan / vmax, 0, 1) * 255).astype(np.uint8)  # (n, h, w, 3)
 
-    rfig = plt.figure(figsize=(5.4, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.4, h / 100.0))
     gs = rfig.add_gridspec(
         nk + 1,
         2,
@@ -439,7 +479,7 @@ def build_neuropil_frames(
     mid = _colorize_with_rings(withbg, gt, picks, colors, vmax, downsample)
     n, h, wm = left.shape[:3]
 
-    rfig = plt.figure(figsize=(5.2, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.2, h / 100.0))
     gs = rfig.add_gridspec(
         len(picks), 1, hspace=0.3, left=0.02, right=0.86, top=0.93, bottom=0.13
     )
@@ -519,7 +559,7 @@ def build_naive_overlay_frames(
         mov_rgb = np.repeat(np.repeat(mov_rgb, scale, axis=1), scale, axis=2)
     n, h, wm = mov_rgb.shape[:3]
 
-    rfig = plt.figure(figsize=(5.4, h / 100.0), dpi=100)
+    rfig = _agg_figure((5.4, h / 100.0))
     gs = rfig.add_gridspec(
         len(picks),
         2,
@@ -570,13 +610,30 @@ def build_naive_overlay_frames(
 
 
 def interactive_panel(sliders, draw, canvas, ncols=2):
-    """Wire every slider to redraw the SAME persistent canvas in place.
+    """Wire every slider to re-render its figure as an inline PNG in an Output widget.
 
-    ``draw`` reads the slider values itself and mutates the figure; we never
-    re-display, which keeps redraws smooth and sidesteps VS Code's duplicate-output
-    bug (no Output widget / re-display). If plots ever duplicate after reopening a
-    notebook, run Command Palette -> "Developer: Reload Window".
+    ``draw`` reads the slider values itself and mutates the figure (``canvas`` is the
+    figure's ipympl canvas - we use it only to reach ``.figure``, never display it).
+    The panels run under ``%matplotlib widget``, but ipympl does not reliably push a
+    live canvas to a browser-JupyterLab view: deep in a long notebook the frame is
+    dropped and the panel comes up blank (sliders show, plot does not), and windowing
+    re-blanks it on scroll. So instead of displaying the canvas we rasterize the
+    figure to a PNG and (re)display it in an :class:`~ipywidgets.Output` on every
+    change - reliable on every frontend. The sliders' ``continuous_update`` is off, so
+    it re-renders on release, not mid-drag, and ``clear_output(wait=True)`` swaps the
+    image without flicker.
     """
+    fig = canvas.figure
+    out = Output()
+
+    def refresh(*_):
+        draw()  # mutate the figure from the current slider values
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=fig.get_dpi(), bbox_inches="tight")
+        with out:
+            out.clear_output(wait=True)
+            display(Image(data=buf.getvalue()))
+
     for s in sliders.values():
         if hasattr(
             s, "continuous_update"
@@ -584,10 +641,28 @@ def interactive_panel(sliders, draw, canvas, ncols=2):
             s.continuous_update = False
         s.style.description_width = "104px"
         s.layout.width = "340px"
-    for s in sliders.values():
-        s.observe(lambda _change: draw(), names="value")
-    draw()
+        s.observe(refresh, names="value")
     vals = list(sliders.values())
     per = -(-len(vals) // ncols)  # ceil
     display(HBox([VBox(vals[i * per : (i + 1) * per]) for i in range(ncols)]))
-    display(canvas)
+    display(out)
+    refresh()
+
+
+def show(fig):
+    """Display a built *static* figure as an inline PNG.
+
+    The figure-builder panels (e.g. :func:`optics_reveal_figure`) are static - they
+    draw once at construction and are never interacted with. Under
+    ``%matplotlib widget`` they are nonetheless ipympl figures, and ipympl does not
+    reliably push the first frame to a browser JupyterLab view: a canvas drawn
+    before its view attaches comes up blank, and even a post-attach draw is racy
+    deep in a long notebook (and blanks again when windowing scrolls it off and
+    back). Rasterizing to PNG and displaying that sidesteps the live canvas
+    entirely, so the panel always paints, on every frontend. Close the figure so it
+    does not linger as an unshown widget.
+    """
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=fig.get_dpi(), bbox_inches="tight")
+    plt.close(fig)
+    display(Image(data=buf.getvalue()))
