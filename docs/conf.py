@@ -5,6 +5,7 @@ package: prose docstrings via autodoc + napoleon, and the typed Spec/steps via
 autodoc-pydantic, so the reference cannot drift from the code.
 """
 
+import logging
 from importlib.metadata import version as _dist_version
 
 # -- Project information -----------------------------------------------------
@@ -113,3 +114,27 @@ html_context = {
     "github_version": "main",
     "doc_path": "docs",
 }
+
+# -- Resilient intersphinx ---------------------------------------------------
+
+# Inventory hosts (notably docs.scipy.org) intermittently time out from the build
+# network. Under `-W` that turns a transient ConnectTimeout into a hard build
+# failure even though nothing in the docs is wrong. Drop only the intersphinx
+# "failed to reach any of the inventories" warning so flaky hosts cannot break the
+# build; cross-refs into a missing inventory simply render as plain text (nitpicky
+# is off), and every real warning (broken refs, autodoc import failures) still fails.
+
+
+class _IgnoreUnreachableInventory(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "failed to reach any of the inventories" not in record.getMessage()
+
+
+def setup(app):
+    # Filter the intersphinx logger directly, so the record is dropped in
+    # Logger.handle (before any handler, incl. Sphinx's warning-is-error one, runs).
+    from sphinx.util import logging as sphinx_logging
+
+    sphinx_logging.getLogger("sphinx.ext.intersphinx").logger.addFilter(
+        _IgnoreUnreachableInventory()
+    )
