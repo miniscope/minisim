@@ -180,7 +180,10 @@ def write_miniscope_daq(
         raise ValueError(f"frames_per_file must be >= 1, got {frames_per_file}.")
     if isinstance(source, Recording):
         spec = source.spec
-        if source.observed.shape[0] == 0:
+        # numpydantic's Shape[...] annotation is not statically an ndarray (see
+        # [tool.pyright].exclude), so view it as one for the type checker.
+        observed = np.asarray(source.observed)
+        if observed.shape[0] == 0:
             raise ValueError("recording has no frames to write (observed is empty).")
     elif isinstance(source, Spec):
         spec = source
@@ -206,7 +209,7 @@ def write_miniscope_daq(
 
     sink: dict = {}
     if isinstance(source, Recording):
-        frames = (source.observed[i] for i in range(n_frames))
+        frames = (observed[i] for i in range(n_frames))
         gt: GroundTruth | None = source.ground_truth
     else:
         frames = (
