@@ -36,6 +36,11 @@ jobs:
       # installed numpy/pydantic/xarray/zarr/mediapy stubs. `test` pulls the
       # notebook extra, which provides mediapy for video.py's import.
       - name: install project + deps
+        # numcodecs (zarr<3 caps it below 0.16, which has no cp314 Linux wheel) builds
+        # from source on 3.14; its bundled c-blosc fails under GCC 15's default C23
+        # (ubuntu-26.04, now ubuntu-latest). Pin C17 until zarr 3 lifts the cap.
+        env:
+          CFLAGS: -std=gnu17
         run: |
           pdm config venv.in_project true
           pdm install --with test
