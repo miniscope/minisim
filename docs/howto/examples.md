@@ -105,9 +105,12 @@ in quadrature, while **brightness** (red) falls with depth.
 
 ## 3. Add brain motion
 
-`brain_motion` rigidly translates the tissue frame per frame and crops the sensor
+`brain_motion` translates the tissue frame per frame (rigidly, unless `nonrigid=True`) and crops the sensor
 FOV from a margin-padded canvas (sized automatically), so real off-FOV tissue
 moves into view. This is the motion you would run motion-correction against.
+The default `"physical"` model is a tidy oscillator with a single rigid shift; for
+broadband, burst-and-drift motion plus a non-rigid deformation field see
+{doc}`realistic_motion`.
 
 ```python
 from minisim import BrainMotion
@@ -271,6 +274,10 @@ gt = rec.ground_truth
 gt.detectable        # (n,) cells whose transient clears the sensor noise floor
 rec.observed         # (frames, H, W) raw 8-bit counts
 ```
+
+The sensor is ideal by default; add the opt-in {py:class}`~minisim.SensorDefects`
+step for hot and stuck pixels, PRNU and row/column fixed-pattern noise (see
+{doc}`sensor_defects`).
 
 `Sensor.photons_per_unit` is the exposure (the photon flux per intensity unit). It
 scales every light source in the frame equally - cells, neuropil, vasculature,

@@ -62,6 +62,11 @@ everything". `report.summary()` prints all three.
 
 ## On-disk format
 
+(The same `format_version` and advisory spec hash also stamp the movie-less
+ground-truth zarr written by {py:func}`~minisim.save_ground_truth`, which the
+Miniscope-DAQ writer keeps beside the AVI files and
+{py:func}`~minisim.load_ground_truth` reads back.)
+
 A saved {py:class}`~minisim.Recording` (`save()` / `load()`) is a zarr directory
 stamped with a `format_version`. Two checks, with deliberately different severities:
 

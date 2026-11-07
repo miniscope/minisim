@@ -15,6 +15,7 @@ scene
 metrics
 testing
 caching
+cli
 stability
 ```
 
@@ -38,6 +39,8 @@ stability
   - Simulate straight to a grayscale video, streamed to disk.
 * - {py:func}`~minisim.write_miniscope_daq`
   - Write a recording as a Miniscope-DAQ folder (AVIs + metadata + timestamps) with ground truth alongside.
+* - {doc}`minisim generate <cli>`
+  - Command line: simulate a recording from presets or a Spec JSON and write it to disk.
 * - {py:func}`~minisim.sweep`
   - Cartesian-product generator over spec overrides.
 * - {py:class}`~minisim.Recording`

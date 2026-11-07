@@ -93,3 +93,22 @@ cells_only = rec.stage("cells_only")          # the movie as of the composite st
 - {doc}`How-to: sweep parameters <howto/sweep>`
 - {doc}`How-to: export to video <howto/video>`
 - {doc}`API reference <reference/index>`
+
+## Write a Miniscope-DAQ folder
+
+To feed simulated data to a pipeline that reads real Miniscope output, write the
+recording as a DAQ folder (`N.avi`, `metaData.json`, `timeStamps.csv`, with the
+ground truth in a sibling `ground_truth/`), from Python or the shell:
+
+```python
+from minisim import write_miniscope_daq
+
+folder = write_miniscope_daq(spec, "sim_out")
+```
+
+```bash
+minisim generate --preset miniscope_v4 --region ca1 --duration 60 --out ./sim_out
+```
+
+See the {doc}`DAQ folder guide <howto/daq_folder>` and the
+{doc}`CLI reference <reference/cli>`.

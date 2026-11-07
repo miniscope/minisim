@@ -20,7 +20,8 @@ produces the movie, together with the ground truth that generated it:
 
 ```
 place neurons -> cell activity -> bleaching -> optics -> composite -> neuropil
-             -> brain motion -> illumination profile -> vignette -> leakage -> image sensor
+             -> brain motion -> illumination profile -> vignette -> leakage
+             -> (sensor defects) -> image sensor
 ```
 
 Each stage is a small, inspectable physical model. Because the recording is built
@@ -33,6 +34,15 @@ fields), which makes Minisim useful for:
 - **Teaching** the anatomy of miniscope data: what each physical effect does to
   the image, via interactive notebooks.
 - **Testing** analysis code with reproducible, parameterized fixtures.
+
+Beyond the core chain, opt-in realism (all off by default, so existing specs render
+unchanged): a heavy-tailed scatter halo on the optical PSF
+(`Tissue.scatter_halo_fraction`), realistic broadband brain motion with a non-rigid
+deformation field (`BrainMotion(model="miniscope", nonrigid=True)`), and sensor
+defects (hot/stuck pixels, PRNU, row/column fixed-pattern noise: `SensorDefects`).
+Recordings can be written as a Miniscope-DAQ folder (`write_miniscope_daq`, or the
+`minisim generate` command) so pipelines that read real DAQ output can be pointed at
+simulated data, with the exact ground truth alongside.
 
 📖 **Full documentation: [minisim.readthedocs.io](https://minisim.readthedocs.io/)** - concepts,
 quickstart, how-to guides, and the API reference.
@@ -83,6 +93,14 @@ spec = Spec(
 rec = simulate(spec)
 movie = rec.observed          # xarray DataArray (frame, height, width)
 truth = rec.ground_truth      # cells, traces, spikes, optical fields
+```
+
+Or generate a Miniscope-DAQ-layout folder (`N.avi`, `metaData.json`, `timeStamps.csv`,
+plus `ground_truth/`) straight from the shell:
+
+```bash
+minisim generate --preset miniscope_v4 --region ca1 --duration 60 --seed 0 \
+    --motion miniscope --nonrigid --out ./sim_v4_ca1
 ```
 
 ## Relationship to minian

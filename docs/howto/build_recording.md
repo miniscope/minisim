@@ -98,6 +98,10 @@ mirroring the bare library scope. The activity panel adds its own
   - re-simulate from the saved spec
 ```
 
+To write a Miniscope-DAQ folder (`N.avi` files, `metaData.json`, `timeStamps.csv`) instead,
+reload or rebuild the tuned `Spec` and call {py:func}`~minisim.write_miniscope_daq` or the
+`minisim generate` command ({doc}`daq_folder`); the studio panel itself offers zarr and avi only.
+
 zarr goes through the in-memory {py:func}`~minisim.simulate`, so the whole movie
 is held in RAM while it is written; the panel's size estimate flags how large the
 file (and the in-RAM movie) will be. For a long recording, dial the duration down
