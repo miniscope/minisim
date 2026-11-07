@@ -1168,7 +1168,7 @@ class BrainMotion(StepSpec):
       miniscope - a broadband 1/f-like spectrum, anisotropic (a dominant axis), with
       Poisson-onset burst episodes and a slow linear drift. The defaults reproduce a
       measured 20-min Miniscope V4 CA1 recording (std 0.9 / 1.1 px in y / x, p99
-      |shift| ~2.7 px, cumulative power below 0.1/0.5/1/2/5 Hz = 39/63/76/86/96 %,
+      ``|shift|`` ~2.7 px, cumulative power below 0.1/0.5/1/2/5 Hz = 39/63/76/86/96 %,
       1-3 s bursts peaking at 2-4 px, ~1 px drift per 20 min) at the V4 pixel size
       (1.655 µm/px; the ``*_um`` defaults are those pixel values converted at that
       size). See :func:`~minisim.presets.realistic_motion`.
