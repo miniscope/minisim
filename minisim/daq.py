@@ -56,7 +56,12 @@ from typing import Any
 import numpy as np
 
 from minisim.avi import AviWriter
-from minisim.recording import GroundTruth, Recording, save_ground_truth
+from minisim.recording import (
+    _GT_OPTIONAL,
+    GroundTruth,
+    Recording,
+    save_ground_truth,
+)
 from minisim.spec import Spec
 from minisim.video import (
     _DEFAULT_CHUNK_FRAMES,
@@ -351,18 +356,7 @@ def _write_npz(gt: GroundTruth, spec: Spec, path: Path) -> None:
         "fps": np.asarray(spec.acquisition.fps),
         "pixel_size_um": np.asarray(spec.acquisition.pixel_size_um),
     }
-    for name in (
-        "shifts",
-        "illumination",
-        "vignette",
-        "leakage",
-        "bleaching",
-        "vasculature_mask",
-        "vessel_overlap_fraction",
-        "neuropil_temporal",
-        "neuropil_spatial",
-        "neuropil_population",
-    ):
+    for name in _GT_OPTIONAL:  # every per-effect field the recording carries
         value = getattr(gt, name)
         if value is not None:
             arrays[name] = np.asarray(value)
