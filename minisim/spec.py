@@ -261,7 +261,11 @@ class ImageSensor(_Base):
     )
 
     def photons_to_counts(
-        self, photons: np.ndarray, rng: np.random.Generator
+        self,
+        photons: np.ndarray,
+        rng: np.random.Generator,
+        *,
+        offset_adu: np.ndarray | None = None,
     ) -> np.ndarray:
         """Forward sensor model: incident photons → digitized ADC counts.
 
@@ -300,7 +304,10 @@ class ImageSensor(_Base):
         # streaming writer's per-frame replay in lock-step with simulate().
         std = np.sqrt(lam + self.read_noise_e**2)
         electrons = lam + std * rng.standard_normal(photons.shape)
-        counts = np.floor(electrons * self.gain_adu_per_e)
+        adu = electrons * self.gain_adu_per_e
+        if offset_adu is not None:
+            adu = adu + offset_adu
+        counts = np.floor(adu)
         return np.clip(counts, 0.0, 2**self.bit_depth - 1)
 
 
@@ -581,6 +588,7 @@ _PIPELINE_ORDER: tuple[str, ...] = (
     "illumination_profile",
     "vignette",
     "leakage",
+    "sensor_defects",
     "sensor",
 )
 _KIND_RANK: dict[str, int] = {kind: i for i, kind in enumerate(_PIPELINE_ORDER)}
@@ -1291,6 +1299,94 @@ class Leakage(StepSpec):
     )
 
 
+class SensorDefects(StepSpec):
+    """Fixed sensor imperfections: hot pixels, PRNU, and column/row fixed-pattern offsets.
+
+    Every real CMOS sensor carries a static signature that does not move with the
+    brain and does not average out over time: a sparse set of **hot pixels**
+    (elevated dark current, a heavy-tailed excess over the local level), a small
+    pixel-to-pixel **gain** variation (PRNU, photo-response non-uniformity), and
+    **column / row offsets** from the readout electronics, plus optionally pixels
+    **stuck** at one value. Downstream pipelines see these as fixed points and stripes
+    in the mean image (and as step-like artifacts under motion correction), so they are
+    a useful adversary for a streaming extraction pipeline.
+
+    The effects enter inside the ``sensor`` step's digitization, in physical order:
+    PRNU scales the expected photons; hot-pixel dark current adds an equivalent
+    photon offset (so it carries shot noise like real dark current); the column / row
+    offsets are added in ADU after noise and before quantization; stuck pixels are
+    overwritten last. All maps are drawn once from a generator derived from the
+    spec seed (or ``seed``) *independently of the simulation RNG*, so adding this
+    step never changes the cells, motion, or noise of an otherwise identical spec.
+
+    The step is **off by default** - it only exists when listed - and absent from a
+    spec means bit-identical output to a build without it. The defaults, once listed,
+    reproduce the hot-pixel statistics of a real 600x600 V4 recording (~209 pixels
+    above +10 grey levels and ~18 above +25 over a local median, maximum ~+126:
+    ``hot_pixel_fraction`` 5.8e-4 with a Pareto tail of shape 2.67 above 10 counts,
+    clipped at 150). The PRNU / column / row magnitudes are modest placeholders, not
+    measured values. The maps are saved in the ground truth (``hot_pixel_mask``,
+    ``hot_pixel_excess``, ``stuck_pixel_mask``, ``prnu_gain``, ``fpn_column``,
+    ``fpn_row``). Requires a ``sensor`` step.
+    """
+
+    domain: ClassVar[str] = "sensor"
+    kind: Literal["sensor_defects"] = "sensor_defects"
+    hot_pixel_fraction: float = Field(
+        ge=0,
+        le=1,
+        default=5.8e-4,
+        description="Fraction of pixels that are hot (dark-current excess). Ignored when "
+        "n_hot_pixels is set.",
+    )
+    n_hot_pixels: int | None = Field(
+        default=None,
+        ge=0,
+        description="Exact number of hot pixels; overrides hot_pixel_fraction.",
+    )
+    hot_pixel_min_counts: float = Field(
+        gt=0,
+        default=10.0,
+        description="Smallest hot-pixel excess, in ADU counts (the Pareto scale).",
+    )
+    hot_pixel_tail_shape: float = Field(
+        gt=0,
+        default=2.67,
+        description="Pareto tail exponent of the excess distribution P(excess > x) ~ x^-shape "
+        "(smaller = heavier tail). The default matches a real V4 mean image.",
+    )
+    hot_pixel_max_counts: float = Field(
+        gt=0, default=150.0, description="Clip on the hot-pixel excess, ADU counts."
+    )
+    stuck_pixel_fraction: float = Field(
+        ge=0,
+        le=1,
+        default=0.0,
+        description="Fraction of pixels stuck at stuck_pixel_value (off by default).",
+    )
+    stuck_pixel_value: float | None = Field(
+        default=None,
+        description="Count a stuck pixel reads; None = full scale (2^bit_depth - 1).",
+    )
+    prnu_sd: float = Field(
+        ge=0,
+        default=0.01,
+        description="Std of the multiplicative per-pixel gain (PRNU), relative (0.01 = 1%).",
+    )
+    column_fpn_sd: float = Field(
+        ge=0,
+        default=0.5,
+        description="Std of the per-column additive offset, ADU counts.",
+    )
+    row_fpn_sd: float = Field(
+        ge=0, default=0.0, description="Std of the per-row additive offset, ADU counts."
+    )
+    seed: int | None = Field(
+        default=None,
+        description="Seed of the defect maps; None derives it from the spec seed.",
+    )
+
+
 class Sensor(StepSpec):
     """Photons → e⁻ → Poisson shot + read noise → ×gain → quantize → clip.
 
@@ -1333,6 +1429,7 @@ AnyStep = Annotated[
     | IlluminationProfile
     | Vignette
     | Leakage
+    | SensorDefects
     | Sensor,
     Discriminator("kind"),
 ]
@@ -1374,6 +1471,7 @@ class Spec(_Base):
     def _validate(self) -> Spec:
         self._check_unique_kinds()  # hard fail; everything below assumes unique kinds
         self._check_step_dependencies()
+        self._check_sensor_defects_need_sensor()
         by_kind = {s.kind: s for s in self.steps}
         self._check_footprint_vs_fov(by_kind)
         self._check_sampling_vs_kinetics(by_kind)
@@ -1410,6 +1508,13 @@ class Spec(_Base):
                     f"its declared requires={s.requires!r}."
                 )
             seen.add(s.kind)
+
+    def _check_sensor_defects_need_sensor(self) -> None:
+        """``sensor_defects`` acts inside the ``sensor`` step's digitization, so it is
+        meaningless (and silently ignored) without one."""
+        kinds = {s.kind for s in self.steps}
+        if "sensor_defects" in kinds and "sensor" not in kinds:
+            raise ValueError("sensor_defects requires a 'sensor' step to act on.")
 
     def _check_footprint_vs_fov(self, by_kind: Mapping[str, StepSpec]) -> None:
         """Rule 2: a soma larger than the entire FOV is a misconfiguration."""
