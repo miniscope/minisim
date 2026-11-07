@@ -50,6 +50,8 @@ classifiers = [
 ]
 
 [project.scripts]
+# Simulate recordings from the shell (e.g. a Miniscope-DAQ-layout folder + ground truth).
+minisim = "minisim.cli:main"
 # Copy the bundled teaching notebooks out to a writable directory.
 minisim-notebooks = "minisim.notebooks:main"
 

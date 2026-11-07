@@ -12,5 +12,6 @@ benchmark
 use_in_test_suite
 sweep
 video
+daq_folder
 build_recording
 ```

@@ -23,3 +23,11 @@
 ```{eval-rst}
 .. autoclass:: minisim.RecordingFormatWarning
 ```
+
+## save_ground_truth / load_ground_truth
+
+```{eval-rst}
+.. autofunction:: minisim.save_ground_truth
+
+.. autofunction:: minisim.load_ground_truth
+```

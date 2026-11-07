@@ -36,6 +36,8 @@ stability
   - As `simulate`, memoized to disk by `spec.cache_key()`.
 * - {py:func}`~minisim.simulate_video`
   - Simulate straight to a grayscale video, streamed to disk.
+* - {py:func}`~minisim.write_miniscope_daq`
+  - Write a recording as a Miniscope-DAQ folder (AVIs + metadata + timestamps) with ground truth alongside.
 * - {py:func}`~minisim.sweep`
   - Cartesian-product generator over spec overrides.
 * - {py:class}`~minisim.Recording`

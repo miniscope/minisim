@@ -12,6 +12,7 @@ cached :func:`simulate_cached`), the recovery :mod:`~minisim.metrics`, and the
 """
 
 from minisim.cache import cache_dir, cache_path, simulate_cached
+from minisim.daq import DaqFolder, daq_timestamps_ms, write_miniscope_daq
 from minisim.metrics import (
     ActivityScore,
     Match,
@@ -33,7 +34,9 @@ from minisim.recording import (
     RecordingFormatWarning,
     detection_snr,
     finalize,
+    load_ground_truth,
     sample_field_at,
+    save_ground_truth,
 )
 from minisim.simulate import simulate
 from minisim.spec import (
@@ -73,6 +76,7 @@ __all__ = [
     "CellActivity",
     "CellOptics",
     "Composite",
+    "DaqFolder",
     "GroundTruth",
     "IlluminationProfile",
     "ImageSensor",
@@ -100,6 +104,7 @@ __all__ = [
     "build_spec",
     "cache_dir",
     "cache_path",
+    "daq_timestamps_ms",
     "detection_snr",
     "field_pearson",
     "finalize",
@@ -107,11 +112,14 @@ __all__ = [
     "footprint_roi_trace",
     "global_shift_from_trajectories",
     "hungarian_match",
+    "load_ground_truth",
     "sample_field_at",
+    "save_ground_truth",
     "shift_rmse",
     "simulate",
     "simulate_cached",
     "simulate_video",
     "sweep",
     "trace_pearson",
+    "write_miniscope_daq",
 ]

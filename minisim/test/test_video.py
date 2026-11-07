@@ -217,3 +217,13 @@ def test_write_video_and_simulate_video_agree(tmp_path):
 def test_simulate_video_requires_vmax_without_sensor(tmp_path):
     with pytest.raises(ValueError, match="vmax is required"):
         simulate_video(_spec(sensor=False), tmp_path / "x.avi", progress=False)
+
+
+def test_progress_bar_is_silent_when_disabled(capsys):
+    from minisim.video import _ProgressBar
+
+    bar = _ProgressBar(10, False, "x")
+    for _ in range(10):
+        bar.update()
+    bar.close()
+    assert capsys.readouterr().err == ""
