@@ -920,7 +920,11 @@ class CellOpticsStep(Step["CellOptics"]):
       dimmed footprint CNMF could recover -- is **not stored**: it is a pure
       function of those scalars and the planted footprint, so ``composite`` and
       ``GroundTruth.A_observed`` regenerate it on demand (deep cells' observed
-      footprints are near-full-canvas, so storing them dominated memory and disk);
+      footprints are near-full-canvas, so storing them dominated memory and disk).
+      With ``Tissue.scatter_halo_fraction > 0`` the PSF gains a broad diffuse wing
+      and two more scalars (``observed_halo_sigma_px`` / ``observed_halo_fraction``)
+      are stored; the wing is redistributed from the core, so the footprint
+      integral is unchanged (see :meth:`Acquisition.halo_optics`);
     * sets ``in_focus`` geometrically (``|z − focal_eff| ≤`` the NA-derived depth
       of field), where ``focal_eff`` includes the field-curvature shift;
     * stores ``optical_brightness`` - the per-cell *peak* scalar from
@@ -990,5 +994,10 @@ class CellOpticsStep(Step["CellOptics"]):
             cell.observed_gain = (
                 acq.tissue.attenuation(z) * acq.optics.collection_efficiency
             )
+            if acq.tissue.scatter_halo_fraction > 0.0:
+                (
+                    cell.observed_halo_sigma_px,
+                    cell.observed_halo_fraction,
+                ) = acq.halo_optics(z, focal_eff)
             cell.in_focus = abs(z - focal_eff) <= dof
             cell.optical_brightness = brightness

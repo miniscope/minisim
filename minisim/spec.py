@@ -365,6 +365,35 @@ class Tissue(_Base):
         default=0.05,
         description="Linear broadening of the footprint per µm of depth (µm sigma per µm depth).",
     )
+    scatter_halo_fraction: float = Field(
+        ge=0,
+        le=1,
+        default=0.0,
+        description="Fraction f of a cell's collected light carried by the broad diffuse scatter "
+        "wing (multiply-scattered light) instead of the core PSF; 0 (default) = pure "
+        "single-Gaussian PSF, bit-identical to the model before the halo existed. "
+        "Redistributed from the core: the footprint integral is unchanged.",
+    )
+    scatter_halo_blur_per_um: float = Field(
+        ge=0,
+        default=0.37,
+        description="Extra width of the diffuse wing per µm of depth (µm sigma per µm depth), added "
+        "in quadrature to the core PSF: sigma_halo² = sigma_core² + (rate·z)². Ignored "
+        "while scatter_halo_fraction = 0.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_default_halo(self, handler) -> dict[str, Any]:
+        """Drop the halo fields while they sit at their defaults.
+
+        Keeps the serialized form (and so ``Spec.cache_key``) of every spec that
+        predates the scatter halo bit-identical.
+        """
+        data = handler(self)
+        for name in ("scatter_halo_fraction", "scatter_halo_blur_per_um"):
+            if getattr(self, name) == type(self).model_fields[name].default:
+                data.pop(name, None)
+        return data
 
     # ---- Layer-2 helpers: scattering as a function of absolute depth ----
 
@@ -409,6 +438,20 @@ class Tissue(_Base):
         so deep cells read as the blurry halos seen in real 1-photon data.
         """
         return self.scatter_blur_per_um * z_um
+
+    def scatter_halo_sigma_um(self, z_um: float) -> float:
+        """Extra Gaussian width of the diffuse scatter wing, µm, at depth ``z_um``.
+
+        Linear in depth, ``scatter_halo_blur_per_um · z``, in the same style as
+        :meth:`scatter_sigma_um`. Multiply-scattered photons random-walk on the
+        *transport* length (≈ MFP/(1−g), several hundred µm) rather than the
+        ballistic MFP that sets the core blur, so they are re-collected from a
+        much wider neighbourhood: the wing's rate is several times the core rate.
+        The wing is the sharp image convolved with this extra kernel, so its total
+        width is ``hypot(σ_core, scatter_halo_sigma_um(z))`` (see
+        :meth:`Acquisition.halo_optics`). Zero at the surface.
+        """
+        return self.scatter_halo_blur_per_um * z_um
 
 
 class Acquisition(_Base):
@@ -534,13 +577,47 @@ class Acquisition(_Base):
             self.optics.diffraction_sigma_um, self.tissue.scatter_sigma_um(z_um)
         )
         sigma_total = math.hypot(sigma_0, self.optics.defocus_sigma_um(z_um, focal_um))
+        peak = sigma_0**2 / sigma_total**2
+        f = self.tissue.scatter_halo_fraction
+        if f > 0.0:
+            # Two-component PSF (1-f)·G(σ_total) + f·G(σ_halo): the point-source peak
+            # is the weighted sum of the two Gaussians' peaks (see class docs).
+            sigma_halo = math.hypot(
+                sigma_total, self.tissue.scatter_halo_sigma_um(z_um)
+            )
+            peak = (1.0 - f) * peak + f * sigma_0**2 / sigma_halo**2
         brightness = (
-            (sigma_0**2 / sigma_total**2)
-            * self.tissue.attenuation(z_um)
-            * self.optics.collection_efficiency
+            peak * self.tissue.attenuation(z_um) * self.optics.collection_efficiency
         )
         sigma_px = sigma_total / self.pixel_size_um
         return sigma_px, brightness
+
+    def halo_optics(self, z_um: float, focal_um: float) -> tuple[float, float]:
+        """The diffuse wing of the scatter PSF: ``(halo_sigma_px, halo_fraction)``.
+
+        The observed footprint is ``gain · planted ⊛ PSF`` with
+        ``PSF = (1−f)·Gaussian(σ_core) + f·Gaussian(σ_halo)``, where ``σ_core`` is
+        the ``sigma_px`` of :meth:`cell_optics`, ``f = Tissue.scatter_halo_fraction``
+        and ``σ_halo = hypot(σ_core, Tissue.scatter_halo_sigma_um(z))`` (the wing is
+        the core image further broadened by diffuse scatter; defocus is inherited
+        from the core, which keeps ``σ_halo ≥ σ_core``).
+
+        **Energy accounting.** The wing is *redistributed from the core*, not added
+        on top: both Gaussians are sum-normalized, so the footprint integral stays
+        ``gain · Σ planted`` for every ``f`` and the existing conservation
+        invariants (defocus is intensity-conserving; only ``attenuation`` and
+        ``collection_efficiency`` remove light) are untouched. ``attenuation(z)``
+        is the budget of light *collected* by the objective, so the diffuse wing is
+        part of that collected light, not an extra gain. The cost is a lower core
+        peak by ``(1−f)``, which :meth:`cell_optics` folds into the peak brightness.
+        Returns ``(σ_halo, 0.0)`` when ``f = 0`` (callers then skip the wing).
+        """
+        f = self.tissue.scatter_halo_fraction
+        sigma_core_um = self.cell_optics(z_um, focal_um)[0] * self.pixel_size_um
+        sigma_halo_um = math.hypot(
+            sigma_core_um, self.tissue.scatter_halo_sigma_um(z_um)
+        )
+        return sigma_halo_um / self.pixel_size_um, f
 
 
 # ---------------------------------------------------------------------------
