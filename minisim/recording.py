@@ -375,25 +375,7 @@ class Recording(BaseModel):
         root = zarr.open_group(str(tmp), mode="w")
         root.create_dataset("observed", data=np.asarray(self.observed))
 
-        gt_group = root.create_group("ground_truth")
-        for name in _GT_REQUIRED:
-            gt_group.create_dataset(name, data=np.asarray(getattr(gt, name)))
-        present = []
-        for name in _GT_OPTIONAL:
-            value = getattr(gt, name)
-            if value is not None:
-                gt_group.create_dataset(name, data=np.asarray(value))
-                present.append(name)
-
-        # Sparse planted footprints: ragged patches flattened to three datasets.
-        offsets, shapes, data = gt.planted.to_arrays()
-        planted_group = gt_group.create_group("planted")
-        planted_group.create_dataset("offsets", data=offsets)
-        planted_group.create_dataset("shapes", data=shapes)
-        planted_group.create_dataset("data", data=data)
-        planted_group.attrs["canvas_shape"] = list(gt.planted.canvas_shape)
-        planted_group.attrs["fov_offset"] = list(gt.fov_offset)
-        planted_group.attrs["fov_shape"] = list(gt.fov_shape)
+        present = _write_ground_truth_group(root, gt)
 
         snapshot_names = sorted(self.snapshots)
         if snapshot_names:
@@ -402,10 +384,6 @@ class Recording(BaseModel):
                 snap_group.create_dataset(
                     name, data=np.asarray(self.snapshots[name].values)
                 )
-
-        # focal_depth_um is a scalar, not an array: stash it as a group attr (the
-        # resolved "auto" focus depth).
-        gt_group.attrs["focal_depth_um"] = gt.focal_depth_um
 
         root.attrs["format_version"] = _FORMAT_VERSION
         root.attrs["spec_cache_key"] = self.spec.cache_key()
@@ -465,26 +443,7 @@ class Recording(BaseModel):
                 stacklevel=2,
             )
 
-        gt_group = root["ground_truth"]
-        fields = {name: np.asarray(gt_group[name]) for name in _GT_REQUIRED}
-        for name in root.attrs.get("gt_present", []):
-            fields[name] = np.asarray(gt_group[name])
-        focal = gt_group.attrs.get("focal_depth_um")
-        if focal is not None:
-            fields["focal_depth_um"] = float(focal)
-
-        # Rebuild the sparse planted footprints and the FOV crop.
-        planted_group = gt_group["planted"]
-        canvas_shape = tuple(int(v) for v in planted_group.attrs["canvas_shape"])
-        fields["planted"] = FootprintStack.from_arrays(
-            np.asarray(planted_group["offsets"]),
-            np.asarray(planted_group["shapes"]),
-            np.asarray(planted_group["data"]),
-            canvas_shape,
-        )
-        fields["fov_offset"] = tuple(int(v) for v in planted_group.attrs["fov_offset"])
-        fields["fov_shape"] = tuple(int(v) for v in planted_group.attrs["fov_shape"])
-        ground_truth = GroundTruth(**fields)
+        ground_truth = _read_ground_truth_group(root, root.attrs.get("gt_present", []))
 
         snapshots = {
             name: _movie_dataarray(np.asarray(root["snapshots"][name]))
@@ -688,6 +647,106 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     return Recording(
         spec=spec, observed=observed_movie, ground_truth=gt, snapshots=scene.snapshots
     )
+
+
+def _write_ground_truth_group(root, gt: GroundTruth) -> list[str]:
+    """Write ``gt`` as the ``ground_truth`` subgroup of the open zarr ``root``.
+
+    The one writer behind both :meth:`Recording.save` and :func:`save_ground_truth`,
+    so the two layouts cannot drift. Returns the names of the optional datasets
+    actually written (the ``gt_present`` attr a reader needs).
+    """
+    gt_group = root.create_group("ground_truth")
+    for name in _GT_REQUIRED:
+        gt_group.create_dataset(name, data=np.asarray(getattr(gt, name)))
+    present = []
+    for name in _GT_OPTIONAL:
+        value = getattr(gt, name)
+        if value is not None:
+            gt_group.create_dataset(name, data=np.asarray(value))
+            present.append(name)
+
+    # Sparse planted footprints: ragged patches flattened to three datasets.
+    offsets, shapes, data = gt.planted.to_arrays()
+    planted_group = gt_group.create_group("planted")
+    planted_group.create_dataset("offsets", data=offsets)
+    planted_group.create_dataset("shapes", data=shapes)
+    planted_group.create_dataset("data", data=data)
+    planted_group.attrs["canvas_shape"] = list(gt.planted.canvas_shape)
+    planted_group.attrs["fov_offset"] = list(gt.fov_offset)
+    planted_group.attrs["fov_shape"] = list(gt.fov_shape)
+
+    # focal_depth_um is a scalar, not an array: stash it as a group attr (the
+    # resolved "auto" focus depth).
+    gt_group.attrs["focal_depth_um"] = gt.focal_depth_um
+    return present
+
+
+def _read_ground_truth_group(root, present) -> GroundTruth:
+    """Rebuild a :class:`GroundTruth` from the ``ground_truth`` subgroup of ``root``."""
+    gt_group = root["ground_truth"]
+    fields = {name: np.asarray(gt_group[name]) for name in _GT_REQUIRED}
+    for name in present:
+        fields[name] = np.asarray(gt_group[name])
+    focal = gt_group.attrs.get("focal_depth_um")
+    if focal is not None:
+        fields["focal_depth_um"] = float(focal)
+
+    # Rebuild the sparse planted footprints and the FOV crop.
+    planted_group = gt_group["planted"]
+    canvas_shape = tuple(int(v) for v in planted_group.attrs["canvas_shape"])
+    fields["planted"] = FootprintStack.from_arrays(
+        np.asarray(planted_group["offsets"]),
+        np.asarray(planted_group["shapes"]),
+        np.asarray(planted_group["data"]),
+        canvas_shape,
+    )
+    fields["fov_offset"] = tuple(int(v) for v in planted_group.attrs["fov_offset"])
+    fields["fov_shape"] = tuple(int(v) for v in planted_group.attrs["fov_shape"])
+    return GroundTruth(**fields)
+
+
+def save_ground_truth(gt: GroundTruth, spec: Spec, path: str | Path) -> None:
+    """Persist just the ground truth (and its spec) to a zarr directory at ``path``.
+
+    The movie-less sibling of :meth:`Recording.save`: the same ``ground_truth``
+    layout and ``spec.json`` / ``format_version`` / ``spec_cache_key`` bookkeeping,
+    with no ``observed`` dataset. Used by the Miniscope-DAQ writer, which streams
+    the movie to AVI files and keeps the truth beside them. Read it back with
+    :func:`load_ground_truth`. The write is atomic (sibling ``.tmp`` then rename).
+    """
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    root = zarr.open_group(str(tmp), mode="w")
+    present = _write_ground_truth_group(root, gt)
+    root.attrs["format_version"] = _FORMAT_VERSION
+    root.attrs["spec_cache_key"] = spec.cache_key()
+    root.attrs["gt_present"] = present
+    root.attrs["snapshot_names"] = []
+    (tmp / "spec.json").write_text(spec.model_dump_json(indent=2))
+    if path.exists():
+        shutil.rmtree(path)
+    os.replace(tmp, path)
+
+
+def load_ground_truth(path: str | Path) -> tuple[GroundTruth, Spec]:
+    """Load ``(ground_truth, spec)`` written by :func:`save_ground_truth`.
+
+    Also reads the ``ground_truth`` of a full :meth:`Recording.save` directory.
+    Applies the same ``format_version`` hard check as :meth:`Recording.load`.
+    """
+    path = Path(path)
+    root = zarr.open_group(str(path), mode="r")
+    stored_format = root.attrs.get("format_version")
+    if stored_format != _FORMAT_VERSION:
+        raise ValueError(
+            f"Cannot load {path}: on-disk format_version {stored_format!r} is not "
+            f"readable by this minisim (which reads format {_FORMAT_VERSION})."
+        )
+    spec = Spec.model_validate_json((path / "spec.json").read_text())
+    return _read_ground_truth_group(root, root.attrs.get("gt_present", [])), spec
 
 
 def _movie_dataarray(values: np.ndarray) -> xr.DataArray:

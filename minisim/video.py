@@ -32,12 +32,13 @@ import numpy as np
 
 from minisim.footprint import RENDER_DTYPE, stack_dense
 from minisim.perf import PerfTracker, measure
+from minisim.recording import finalize
 from minisim.scene import Scene
 from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
 from minisim.steps import STEP_FOR_KIND
 from minisim.steps.motion import brain_motion_shifts, shift_and_crop
-from minisim.steps.sensor import leakage_field
+from minisim.steps.sensor import falloff_center_px, leakage_field, radial_falloff
 from minisim.steps.tissue import (
     neuropil_components,
     vasculature_focal,
@@ -126,7 +127,11 @@ def _write_gray_video(
 
 
 def _iter_count_frames(
-    spec: Spec, chunk_frames: int, *, perf: PerfTracker | None = None
+    spec: Spec,
+    chunk_frames: int,
+    *,
+    perf: PerfTracker | None = None,
+    truth_sink: dict | None = None,
 ):
     """Yield ``(frame_index, frame)`` count arrays, frame-for-frame equal to
     ``simulate(spec).observed`` - without ever materializing the full movie.
@@ -136,6 +141,14 @@ def _iter_count_frames(
     artifacts via the same generators their steps use, then renders + digitizes the
     movie in chunks of ``chunk_frames``. The shared core behind :func:`simulate_video`
     and the bit-for-bit test.
+
+    Pass a dict as ``truth_sink`` to also receive the recording's full
+    :class:`~minisim.recording.GroundTruth` (under ``"ground_truth"``): it is
+    assembled with the same :func:`~minisim.recording.finalize` ``simulate`` uses,
+    from the same artifacts, *before* the first frame is yielded, so it equals
+    ``simulate(spec).ground_truth`` while the movie is still never materialized.
+    It draws no RNG, so the streamed frames are unaffected. The truth itself is
+    held in memory (``O(unit * frame)`` for ``C``/``S``; footprints stay sparse).
     """
     acq = spec.acquisition
     rng = np.random.default_rng(spec.seed)
@@ -153,6 +166,7 @@ def _iter_count_frames(
     photon_field = context.photon_field
 
     neuropil = None  # (amplitude, spatial (k,Hc,Wc), temporal (k,frame))
+    neuropil_population = None  # (frame,) driver, ground truth only
     shifts = None  # (frame, 2) px, or None when there is no motion
     leak = None  # additive FOV field, or None
     vasc_mask = None  # static (Hc,Wc) vessel transmission mask, or None when off
@@ -178,10 +192,11 @@ def _iter_count_frames(
                 step(scene)
         elif step_spec.kind == "neuropil":
             with measure(perf, "neuropil_setup"):
-                spatial, temporal, _ = neuropil_components(
+                spatial, temporal, population = neuropil_components(
                     step_spec, acq, scene.cells, canvas_shape, n_frames, rng
                 )
             neuropil = (step_spec.amplitude, spatial, temporal)
+            neuropil_population = population
         elif step_spec.kind == "vasculature":
             # Mirror VasculatureStep's guard exactly: when off it draws no RNG, so
             # the stream must not draw either. When on, build the same mask from the
@@ -233,6 +248,10 @@ def _iter_count_frames(
         CB = (
             np.stack(emissions).astype(RENDER_DTYPE) if emissions else None
         )  # (unit, frame)
+    if truth_sink is not None:
+        truth_sink["ground_truth"] = _streamed_ground_truth(
+            spec, scene, shifts, leak, neuropil, neuropil_population, vasc_mask
+        )
     # The sensor exposure scale, applied per frame at digitization exactly as
     # SensorStep does; None when there is no sensor step (the movie stays continuous).
     ppu = float(sensor_spec.photons_per_unit) if sensor_spec is not None else None
@@ -280,6 +299,39 @@ def _iter_count_frames(
                     )
         for i in range(t1 - t0):
             yield t0 + i, frames[i]
+
+
+def _streamed_ground_truth(
+    spec, scene, shifts, leak, neuropil, neuropil_population, vasc_mask
+):
+    """Assemble the ``GroundTruth`` for a streamed run, as ``simulate`` would.
+
+    The streaming generator never runs the non-cell steps, so the per-effect fields
+    their ``__call__`` would have written to ``scene.truth`` are filled in here from
+    the same artifacts (shifts, neuropil components, vessel mask, leakage) and the
+    deterministic illumination / vignette fields, then ``finalize`` (which reads the
+    cells plus ``scene.truth`` and never touches the movie buffer) does the rest.
+    """
+    acq = spec.acquisition
+    fov = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
+    truth = scene.truth
+    truth.shifts = shifts
+    truth.leakage = leak
+    truth.vasculature_mask = vasc_mask
+    if neuropil is not None:
+        _, spatial, temporal = neuropil
+        truth.neuropil_spatial = spatial
+        truth.neuropil_temporal = temporal
+        truth.neuropil_population = neuropil_population
+    for step_spec in spec.steps:
+        if step_spec.kind in ("illumination_profile", "vignette"):
+            center = falloff_center_px(fov, acq, step_spec.center_offset_um)
+            field = radial_falloff(fov, center, step_spec.falloff, step_spec.exponent)
+            if step_spec.kind == "illumination_profile":
+                truth.illumination = field
+            else:
+                truth.vignette = field
+    return finalize(scene, spec).ground_truth
 
 
 def _open_gray_writer(path, fov, fps, codec):
@@ -337,6 +389,7 @@ class _ProgressBar:
 
     def __init__(self, total: int, enabled: bool, desc: str) -> None:
         self.total, self.desc, self.n = total, desc, 0
+        self.enabled = enabled
         self._tqdm = None
         self._step = max(total // 20, 1)
         if not enabled:
@@ -350,6 +403,8 @@ class _ProgressBar:
 
     def update(self) -> None:
         self.n += 1
+        if not self.enabled:
+            return
         if self._tqdm is not None:
             self._tqdm.update(1)
         elif self.total and (self.n % self._step == 0 or self.n == self.total):
