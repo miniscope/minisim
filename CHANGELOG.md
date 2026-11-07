@@ -11,6 +11,13 @@ from conventional-commit messages. The first release is v0.1.0. -->
   (`minisim.avi.AviWriter`), `save_ground_truth` / `load_ground_truth`, and a
   `minisim generate` command line.
 
+- realistic brain motion: `BrainMotion(model="miniscope")` (broadband 1/f-like,
+  anisotropic rigid motion with Poisson bursts and slow drift, calibrated to a real
+  V4 CA1 recording) and opt-in `nonrigid=True` (a smooth, rigid-coupled deformation
+  field on a coarse control grid, applied with `cv2.remap`) for any model;
+  `presets.realistic_motion()`, `GroundTruth.nonrigid_field` / `nonrigid_nodes_*` /
+  `displacement()`, `patch_shift_rmse`, and `minisim generate --motion miniscope
+  --nonrigid`. Existing specs serialize, hash and render unchanged.
 - hot pixels and fixed-pattern noise: a new opt-in `SensorDefects` step (hot pixels with
   a heavy-tailed dark-current excess, stuck pixels, PRNU, column/row offsets), seeded
   independently of the simulation RNG, applied in the sensor digitization (also when

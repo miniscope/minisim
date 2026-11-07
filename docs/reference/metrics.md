@@ -35,6 +35,8 @@ the {doc}`benchmarking guide <../howto/benchmark>` for how they fit together.
 
 ```{eval-rst}
 .. autofunction:: minisim.shift_rmse
+
+.. autofunction:: minisim.patch_shift_rmse
 ```
 
 ```{eval-rst}

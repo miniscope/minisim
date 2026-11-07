@@ -303,6 +303,42 @@ def shift_rmse(
     return float(np.sqrt(np.mean(diff**2)))
 
 
+def patch_shift_rmse(
+    shifts_est,
+    ground_truth,
+    centers_yx,
+    *,
+    correction: bool = True,
+    align: bool = False,
+    frames=None,
+) -> float:
+    """RMSE (px) of per-patch shifts against the true (rigid + non-rigid) motion.
+
+    For a non-rigid motion-correction output: ``shifts_est`` is ``(frame, patch, 2)``
+    ``(dy, dx)`` (one shift per patch per frame, e.g. NoRMCorre's patch shifts) and
+    ``centers_yx`` the ``(patch, 2)`` pixel centers of those patches. The truth is
+    :meth:`GroundTruth.displacement <minisim.recording.GroundTruth.displacement>`
+    evaluated at each center, so with a non-rigid recording the field's local
+    structure is scored, and with a rigid one it reduces to :func:`shift_rmse` per
+    patch. Sign convention and ``align`` as in :func:`shift_rmse` (``align`` removes the
+    best constant per-axis offset, shared by all patches). ``frames`` restricts the
+    truth to a frame subset matching ``shifts_est``.
+    """
+    centers = np.asarray(centers_yx, dtype=float)
+    est = np.asarray(shifts_est, dtype=float)
+    if correction:
+        est = -est
+    true = ground_truth.displacement(centers[:, 0], centers[:, 1], frames=frames)
+    if est.shape != true.shape:
+        raise ValueError(
+            f"shifts_est shape {est.shape} != (frame, patch, 2) truth shape {true.shape}"
+        )
+    diff = est - true
+    if align:
+        diff = diff - diff.mean(axis=(0, 1), keepdims=True)
+    return float(np.sqrt(np.mean(diff**2)))
+
+
 def global_shift_from_trajectories(
     shifts_est, shifts_true, *, correction: bool = True
 ) -> tuple[int, int]:

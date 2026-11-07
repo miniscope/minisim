@@ -123,6 +123,9 @@ class GroundTruthBuilder:
     honest signal that the effect is absent from this recording:
 
     * ``shifts`` - rigid (dy, dx) per frame, from ``brain_motion``.
+    * ``nonrigid_field`` - ``(frame, gy, gx, 2)`` control-node non-rigid displacement
+      (px) on top of ``shifts``, with the node coordinates ``nonrigid_nodes_y`` /
+      ``nonrigid_nodes_x`` (FOV pixels); only with ``BrainMotion(nonrigid=True)``.
     * ``illumination`` / ``vignette`` / ``leakage`` - the static (height, width)
       optical fields (excitation falloff, collection falloff, additive glow).
     * ``neuropil_temporal`` / ``neuropil_spatial`` - the diffuse-background
@@ -138,6 +141,9 @@ class GroundTruthBuilder:
     """
 
     shifts: np.ndarray | None = None
+    nonrigid_field: np.ndarray | None = None
+    nonrigid_nodes_y: np.ndarray | None = None
+    nonrigid_nodes_x: np.ndarray | None = None
     illumination: np.ndarray | None = None
     vignette: np.ndarray | None = None
     leakage: np.ndarray | None = None

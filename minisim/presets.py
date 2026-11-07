@@ -35,6 +35,7 @@ from pydantic import Field
 from minisim.spec import (
     Acquisition,
     AnyStep,
+    BrainMotion,
     CellActivity,
     CellOptics,
     Composite,
@@ -297,6 +298,19 @@ def cortex_l23() -> Region:
 # ---------------------------------------------------------------------------
 # Composition
 # ---------------------------------------------------------------------------
+
+
+def realistic_motion(*, nonrigid: bool = True, **overrides) -> BrainMotion:
+    """A :class:`~minisim.BrainMotion` with calibrated real-Miniscope brain motion.
+
+    The ``"miniscope"`` model - broadband 1/f-like, anisotropic, with Poisson movement
+    bursts and slow drift, calibrated to a measured 20-min V4 CA1 recording - plus, by
+    default, the coupled non-rigid deformation (``nonrigid=False`` for rigid only).
+    Pass any other :class:`~minisim.BrainMotion` field as a keyword to override, e.g.
+    ``realistic_motion(motion_rms_um=1.0, burst_rate_hz=0.2)``. Drop the result into
+    ``build_spec(..., extra_steps=[realistic_motion()])``.
+    """
+    return BrainMotion(model="miniscope", nonrigid=nonrigid, **overrides)
 
 
 def build_spec(

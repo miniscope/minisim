@@ -35,7 +35,7 @@ import math
 import warnings
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, TypeVar
 
 import numpy as np
 from pydantic import (
@@ -44,6 +44,7 @@ from pydantic import (
     Discriminator,
     Field,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -1130,6 +1131,26 @@ class Bleaching(StepSpec):
     )
 
 
+_MINISCOPE_FIELDS = (
+    "motion_rms_um",
+    "motion_axis_ratio",
+    "motion_axis_deg",
+    "burst_rate_hz",
+    "burst_min_duration_s",
+    "burst_max_duration_s",
+    "burst_min_peak_um",
+    "burst_max_peak_um",
+    "drift_um_per_min",
+)
+_NONRIGID_FIELDS = (
+    "nonrigid_grid",
+    "nonrigid_quiet_um",
+    "nonrigid_coupling",
+    "nonrigid_tau_s",
+    "nonrigid_max_um",
+)
+
+
 class BrainMotion(StepSpec):
     """Rigid x,y translation of the whole tissue frame - the tissue→sensor boundary.
 
@@ -1151,16 +1172,38 @@ class BrainMotion(StepSpec):
       size). This is the realistic model the teaching notebook uses.
     * ``"walk"``: a bounded random walk (``walk_step_um`` per frame, clamped to the
       ``max_shift_um`` disk). Cheap and rhythm-free; kept for simple tests/fixtures.
-    * an explicit ``trajectory_um`` overrides both, regardless of ``model``.
+    * ``"miniscope"``: empirically calibrated rigid motion for a head-mounted
+      miniscope - a broadband 1/f-like spectrum, anisotropic (a dominant axis), with
+      Poisson-onset burst episodes and a slow linear drift. The defaults reproduce a
+      measured 20-min Miniscope V4 CA1 recording (std 0.9 / 1.1 px in y / x, p99
+      ``|shift|`` ~2.7 px, cumulative power below 0.1/0.5/1/2/5 Hz = 39/63/76/86/96 %,
+      1-3 s bursts peaking at 2-4 px, ~1 px drift per 20 min) at the V4 pixel size
+      (1.655 µm/px; the ``*_um`` defaults are those pixel values converted at that
+      size). See :func:`~minisim.presets.realistic_motion`.
+    * an explicit ``trajectory_um`` overrides all of them, regardless of ``model``.
+
+    **Non-rigid deformation** (``nonrigid=True``, any model; off by default): on top
+    of the rigid shift, a smooth per-frame displacement field defined on a coarse
+    ``nonrigid_grid`` of control nodes (natural cubic-spline interpolated to full
+    resolution, applied with ``cv2.remap``). Its RMS is a quiet floor
+    (``nonrigid_quiet_um``) plus a part that grows with the rigid-motion magnitude
+    (``nonrigid_coupling``), temporally correlated (``nonrigid_tau_s``), larger toward
+    the FOV edges, with zero spatial mean (so ``shifts`` remains the field's mean).
+    Defaults reproduce the measured ~0.4-0.5 px RMS patch-vs-global deviation (~0.4
+    quiet, ~1 px during large motion). Recorded in ground truth as ``nonrigid_field``.
+
+    Fields added for ``"miniscope"`` / ``nonrigid`` are omitted from the serialized
+    spec (hence the :meth:`~minisim.Spec.cache_key`) while inactive and at their
+    defaults, so specs predating them hash identically.
 
     Axial focus-drift motion is a deferred placeholder.
     """
 
     domain: ClassVar[str] = "motion"
     kind: Literal["brain_motion"] = "brain_motion"
-    model: Literal["physical", "walk"] = Field(
+    model: Literal["physical", "walk", "miniscope"] = Field(
         default="physical",
-        description="Trajectory generator: 'physical' (driven damped oscillator) or 'walk' (bounded random walk). An explicit trajectory_um overrides both.",
+        description="Trajectory generator: 'physical' (driven damped oscillator), 'walk' (bounded random walk) or 'miniscope' (empirically calibrated). An explicit trajectory_um overrides all.",
     )
     trajectory_um: list[tuple[float, float]] | None = Field(
         default=None, description="Explicit per-frame (dy, dx) in µm; overrides model."
@@ -1205,6 +1248,107 @@ class BrainMotion(StepSpec):
     walk_step_um: float = Field(
         ge=0, default=0.3, description="Random-walk step size, µm/frame (model='walk')."
     )
+
+    # --- miniscope model (defaults: V4 pixel values x 1.655 µm/px) ---
+    motion_rms_um: float = Field(
+        gt=0,
+        default=1.95,
+        description="Total RMS along the dominant axis, µm (miniscope model; 1.18 px at V4 scale). The minor-axis RMS is motion_axis_ratio times this.",
+    )
+    motion_axis_ratio: float = Field(
+        gt=0,
+        le=1,
+        default=0.67,
+        description="Minor-axis / major-axis RMS ratio (miniscope model).",
+    )
+    motion_axis_deg: float = Field(
+        default=60.6,
+        description="Dominant-axis direction, degrees from +y (height) toward +x (width) (miniscope model).",
+    )
+    burst_rate_hz: float = Field(
+        ge=0,
+        default=0.05,
+        description="Poisson onset rate of movement-burst episodes, 1/s (miniscope model).",
+    )
+    burst_min_duration_s: float = Field(
+        gt=0, default=1.0, description="Shortest burst episode, s."
+    )
+    burst_max_duration_s: float = Field(
+        gt=0, default=3.0, description="Longest burst episode, s."
+    )
+    burst_min_peak_um: float = Field(
+        ge=0, default=3.3, description="Smallest burst peak, µm (2 px at V4 scale)."
+    )
+    burst_max_peak_um: float = Field(
+        ge=0, default=6.6, description="Largest burst peak, µm (4 px at V4 scale)."
+    )
+    drift_um_per_min: float = Field(
+        ge=0,
+        default=0.083,
+        description="Slow linear drift speed, µm/min (~1 px per 20 min at V4 scale).",
+    )
+    # --- non-rigid deformation (any model) ---
+    nonrigid: bool = Field(
+        default=False,
+        description="Add a smooth non-rigid deformation field on top of the rigid shift.",
+    )
+    nonrigid_grid: tuple[int, int] = Field(
+        default=(4, 4),
+        description="Control-node grid (rows, cols) the deformation field is defined on.",
+    )
+    nonrigid_quiet_um: float = Field(
+        ge=0,
+        default=0.48,
+        description="Deformation RMS floor when the rigid motion is small, µm (~0.29 px per axis at V4 scale).",
+    )
+    nonrigid_coupling: float = Field(
+        ge=0,
+        default=0.33,
+        description="Added deformation RMS per unit rigid-motion magnitude (µm per µm, unitless).",
+    )
+    nonrigid_tau_s: float = Field(
+        gt=0,
+        default=0.5,
+        description="Temporal correlation time of the deformation field, s.",
+    )
+    nonrigid_max_um: float = Field(
+        gt=0,
+        default=6.0,
+        description="Clip on each node displacement component, µm (also added to the tissue margin).",
+    )
+
+    @model_validator(mode="after")
+    def _miniscope_ranges(self) -> BrainMotion:
+        if self.burst_min_duration_s > self.burst_max_duration_s:
+            raise ValueError("burst_min_duration_s exceeds burst_max_duration_s.")
+        if self.burst_min_peak_um > self.burst_max_peak_um:
+            raise ValueError("burst_min_peak_um exceeds burst_max_peak_um.")
+        if min(self.nonrigid_grid) < 1:
+            raise ValueError("nonrigid_grid entries must be >= 1.")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_inactive_defaults(self, handler) -> dict[str, Any]:
+        """Drop the miniscope / non-rigid fields while inactive and at defaults.
+
+        Keeps the serialized form (and so ``Spec.cache_key``) of every spec that
+        predates these fields bit-identical.
+        """
+        data = handler(self)
+        groups = (
+            (self.model != "miniscope", _MINISCOPE_FIELDS),
+            (not self.nonrigid, _NONRIGID_FIELDS),
+        )
+        for inactive, names in groups:
+            if not inactive:
+                continue
+            for name in names:
+                default = type(self).model_fields[name].default
+                if getattr(self, name) == default:
+                    data.pop(name, None)
+        if not self.nonrigid:
+            data.pop("nonrigid", None)
+        return data
 
     @model_validator(mode="after")
     def _amplitude_within_clamp(self) -> BrainMotion:

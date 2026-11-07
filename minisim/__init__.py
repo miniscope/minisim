@@ -22,6 +22,7 @@ from minisim.metrics import (
     footprint_roi_trace,
     global_shift_from_trajectories,
     hungarian_match,
+    patch_shift_rmse,
     shift_rmse,
     trace_pearson,
 )
@@ -115,6 +116,7 @@ __all__ = [
     "global_shift_from_trajectories",
     "hungarian_match",
     "load_ground_truth",
+    "patch_shift_rmse",
     "sample_field_at",
     "save_ground_truth",
     "shift_rmse",

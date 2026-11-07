@@ -131,5 +131,7 @@ def _motion_margin_px(spec: Spec, acq: Acquisition) -> int:
         )
     else:
         max_um = motion.max_shift_um
+    if motion.nonrigid:
+        max_um += motion.nonrigid_max_um  # the deformation field adds to the shift
     px = acq.um_to_px(max_um)
     return int(np.ceil(px)) + 1 if px > 0 else 0
