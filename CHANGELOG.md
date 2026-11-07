@@ -18,6 +18,11 @@ from conventional-commit messages. The first release is v0.1.0. -->
   `presets.realistic_motion()`, `GroundTruth.nonrigid_field` / `nonrigid_nodes_*` /
   `displacement()`, `patch_shift_rmse`, and `minisim generate --motion miniscope
   --nonrigid`. Existing specs serialize, hash and render unchanged.
+- hot pixels and fixed-pattern noise: a new opt-in `SensorDefects` step (hot pixels with
+  a heavy-tailed dark-current excess, stuck pixels, PRNU, column/row offsets), seeded
+  independently of the simulation RNG, applied in the sensor digitization (also when
+  streaming), with the maps saved in `GroundTruth`. Absent by default: existing
+  output and spec hashes are unchanged.
 
 ### Fix
 

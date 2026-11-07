@@ -14,5 +14,6 @@ sweep
 video
 daq_folder
 realistic_motion
+sensor_defects
 build_recording
 ```

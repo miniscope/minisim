@@ -113,6 +113,12 @@ _GT_OPTIONAL = (
     "neuropil_population",
     "vasculature_mask",
     "vessel_overlap_fraction",
+    "hot_pixel_mask",
+    "hot_pixel_excess",
+    "stuck_pixel_mask",
+    "prnu_gain",
+    "fpn_column",
+    "fpn_row",
 )
 
 # Step kinds whose snapshot key differs from the kind, so Recording.stage() (and
@@ -201,6 +207,18 @@ class GroundTruth(BaseModel):
     # when the vasculature step is off. The footprints themselves stay vessel-free
     # (A_observed is the single-cell optical truth); occlusion lives here, not in A.
     vessel_overlap_fraction: NDArray[Shape["* unit"], float] | None = None
+    # Static sensor imperfections from the ``sensor_defects`` step (all None when the
+    # step is absent): the boolean (height, width) hot-pixel mask, each hot pixel's
+    # dark-current excess in ADU counts (0 elsewhere), the stuck-pixel mask, the
+    # multiplicative per-pixel gain map (PRNU, 1 = nominal), and the additive
+    # per-column / per-row fixed-pattern offsets in ADU. Sensor-frame fields: they do
+    # not move with the brain.
+    hot_pixel_mask: NDArray[Shape["* height, * width"], bool] | None = None
+    hot_pixel_excess: NDArray[Shape["* height, * width"], float] | None = None
+    stuck_pixel_mask: NDArray[Shape["* height, * width"], bool] | None = None
+    prnu_gain: NDArray[Shape["* height, * width"], float] | None = None
+    fpn_column: NDArray[Shape["* width"], float] | None = None
+    fpn_row: NDArray[Shape["* height"], float] | None = None
     # The concrete focal depth (µm) the optics step resolved "auto" to - the plane
     # that maximized recoverable yield. A scalar, so persisted as a group attr (not
     # a dataset) by save/load; None when the optics step did not run.
@@ -679,6 +697,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         neuropil_population=scene.truth.neuropil_population,
         vasculature_mask=_crop_field(scene.truth.vasculature_mask, fov_h, fov_w),
         focal_depth_um=scene.truth.focal_depth_um,
+        **_defect_fields(scene.truth.sensor_defects),
     )
     # observed is always the sensor FOV: brain_motion already crops the movie,
     # but a partial build (until= before motion) can leave it canvas-sized, so
@@ -795,6 +814,20 @@ def load_ground_truth(path: str | Path) -> tuple[GroundTruth, Spec]:
         )
     spec = Spec.model_validate_json((path / "spec.json").read_text())
     return _read_ground_truth_group(root, root.attrs.get("gt_present", [])), spec
+
+
+def _defect_fields(defects) -> dict:
+    """The ``GroundTruth`` kwargs for a realized ``SensorDefectMaps`` (empty if None)."""
+    if defects is None:
+        return {}
+    return {
+        "hot_pixel_mask": defects.hot_mask,
+        "hot_pixel_excess": defects.hot_excess_counts,
+        "stuck_pixel_mask": defects.stuck_mask,
+        "prnu_gain": defects.prnu_gain,
+        "fpn_column": defects.fpn_column,
+        "fpn_row": defects.fpn_row,
+    }
 
 
 def _movie_dataarray(values: np.ndarray) -> xr.DataArray:

@@ -30,7 +30,7 @@ from minisim.recording import Recording, finalize
 from minisim.scene import Scene
 from minisim.spec import Acquisition, Spec
 from minisim.steps.base import PipelineContext
-from minisim.steps.sensor import combined_falloff_field
+from minisim.steps.sensor import combined_falloff_field, sensor_defect_maps
 
 
 def simulate(
@@ -97,8 +97,19 @@ def build_context(spec: Spec, acq: Acquisition) -> PipelineContext:
     vignette = next((s for s in spec.steps if s.kind == "vignette"), None)
     sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
     photon_field = combined_falloff_field(acq, illumination, vignette)
+    defects_spec = next((s for s in spec.steps if s.kind == "sensor_defects"), None)
+    # Drawn from its own seeded generator (never the simulation RNG), so the maps are
+    # the same for simulate() and the streaming writer and add no RNG-order hazard.
+    sensor_defects = (
+        sensor_defect_maps(defects_spec, acq, spec.seed)
+        if defects_spec is not None
+        else None
+    )
     return PipelineContext(
-        illumination=illumination, sensor_spec=sensor_spec, photon_field=photon_field
+        illumination=illumination,
+        sensor_spec=sensor_spec,
+        photon_field=photon_field,
+        sensor_defects=sensor_defects,
     )
 
 

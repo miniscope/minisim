@@ -38,7 +38,12 @@ from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
 from minisim.steps import STEP_FOR_KIND
 from minisim.steps.motion import brain_motion_fields, nonrigid_nodes, shift_and_crop
-from minisim.steps.sensor import falloff_center_px, leakage_field, radial_falloff
+from minisim.steps.sensor import (
+    digitize_frame,
+    falloff_center_px,
+    leakage_field,
+    radial_falloff,
+)
 from minisim.steps.tissue import (
     neuropil_components,
     vasculature_focal,
@@ -258,6 +263,7 @@ def _iter_count_frames(
             neuropil,
             neuropil_population,
             vasc_mask,
+            context.sensor_defects,
             nonrigid,
         )
     # The sensor exposure scale, applied per frame at digitization exactly as
@@ -307,15 +313,23 @@ def _iter_count_frames(
             # independent of the chunk boundaries (each frame draws its own noise).
             with measure(perf, "digitize"):
                 for i in range(frames.shape[0]):
-                    frames[i] = sensor_hw.photons_to_counts(
-                        np.clip(frames[i] * ppu, 0.0, None), rng
+                    frames[i] = digitize_frame(
+                        sensor_hw, frames[i], ppu, rng, context.sensor_defects
                     )
         for i in range(t1 - t0):
             yield t0 + i, frames[i]
 
 
 def _streamed_ground_truth(
-    spec, scene, shifts, leak, neuropil, neuropil_population, vasc_mask, nonrigid=None
+    spec,
+    scene,
+    shifts,
+    leak,
+    neuropil,
+    neuropil_population,
+    vasc_mask,
+    sensor_defects,
+    nonrigid=None,
 ):
     """Assemble the ``GroundTruth`` for a streamed run, as ``simulate`` would.
 
@@ -336,6 +350,7 @@ def _streamed_ground_truth(
         )
     truth.leakage = leak
     truth.vasculature_mask = vasc_mask
+    truth.sensor_defects = sensor_defects
     if neuropil is not None:
         _, spatial, temporal = neuropil
         truth.neuropil_spatial = spatial

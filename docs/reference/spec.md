@@ -111,6 +111,10 @@ density-sampled (`density_per_mm3` over a `depth_range_um`) or placed at exact
 ```
 
 ```{eval-rst}
+.. autopydantic_model:: minisim.SensorDefects
+```
+
+```{eval-rst}
 .. autopydantic_model:: minisim.Sensor
 ```
 

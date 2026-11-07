@@ -22,12 +22,16 @@ numpydantic ``GroundTruth``) lives in :mod:`minisim.recording`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 import xarray as xr
 
 from minisim.footprint import Footprint, degrade_footprint
 from minisim.spec import Acquisition
+
+if TYPE_CHECKING:
+    from minisim.steps.sensor import SensorDefectMaps
 
 # Movie axis order, matching the convention used by 1p analysis pipelines (e.g.
 # minian), so a recording's axes line up with what those pipelines expect.
@@ -129,6 +133,8 @@ class GroundTruthBuilder:
       modulates them (``None`` when no cells were active to drive it).
     * ``vasculature_mask`` - the static (height, width) vessel transmission mask
       from ``vasculature`` (``None`` when the step is off / has no layers).
+    * ``sensor_defects`` - the realized hot-pixel / PRNU / fixed-pattern maps from
+      ``sensor_defects`` (``None`` when the step is absent).
 
     The steps that fill these slots live in :mod:`minisim.steps`, and
     ``finalize()`` reads them into the frozen ``GroundTruth``.
@@ -145,6 +151,8 @@ class GroundTruthBuilder:
     neuropil_spatial: np.ndarray | None = None
     neuropil_population: np.ndarray | None = None
     vasculature_mask: np.ndarray | None = None
+    # The realized static sensor defect maps (``sensor_defects`` step), or None.
+    sensor_defects: SensorDefectMaps | None = None
     # The concrete focal depth the optics step resolved (µm below the surface);
     # the one number "auto" focus turns into, recorded so it is observable.
     focal_depth_um: float | None = None

@@ -41,13 +41,17 @@ from minisim.steps.motion import (
 from minisim.steps.sensor import (
     IlluminationProfileStep,
     LeakageStep,
+    SensorDefectMaps,
+    SensorDefectsStep,
     SensorStep,
     VignetteStep,
     combined_falloff_field,
+    digitize_frame,
     falloff_center_px,
     leakage_field,
     radial_falloff,
     radius_grid,
+    sensor_defect_maps,
 )
 from minisim.steps.tissue import (
     BleachingStep,
@@ -90,6 +94,7 @@ STEP_FOR_KIND: dict[str, type[Step]] = {
     "illumination_profile": IlluminationProfileStep,
     "vignette": VignetteStep,
     "leakage": LeakageStep,
+    "sensor_defects": SensorDefectsStep,
     "sensor": SensorStep,
 }
 
@@ -104,6 +109,8 @@ __all__ = [
     "LeakageStep",
     "NeuropilStep",
     "PlaceNeuronsStep",
+    "SensorDefectMaps",
+    "SensorDefectsStep",
     "SensorStep",
     "Step",
     "VasculatureStep",
@@ -117,6 +124,7 @@ __all__ = [
     "combined_falloff_field",
     "dark_recovery",
     "degrade_footprint",
+    "digitize_frame",
     "falloff_center_px",
     "grow_vessel_tree",
     "kernel_timing",
@@ -133,6 +141,7 @@ __all__ = [
     "rasterize_vessels",
     "resolve_focal_plane",
     "sample_neurons",
+    "sensor_defect_maps",
     "shift_and_crop",
     "smooth_spatial_field",
     "spike_activity_params",

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from minisim.scene import Scene
     from minisim.spec import Acquisition, IlluminationProfile, Sensor, StepSpec
+    from minisim.steps.sensor import SensorDefectMaps
 
 #: The concrete :class:`~minisim.spec.StepSpec` subtype a step is built from.
 #: Parametrizing ``Step`` on it (``class CompositeStep(Step[Composite])``) makes every
@@ -56,6 +57,7 @@ class PipelineContext:
     illumination: IlluminationProfile | None = None
     sensor_spec: Sensor | None = None
     photon_field: np.ndarray | None = None
+    sensor_defects: SensorDefectMaps | None = None
 
 
 class Step(Generic[SpecT]):
