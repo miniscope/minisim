@@ -100,6 +100,8 @@ _GT_REQUIRED = (
 _GT_OPTIONAL = (
     "observed_sigma_px",
     "observed_gain",
+    "observed_halo_sigma_px",
+    "observed_halo_fraction",
     "shifts",
     "nonrigid_field",
     "nonrigid_nodes_y",
@@ -142,7 +144,8 @@ class GroundTruth(BaseModel):
     * The observed footprint is **not stored at all**: it is the deterministic blur
       ``gain · (planted ⊛ Gaussian(sigma_px))`` of the planted one, so it is
       regenerated on demand from the per-unit :attr:`observed_sigma_px` /
-      :attr:`observed_gain` scalars. Deep cells' observed footprints are
+      :attr:`observed_gain` scalars (plus :attr:`observed_halo_sigma_px` /
+      :attr:`observed_halo_fraction` when the tissue has a scatter halo). Deep cells' observed footprints are
       near-full-canvas, so storing them dominated memory and disk; regenerating is
       bit-identical and far cheaper to keep.
 
@@ -162,6 +165,11 @@ class GroundTruth(BaseModel):
     # optics step did not run (then A_observed falls back to A_planted).
     observed_sigma_px: NDArray[Shape["* unit"], float] | None = None
     observed_gain: NDArray[Shape["* unit"], float] | None = None
+    # Diffuse scatter wing of the PSF (Tissue.scatter_halo_fraction > 0): per-unit
+    # wing width and weight, so A_observed reproduces (1-f)·G(sigma) + f·G(halo).
+    # None when there is no halo (single-Gaussian PSF); NaN for a cell without optics.
+    observed_halo_sigma_px: NDArray[Shape["* unit"], float] | None = None
+    observed_halo_fraction: NDArray[Shape["* unit"], float] | None = None
 
     C: NDArray[Shape["* unit, * frame"], float]
     S: NDArray[Shape["* unit, * frame"], float]
@@ -265,8 +273,13 @@ class GroundTruth(BaseModel):
             if np.isnan(sigma):  # a cell without optics params -> sharp footprint
                 observed.append(fp)
             else:
+                halo = ()
+                if self.observed_halo_fraction is not None:
+                    f = float(self.observed_halo_fraction[i])
+                    if f > 0.0:  # NaN (no optics) and 0 both mean "no wing"
+                        halo = (float(self.observed_halo_sigma_px[i]), f)
                 observed.append(
-                    degrade_footprint(fp, sigma, float(self.observed_gain[i]))
+                    degrade_footprint(fp, sigma, float(self.observed_gain[i]), *halo)
                 )
         return (
             FootprintStack(tuple(observed), self.planted.canvas_shape)
@@ -332,6 +345,12 @@ class GroundTruth(BaseModel):
             else None,
             observed_gain=self.observed_gain[m]
             if self.observed_gain is not None
+            else None,
+            observed_halo_sigma_px=self.observed_halo_sigma_px[m]
+            if self.observed_halo_sigma_px is not None
+            else None,
+            observed_halo_fraction=self.observed_halo_fraction[m]
+            if self.observed_halo_fraction is not None
             else None,
             C=self.C[m],
             S=self.S[m],
@@ -613,7 +632,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
 
     planted_fps, traces, spikes, bleaches = [], [], [], []
     centers, amplitudes, in_focus, detectable, overlaps = [], [], [], [], []
-    sigmas, gains = [], []
+    sigmas, gains, halo_sigmas, halo_fractions = [], [], [], []
     for cell in scene.cells:
         if cell.footprint_planted is None:
             continue
@@ -637,6 +656,16 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
             cell.observed_sigma_px if cell.observed_sigma_px is not None else np.nan
         )
         gains.append(cell.observed_gain if cell.observed_gain is not None else np.nan)
+        halo_sigmas.append(
+            cell.observed_halo_sigma_px
+            if cell.observed_halo_sigma_px is not None
+            else np.nan
+        )
+        halo_fractions.append(
+            cell.observed_halo_fraction
+            if cell.observed_halo_fraction is not None
+            else np.nan
+        )
         traces.append(trace)
         spikes.append(spike)
         bleaches.append(cell.bleach)
@@ -659,12 +688,20 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     # Optics ran iff any surviving cell carries a sigma; then keep the per-unit
     # scalars so A_observed regenerates. Otherwise None -> A_observed == A_planted.
     optics_ran = any(not np.isnan(s) for s in sigmas)
+    # The halo scalars exist only when some cell carries a wing (halo fraction > 0).
+    halo_ran = any(not np.isnan(f) for f in halo_fractions)
     gt = GroundTruth(
         planted=FootprintStack.from_footprints(planted_fps, (canvas_h, canvas_w)),
         fov_offset=(margin_h, margin_w),
         fov_shape=(fov_h, fov_w),
         observed_sigma_px=np.array(sigmas, dtype=float) if optics_ran else None,
         observed_gain=np.array(gains, dtype=float) if optics_ran else None,
+        observed_halo_sigma_px=(
+            np.array(halo_sigmas, dtype=float) if halo_ran else None
+        ),
+        observed_halo_fraction=(
+            np.array(halo_fractions, dtype=float) if halo_ran else None
+        ),
         C=_stack(traces, (0, n_frames)),
         S=_stack(spikes, (0, n_frames)),
         centers_um=np.array(centers, dtype=float).reshape(-1, 3),

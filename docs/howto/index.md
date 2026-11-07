@@ -15,5 +15,6 @@ video
 daq_folder
 realistic_motion
 sensor_defects
+scatter_psf
 build_recording
 ```

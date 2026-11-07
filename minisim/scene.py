@@ -67,6 +67,9 @@ class Cell:
       only the two scalars and ``composite`` / ``GroundTruth.A_observed`` regenerate
       the footprint on demand. ``in_focus`` is the geometric in-focus flag and
       ``optical_brightness`` the depth-driven peak-brightness scalar.
+    * ``observed_halo_sigma_px`` / ``observed_halo_fraction`` - the optional
+      diffuse scatter wing of the PSF (``(1-f)·G(sigma_px) + f·G(halo_sigma)``),
+      set only when ``Tissue.scatter_halo_fraction > 0``; ``None`` otherwise.
     * ``detectable`` is *not* an optics-only property and so is **not** set by
       the optics step: it is a whole-pipeline flag (optical brightness ×
       illumination falloff, judged against the sensor noise floor) assembled in
@@ -83,6 +86,10 @@ class Cell:
     footprint_planted: Footprint | None = None
     observed_sigma_px: float | None = None
     observed_gain: float | None = None
+    # Diffuse scatter wing of the PSF (see Acquisition.halo_optics); None while
+    # Tissue.scatter_halo_fraction is 0, i.e. a single-Gaussian PSF.
+    observed_halo_sigma_px: float | None = None
+    observed_halo_fraction: float | None = None
     trace: np.ndarray | None = None
     spikes: np.ndarray | None = None
     amplitude: float | None = None
@@ -108,8 +115,18 @@ class Cell:
             or self.observed_gain is None
         ):
             return self.footprint_planted
+        halo_sigma = self.observed_halo_sigma_px
+        halo_fraction = self.observed_halo_fraction
+        if halo_sigma is None or not halo_fraction:
+            return degrade_footprint(
+                self.footprint_planted, self.observed_sigma_px, self.observed_gain
+            )
         return degrade_footprint(
-            self.footprint_planted, self.observed_sigma_px, self.observed_gain
+            self.footprint_planted,
+            self.observed_sigma_px,
+            self.observed_gain,
+            halo_sigma,
+            halo_fraction,
         )
 
 

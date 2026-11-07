@@ -169,30 +169,67 @@ class Footprint:
             canvas[:, y0 : y0 + ph, x0 : x0 + pw] += weights[:, None, None] * self.patch
 
 
-def degrade_footprint(planted: Footprint, sigma_px: float, gain: float) -> Footprint:
+def _gauss_weights(sigma_px: float) -> np.ndarray:
+    """scipy's ``gaussian_filter1d`` kernel: radius ``int(4σ+0.5)``, sum-normalized."""
+    radius = int(_GAUSS_TRUNCATE * sigma_px + 0.5)
+    x = np.arange(-radius, radius + 1, dtype=float)
+    w = np.exp(-0.5 * x * x / (sigma_px * sigma_px))
+    return w / w.sum()
+
+
+def _band_matrix(n_out: int, n_in: int, shift: int, w: np.ndarray) -> np.ndarray:
+    """``(n_out, n_in)`` convolution matrix: ``M[i, j] = w[(i + shift) - j]`` inside the kernel.
+
+    ``shift`` is the output window origin minus the input patch origin, so rows are
+    output pixels and columns are input pixels, both in absolute canvas rows/cols.
+    """
+    radius = (len(w) - 1) // 2
+    d = np.arange(n_out)[:, None] + shift - np.arange(n_in)[None, :]
+    inside = np.abs(d) <= radius
+    return np.where(inside, w[np.clip(d + radius, 0, len(w) - 1)], 0.0)
+
+
+def degrade_footprint(
+    planted: Footprint,
+    sigma_px: float,
+    gain: float,
+    halo_sigma_px: float = 0.0,
+    halo_fraction: float = 0.0,
+) -> Footprint:
     """Apply the optical PSF blur and the multiplicative light-loss to a footprint.
 
-    ``observed = gain · (planted ⊛ Gaussian(sigma_px))``. The Gaussian convolution
-    is the combined diffraction + defocus + scatter point-spread; it is
-    sum-normalized, so it **conserves integrated intensity** -- that is what makes
-    *defocus* intensity-conserving (it spreads light: the peak drops but the integral
-    is unchanged). ``gain`` is the flat light-loss that actually removes signal:
-    scatter ``attenuation(z)`` (depth) × ``collection_efficiency`` (``∝ NA²``). Both
-    are focal-plane independent, so the observed footprint's integral is too.
-    ``mode="constant"`` means light blurred past the canvas edge is lost -- physically
-    honest for a cell near the boundary.
+    ``observed = gain · (planted ⊛ PSF)`` with
+    ``PSF = (1 − f)·Gaussian(sigma_px) + f·Gaussian(halo_sigma_px)``, ``f =
+    halo_fraction``. The core Gaussian is the combined diffraction + defocus +
+    scatter point-spread; the optional second Gaussian is the broad diffuse scatter
+    wing (multiply-scattered light). Both are sum-normalized, so the PSF **conserves
+    integrated intensity** -- that is what makes *defocus* intensity-conserving (it
+    spreads light: the peak drops but the integral is unchanged) and why the wing is
+    *redistributed from* the core rather than added. ``gain`` is the flat light-loss
+    that actually removes signal: scatter ``attenuation(z)`` (depth) ×
+    ``collection_efficiency`` (``∝ NA²``). Both are focal-plane independent, so the
+    observed footprint's integral is too. ``mode="constant"`` means light blurred
+    past the canvas edge is lost -- physically honest for a cell near the boundary.
+
+    With ``halo_fraction == 0`` (the default) this is the single-Gaussian model,
+    bit-identical to before the halo existed.
 
     Pure and deterministic: there is no RNG, so the observed footprint is a fixed
-    function of ``(planted, sigma_px, gain)``. That is why the pipeline does not
-    *store* observed footprints -- it regenerates them, bit-identically, at render
-    time and for ``GroundTruth.A_observed`` (see :mod:`minisim.recording`).
+    function of ``(planted, sigma_px, gain, halo_sigma_px, halo_fraction)``. That is
+    why the pipeline does not *store* observed footprints -- it regenerates them,
+    bit-identically, at render time and for ``GroundTruth.A_observed`` (see
+    :mod:`minisim.recording`).
 
     Works patch-to-patch: the planted footprint is already just the cell's non-zero
     window, so the blur grows that window by the PSF's truncation radius
     (``ceil(_GAUSS_TRUNCATE·sigma_px)``, clipped to the canvas) and convolves only
     there. Beyond ``_GAUSS_TRUNCATE·sigma_px`` the Gaussian is exactly zero, so the
     result is **bit-identical** to filtering the whole canvas, without ever
-    materializing a canvas-sized array. An empty planted footprint passes through.
+    materializing a canvas-sized array. The halo is 4σ-truncated the same way; its
+    window is wide, so it is applied as two small matrix products
+    (``K_y · patch · K_xᵀ``, cost ∝ window·patch rather than window²·kernel) -- the
+    separable Gaussian, exactly, without filtering a mostly-empty wide window.
+    An empty planted footprint passes through.
     """
     if planted.is_empty:
         return planted  # no support -> nothing to blur
@@ -206,10 +243,31 @@ def degrade_footprint(planted: Footprint, sigma_px: float, gain: float) -> Footp
     # float64 (the working precision optics accumulates in), then store float32.
     window = np.zeros((oy1 - oy0, ox1 - ox0), dtype=float)
     window[y0 - oy0 : y0 - oy0 + ph, x0 - ox0 : x0 - ox0 + pw] = planted.patch
-    blurred = gain * gaussian_filter(window, sigma=sigma_px, mode="constant")
+    core = gaussian_filter(window, sigma=sigma_px, mode="constant")
+    if halo_fraction <= 0.0:
+        blurred = gain * core
+        return Footprint(
+            offset=(oy0, ox0),
+            patch=blurred.astype(PATCH_DTYPE),
+            canvas_shape=(height, width),
+        )
+
+    hpad = int(np.ceil(_GAUSS_TRUNCATE * halo_sigma_px)) + 1
+    hy0, hx0 = max(y0 - hpad, 0), max(x0 - hpad, 0)
+    hy1, hx1 = min(y0 + ph + hpad, height), min(x0 + pw + hpad, width)
+    # The halo reach always contains the core's (halo_sigma_px >= sigma_px), but
+    # guard the union so a caller passing a narrower halo is still correct.
+    uy0, ux0 = min(hy0, oy0), min(hx0, ox0)
+    uy1, ux1 = max(hy1, oy1), max(hx1, ox1)
+    w = _gauss_weights(halo_sigma_px)
+    ky = _band_matrix(uy1 - uy0, ph, uy0 - y0, w)
+    kx = _band_matrix(ux1 - ux0, pw, ux0 - x0, w)
+    halo = ky @ planted.patch.astype(float) @ kx.T
+    out = halo_fraction * halo
+    out[oy0 - uy0 : oy1 - uy0, ox0 - ux0 : ox1 - ux0] += (1.0 - halo_fraction) * core
     return Footprint(
-        offset=(oy0, ox0),
-        patch=blurred.astype(PATCH_DTYPE),
+        offset=(uy0, ux0),
+        patch=(gain * out).astype(PATCH_DTYPE),
         canvas_shape=(height, width),
     )
 
