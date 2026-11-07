@@ -24,12 +24,13 @@ shrink the usable FOV below the physical one.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from minisim.scene import Scene
-from minisim.steps.base import Step
+from minisim.steps.base import PipelineContext, Step
 
 if TYPE_CHECKING:
     # Referenced only as string Generic bases (Step["Vignette"] etc.), which ruff's
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         IlluminationProfile,
         Leakage,
         Sensor,
+        SensorDefects,
         Vignette,
     )
 
@@ -213,6 +215,152 @@ class LeakageStep(Step["Leakage"]):
         scene.truth.leakage = field
 
 
+@dataclass(frozen=True)
+class SensorDefectMaps:
+    """The realized static defect maps of a :class:`~minisim.spec.SensorDefects` step.
+
+    All fields are FOV-sized (``(H, W)``) except the per-column / per-row offsets.
+    ``hot_excess_counts`` is the dark-current excess in ADU at each hot pixel (zero
+    elsewhere); ``extra_photons`` is that excess expressed as the equivalent expected
+    photons the sensor model adds before noise. ``prnu_gain`` is the multiplicative
+    gain map (1 = nominal) and ``offset_adu`` the combined column + row offset.
+    """
+
+    hot_excess_counts: np.ndarray
+    extra_photons: np.ndarray
+    stuck_mask: np.ndarray
+    stuck_value: float
+    prnu_gain: np.ndarray
+    fpn_column: np.ndarray
+    fpn_row: np.ndarray
+    offset_adu: np.ndarray | None
+
+    @property
+    def hot_mask(self) -> np.ndarray:
+        """Boolean ``(H, W)`` mask of the hot pixels."""
+        return self.hot_excess_counts > 0
+
+
+_DEFECT_SEED_SALT = (
+    0x5E75_D3F  # separates the defect streams from any other use of a seed
+)
+
+
+def sensor_defect_maps(spec, acq, master_seed: int) -> SensorDefectMaps:
+    """Draw the static defect maps for a ``SensorDefects`` spec.
+
+    Generated from a ``SeedSequence([seed, salt])`` split into one independent child
+    generator per effect (hot positions, hot magnitudes, stuck positions, PRNU,
+    columns, rows), so changing one effect's parameters never reshuffles another's
+    map, and the draws never touch the simulation RNG (adding the step leaves the
+    cells, motion and noise of an otherwise identical spec unchanged). ``seed``
+    defaults to ``master_seed`` (the spec seed).
+    """
+    sensor = acq.image_sensor
+    h, w = sensor.n_px_height, sensor.n_px_width
+    n_px = h * w
+    seed = master_seed if spec.seed is None else spec.seed
+    children = np.random.SeedSequence([int(seed), _DEFECT_SEED_SALT]).spawn(6)
+    pos_rng, mag_rng, stuck_rng, prnu_rng, col_rng, row_rng = (
+        np.random.default_rng(c) for c in children
+    )
+
+    n_hot = (
+        spec.n_hot_pixels
+        if spec.n_hot_pixels is not None
+        else int(round(spec.hot_pixel_fraction * n_px))
+    )
+    n_hot = min(n_hot, n_px)
+    hot = np.zeros(n_px)
+    if n_hot > 0:
+        idx = pos_rng.choice(n_px, size=n_hot, replace=False)
+        # Pareto: x = x_min * (1-u)^(-1/shape), clipped (real max is ~12x the min).
+        u = mag_rng.random(n_hot)
+        excess = spec.hot_pixel_min_counts * (1.0 - u) ** (
+            -1.0 / spec.hot_pixel_tail_shape
+        )
+        hot[idx] = np.minimum(excess, spec.hot_pixel_max_counts)
+    hot = hot.reshape(h, w)
+
+    stuck = np.zeros(n_px, dtype=bool)
+    n_stuck = min(int(round(spec.stuck_pixel_fraction * n_px)), n_px)
+    if n_stuck > 0:
+        stuck[stuck_rng.choice(n_px, size=n_stuck, replace=False)] = True
+    stuck = stuck.reshape(h, w)
+    full_scale = float(2**sensor.bit_depth - 1)
+    stuck_value = (
+        full_scale if spec.stuck_pixel_value is None else float(spec.stuck_pixel_value)
+    )
+
+    prnu = np.ones((h, w))
+    if spec.prnu_sd > 0:
+        prnu = np.clip(1.0 + spec.prnu_sd * prnu_rng.standard_normal((h, w)), 0.0, None)
+    col = col_rng.standard_normal(w) * spec.column_fpn_sd
+    row = row_rng.standard_normal(h) * spec.row_fpn_sd
+    offset = (
+        (row[:, None] + col[None, :])
+        if (spec.column_fpn_sd or spec.row_fpn_sd)
+        else None
+    )
+    # ADU excess -> equivalent expected photons (inverse of QE and gain).
+    extra_photons = hot / (sensor.quantum_efficiency * sensor.gain_adu_per_e)
+    return SensorDefectMaps(
+        hot_excess_counts=hot,
+        extra_photons=extra_photons,
+        stuck_mask=stuck,
+        stuck_value=stuck_value,
+        prnu_gain=prnu,
+        fpn_column=col,
+        fpn_row=row,
+        offset_adu=offset,
+    )
+
+
+def digitize_frame(
+    sensor, intensity: np.ndarray, photons_per_unit: float, rng, defects=None
+) -> np.ndarray:
+    """One frame of scene intensity -> integer-valued counts, with optional defects.
+
+    The single digitization routine shared by :class:`SensorStep` and the streaming
+    video writer, so both consume the RNG identically (one ``standard_normal`` per
+    frame). With ``defects=None`` it is exactly ``photons_to_counts(clip(I * ppu))``.
+    """
+    photons = np.clip(intensity * photons_per_unit, 0.0, None)
+    if defects is None:
+        return sensor.photons_to_counts(photons, rng)
+    photons = photons * defects.prnu_gain + defects.extra_photons
+    counts = sensor.photons_to_counts(photons, rng, offset_adu=defects.offset_adu)
+    if defects.stuck_mask.any():
+        counts = np.where(defects.stuck_mask, defects.stuck_value, counts)
+    return counts
+
+
+class SensorDefectsStep(Step["SensorDefects"]):
+    """Static sensor imperfections, recorded to ground truth (applied by ``sensor``).
+
+    The defect maps are realized in :func:`~minisim.simulate.build_context` and consumed
+    inside :class:`SensorStep`'s digitization (PRNU and dark current must act before
+    the shot / read noise is drawn, so they cannot be a separate pass over counts).
+    This step itself leaves the movie untouched and writes the maps to
+    ``scene.truth`` so they reach ``GroundTruth``. No RNG is drawn from the
+    simulation generator (the maps use their own seed).
+    """
+
+    name = "sensor_defects"
+    domain = "sensor"
+
+    defects: SensorDefectMaps | None = None
+
+    def prepare(self, context: PipelineContext) -> None:
+        self.defects = context.sensor_defects
+
+    def __call__(self, scene: Scene) -> None:
+        defects = self.defects
+        if defects is None:  # run directly in a unit test, without prepare()
+            defects = sensor_defect_maps(self.spec, self.acq, 0)
+        scene.truth.sensor_defects = defects
+
+
 class SensorStep(Step["Sensor"]):
     """Intensity → expected photons → digitized counts (the only count-producing step).
 
@@ -229,6 +377,11 @@ class SensorStep(Step["Sensor"]):
     domain = "sensor"
     consumes_rng = True  # Poisson shot noise + Gaussian read noise per frame
 
+    defects: SensorDefectMaps | None = None  # set by prepare() from the context
+
+    def prepare(self, context: PipelineContext) -> None:
+        self.defects = context.sensor_defects
+
     def __call__(self, scene: Scene) -> None:
         ppu = self.spec.photons_per_unit
         # Digitize FRAME BY FRAME, in order, on the shared rng: each frame draws its
@@ -239,5 +392,4 @@ class SensorStep(Step["Sensor"]):
         sensor, rng = self.acq.image_sensor, self.rng
         movie = scene.movie.values
         for f in range(movie.shape[0]):
-            photons = np.clip(movie[f] * ppu, 0.0, None)
-            movie[f] = sensor.photons_to_counts(photons, rng)
+            movie[f] = digitize_frame(sensor, movie[f], ppu, rng, self.defects)
