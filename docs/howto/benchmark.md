@@ -107,6 +107,12 @@ is what shifts the recovered footprints, so it can be read straight off the two
 trajectories with {py:func}`~minisim.global_shift_from_trajectories` and handed to
 `hungarian_match(..., shift=...)` to align the footprints exactly.
 
+For a **non-rigid** motion-correction output (one shift per patch per frame, e.g.
+NoRMCorre's patch shifts) on a recording made with `BrainMotion(nonrigid=True)`, use
+{py:func}`~minisim.patch_shift_rmse`. It scores each patch against the true rigid plus
+non-rigid motion at the patch centers
+({py:meth}`~minisim.GroundTruth.displacement`); see {doc}`realistic_motion`.
+
 ## Scaling up
 
 To trace a metric across a physical axis (recall vs depth, vs NA, vs density),

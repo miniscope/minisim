@@ -49,6 +49,17 @@ characteristic dark-vessel `vasculature` confound.
 .. autofunction:: minisim.presets.cortex_l23
 ```
 
+## Realistic brain motion
+
+{py:func}`~minisim.presets.realistic_motion` returns a ready-made
+{py:class}`~minisim.BrainMotion` step (the broadband `"miniscope"` model with the
+non-rigid deformation on). Pass it to `build_spec` via `extra_steps`; see the
+{doc}`realistic motion guide <../howto/realistic_motion>`.
+
+```{eval-rst}
+.. autofunction:: minisim.presets.realistic_motion
+```
+
 ## Compose with `build_spec`
 
 `build_spec` assembles any scope × any region into a validated

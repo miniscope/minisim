@@ -51,10 +51,11 @@ The stages mirror the forward chain described in {doc}`../concepts`:
 3. Render to the sensor canvas.
 4. Neuropil and vasculature background.
 5. Photobleaching over the recording.
-6. Brain motion under the lens.
+6. Brain motion under the lens (and a pointer to the realistic, non-rigid model).
 7. Illumination profile and emission vignette.
 8. Stray-light leakage.
-9. Sensor digitization to raw counts, where the auto-focus yield is realized.
+9. Sensor digitization to raw counts, where the auto-focus yield is realized (with a
+   look at the opt-in hot-pixel and fixed-pattern-noise defects).
 
 ## Scoring a recovery (notebook)
 
@@ -64,7 +65,7 @@ recovery *honestly*? It is a static, step-by-step walkthrough (no widgets) that 
 each recovery metric on a controlled perturbation of the truth - footprint matching
 and why pixel weights matter, why a global shift after motion correction is not a
 miss, trace correlation, why the deconvolved `S` is **not** a spike train (score it
-without binarizing and up to an unknown scale), and motion error - then scores a mock
+without binarizing and up to an unknown scale), and motion error (rigid, and per-patch for non-rigid motion) - then scores a mock
 recovery end to end with `minisim.testing.score`. Copy it the same way:
 
 ```bash

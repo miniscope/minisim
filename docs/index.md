@@ -82,14 +82,16 @@ pydantic, and numpydantic.
 
 The teaching notebooks ship inside the package; list them with
 `minisim-notebooks list` and copy one out with `minisim-notebooks copy 01_anatomy`
-(see the {doc}`tutorials <tutorials/index>`).
+(see the {doc}`tutorials <tutorials/index>`). A `minisim generate` command line
+writes recordings from the shell (see the {doc}`CLI reference <reference/cli>`).
 
 ## Where to go next
 
 - New here? Start with the {doc}`concepts` page for the mental model, then the
   {doc}`quickstart`.
 - Want to run something specific? The {doc}`how-to guides <howto/index>` cover
-  benchmarking, parameter sweeps, and video export.
+  benchmarking, parameter sweeps, video export, writing a Miniscope-DAQ folder, and
+  the opt-in realism (brain motion, scatter halo, sensor defects).
 - Looking for a class or function? The {doc}`API reference <reference/index>`
   is generated from the package.
 
