@@ -5,6 +5,16 @@ from conventional-commit messages. The first release is v0.1.0. -->
 
 ### Feat
 
+- heavy-tailed scatter PSF: opt-in `Tissue.scatter_halo_fraction` (default 0) and
+  `scatter_halo_blur_per_um` add a broad diffuse wing, `PSF = (1-f)·G(σ_core) +
+  f·G(σ_halo)`, redistributed from the core (footprint integral unchanged; peak
+  brightness and `detectable` follow). New `Acquisition.halo_optics`,
+  `degrade_footprint(..., halo_sigma_px, halo_fraction)` and per-cell
+  `GroundTruth.observed_halo_sigma_px` / `observed_halo_fraction`, so `A_observed`
+  reproduces the full footprint; streaming matches `simulate()`. Defaults are
+  bit-identical and spec hashes unchanged; rendering costs ~1.1x. See the
+  "Add a heavy-tailed scatter halo" how-to.
+
 - write recordings in Miniscope DAQ folder layout: `minisim.write_miniscope_daq`
   (streamed `N.avi` + `metaData.json` + `timeStamps.csv`, ground truth in a sibling
   `ground_truth/`), a dependency-free streaming `GREY` AVI writer
