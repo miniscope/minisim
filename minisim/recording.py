@@ -101,6 +101,9 @@ _GT_OPTIONAL = (
     "observed_sigma_px",
     "observed_gain",
     "shifts",
+    "nonrigid_field",
+    "nonrigid_nodes_y",
+    "nonrigid_nodes_x",
     "illumination",
     "vignette",
     "leakage",
@@ -170,6 +173,16 @@ class GroundTruth(BaseModel):
 
     # per-effect ground truth (None when that step is absent) ---------------
     shifts: NDArray[Shape["* frame, 2"], float] | None = None
+    # Non-rigid deformation on top of ``shifts`` (None unless BrainMotion(nonrigid=True)):
+    # control-node displacements (frame, gy, gx, 2) = (dy, dx) in px, same sign
+    # convention as ``shifts`` (positive moves content down/right), evaluated at the
+    # *observed* pixel. The nodes sit at FOV pixel coordinates ``nonrigid_nodes_y`` /
+    # ``nonrigid_nodes_x`` (spanning the FOV edge to edge); between them the field is
+    # natural-cubic-spline interpolated. ``shifts`` is the rigid component (the field's
+    # spatial mean is ~0); use :meth:`displacement` for the full motion at any pixel.
+    nonrigid_field: NDArray[Shape["* frame, * gy, * gx, 2"], float] | None = None
+    nonrigid_nodes_y: NDArray[Shape["* gy"], float] | None = None
+    nonrigid_nodes_x: NDArray[Shape["* gx"], float] | None = None
     illumination: NDArray[Shape["* height, * width"], float] | None = None
     vignette: NDArray[Shape["* height, * width"], float] | None = None
     leakage: NDArray[Shape["* height, * width"], float] | None = None
@@ -254,6 +267,35 @@ class GroundTruth(BaseModel):
         """
         return self.centers_um[:, 0]
 
+    def displacement(self, ys, xs, frames=None) -> np.ndarray:
+        """Total ``(dy, dx)`` motion in px at the given pixels, ``(frame, point, 2)``.
+
+        ``ys``/``xs`` are broadcast 1-D pixel coordinates of the query points (e.g. the
+        centers of motion-correction patches), in FOV pixels. The result is the rigid
+        ``shifts`` plus, when present, the interpolated ``nonrigid_field`` at each
+        point, for every frame (or only the given ``frames`` index/slice/array).
+        Positive values move content toward higher row/column indices, the
+        convention of ``shifts``; a registration's correction is the negation.
+        """
+        if self.shifts is None:
+            raise ValueError("this recording has no motion (no brain_motion step)")
+        from minisim.steps.motion import grid_interp_matrix
+
+        ys, xs = np.broadcast_arrays(
+            np.atleast_1d(np.asarray(ys, dtype=float)),
+            np.atleast_1d(np.asarray(xs, dtype=float)),
+        )
+        rigid = self.shifts if frames is None else self.shifts[frames]
+        out = np.repeat(rigid[:, None, :], len(ys), axis=1).astype(float)
+        if self.nonrigid_field is not None:
+            field = (
+                self.nonrigid_field if frames is None else self.nonrigid_field[frames]
+            )
+            my = grid_interp_matrix(self.nonrigid_nodes_y, ys)  # (P, gy)
+            mx = grid_interp_matrix(self.nonrigid_nodes_x, xs)  # (P, gx)
+            out += np.einsum("pi,fijc,pj->fpc", my, field, mx, optimize=True)
+        return out
+
     def detectable_subset(self) -> GroundTruth:
         """Subset to detectable cells - the fair denominator for recall metrics.
 
@@ -286,6 +328,9 @@ class GroundTruth(BaseModel):
             ),
             bleaching=self.bleaching[m] if self.bleaching is not None else None,
             shifts=self.shifts,
+            nonrigid_field=self.nonrigid_field,
+            nonrigid_nodes_y=self.nonrigid_nodes_y,
+            nonrigid_nodes_x=self.nonrigid_nodes_x,
             illumination=self.illumination,
             vignette=self.vignette,
             leakage=self.leakage,
@@ -623,6 +668,9 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
             else None
         ),
         shifts=scene.truth.shifts,
+        nonrigid_field=scene.truth.nonrigid_field,
+        nonrigid_nodes_y=scene.truth.nonrigid_nodes_y,
+        nonrigid_nodes_x=scene.truth.nonrigid_nodes_x,
         illumination=illumination,
         vignette=vignette,
         leakage=scene.truth.leakage,

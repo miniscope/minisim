@@ -3,7 +3,7 @@
 Currently one subcommand::
 
     minisim generate --preset miniscope_v4 --region ca1 --duration 60 --seed 0 \
-        --motion physical --motion-um 3 --out ./sim_v4_ca1
+        --motion miniscope --nonrigid --out ./sim_v4_ca1
     minisim generate --spec spec.json --out ./sim_from_spec
 
 ``--layout daq`` (default) writes a Miniscope-DAQ output folder with the ground truth
@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--seed", type=int, default=0, help="master RNG seed (default 0)")
     src.add_argument(
         "--motion",
-        choices=["none", "physical", "walk"],
+        choices=["none", "physical", "walk", "miniscope"],
         default="none",
         help="brain-motion model (default none)",
     )
@@ -61,7 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="physical model: extreme excursion in um (1 px ~ 1.6 um on a V4); "
+        "miniscope model: RMS along the dominant axis in um; "
         "walk model: max shift in um",
+    )
+    src.add_argument(
+        "--nonrigid",
+        action="store_true",
+        help="add the smooth non-rigid deformation field on top of the rigid motion "
+        "(needs --motion other than none)",
     )
     out = g.add_argument_group("output")
     out.add_argument("--out", type=Path, required=True, help="output directory")
@@ -89,10 +96,14 @@ def spec_from_args(args: argparse.Namespace) -> Spec:
     if args.spec is not None:
         return Spec.model_validate_json(args.spec.read_text())
     extra = []
+    if args.nonrigid and args.motion == "none":
+        raise ValueError("--nonrigid needs a rigid --motion model (not 'none')")
     if args.motion != "none":
-        kw: dict = {"model": args.motion}
+        kw: dict = {"model": args.motion, "nonrigid": args.nonrigid}
         if args.motion_um is not None:
-            if args.motion == "physical":
+            if args.motion == "miniscope":
+                kw["motion_rms_um"] = args.motion_um
+            elif args.motion == "physical":
                 kw["motion_amplitude_um"] = args.motion_um
                 kw["max_shift_um"] = max(15.0, 1.5 * args.motion_um)
             else:

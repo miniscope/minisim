@@ -344,7 +344,10 @@ def _write_npz(gt: GroundTruth, spec: Spec, path: Path) -> None:
 
     Footprints are float32 ``(unit, H, W)`` over the sensor FOV; ``C``/``S`` are
     ``(unit, frame)``; ``shifts`` is ``(frame, 2)`` ``(dy, dx)`` in pixels (positive
-    moves tissue down/right; present only with a ``brain_motion`` step). Optional
+    moves tissue down/right; present only with a ``brain_motion`` step) and, with
+    ``BrainMotion(nonrigid=True)``, ``nonrigid_field`` ``(frame, gy, gx, 2)`` px at the
+    FOV-pixel nodes ``nonrigid_nodes_y`` / ``nonrigid_nodes_x`` (cubic-spline
+    interpolate between nodes). Optional
     per-effect fields are included when the recording has them.
     """
     arrays: dict[str, Any] = {

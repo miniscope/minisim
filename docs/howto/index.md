@@ -13,5 +13,6 @@ use_in_test_suite
 sweep
 video
 daq_folder
+realistic_motion
 build_recording
 ```

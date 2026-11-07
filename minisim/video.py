@@ -37,7 +37,7 @@ from minisim.scene import Scene
 from minisim.simulate import _motion_margin_px, build_context
 from minisim.spec import Spec
 from minisim.steps import STEP_FOR_KIND
-from minisim.steps.motion import brain_motion_shifts, shift_and_crop
+from minisim.steps.motion import brain_motion_fields, nonrigid_nodes, shift_and_crop
 from minisim.steps.sensor import falloff_center_px, leakage_field, radial_falloff
 from minisim.steps.tissue import (
     neuropil_components,
@@ -168,6 +168,7 @@ def _iter_count_frames(
     neuropil = None  # (amplitude, spatial (k,Hc,Wc), temporal (k,frame))
     neuropil_population = None  # (frame,) driver, ground truth only
     shifts = None  # (frame, 2) px, or None when there is no motion
+    nonrigid = None  # (frame, gy, gx, 2) px control-node field, or None
     leak = None  # additive FOV field, or None
     vasc_mask = None  # static (Hc,Wc) vessel transmission mask, or None when off
 
@@ -209,7 +210,7 @@ def _iter_count_frames(
                     )
         elif step_spec.kind == "brain_motion":
             with measure(perf, "motion_setup"):
-                shifts = brain_motion_shifts(step_spec, acq, n_frames, rng)
+                shifts, nonrigid = brain_motion_fields(step_spec, acq, n_frames, rng)
         elif step_spec.kind == "leakage":
             leak = leakage_field(step_spec, acq, fov)
         elif step_spec.kind == "sensor":
@@ -250,7 +251,14 @@ def _iter_count_frames(
         )  # (unit, frame)
     if truth_sink is not None:
         truth_sink["ground_truth"] = _streamed_ground_truth(
-            spec, scene, shifts, leak, neuropil, neuropil_population, vasc_mask
+            spec,
+            scene,
+            shifts,
+            leak,
+            neuropil,
+            neuropil_population,
+            vasc_mask,
+            nonrigid,
         )
     # The sensor exposure scale, applied per frame at digitization exactly as
     # SensorStep does; None when there is no sensor step (the movie stays continuous).
@@ -280,7 +288,12 @@ def _iter_count_frames(
         # already the sensor FOV (no margin), so it passes through unchanged.
         if shifts is not None:
             with measure(perf, "motion_crop"):
-                frames = shift_and_crop(canvas, shifts[t0:t1], fov)
+                frames = shift_and_crop(
+                    canvas,
+                    shifts[t0:t1],
+                    fov,
+                    nonrigid[t0:t1] if nonrigid is not None else None,
+                )
         else:
             frames = canvas
         if photon_field is not None:
@@ -302,7 +315,7 @@ def _iter_count_frames(
 
 
 def _streamed_ground_truth(
-    spec, scene, shifts, leak, neuropil, neuropil_population, vasc_mask
+    spec, scene, shifts, leak, neuropil, neuropil_population, vasc_mask, nonrigid=None
 ):
     """Assemble the ``GroundTruth`` for a streamed run, as ``simulate`` would.
 
@@ -316,6 +329,11 @@ def _streamed_ground_truth(
     fov = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
     truth = scene.truth
     truth.shifts = shifts
+    if nonrigid is not None:
+        truth.nonrigid_field = nonrigid
+        truth.nonrigid_nodes_y, truth.nonrigid_nodes_x = nonrigid_nodes(
+            fov, nonrigid.shape[1:3]
+        )
     truth.leakage = leak
     truth.vasculature_mask = vasc_mask
     if neuropil is not None:
