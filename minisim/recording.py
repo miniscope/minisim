@@ -1112,7 +1112,7 @@ def matched_filter_snr(ground_truth: GroundTruth, spec: Spec) -> np.ndarray | No
 
         SNR² = Σ_t Σ_i s_it² / σ_i² = [Σ_i g_i² a_i² / σ_i²] · [Σ_t Δ_t²]
 
-    - the space-time product separates because the cell's signal is rank one.
+    The space-time product separates because the cell's signal is rank one.
     The spatial factor is what a footprint-weighted ROI gets from one frame; the
     temporal factor pools every transient (it equals the sum over isolated events
     of each event's squared SNR). Pipelines such as CNMF and cala pool exactly
