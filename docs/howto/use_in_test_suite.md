@@ -62,8 +62,10 @@ some planted cells were undetectable. The `Report` makes this explicit:
 `n_requested` (cells planted), `n_detectable` (cells above the floor), and
 `n_true` (the denominator `recall` actually used). Read `report.summary()`, or
 pass `restrict_to_detectable=False` to score against every planted cell instead.
-The detection threshold itself is provisional and may change before 1.0 - see the
-{doc}`reproducibility & stability contract <../reference/stability>`.
+The detection criterion is part of the
+{doc}`reproducibility & stability contract <../reference/stability>`: minisim 1.1.0
+replaced the single-pixel peak test with a matched-filter SNR, so `n_detectable`
+moved for most recordings.
 ```
 
 When you need more than the common case, the underlying primitives

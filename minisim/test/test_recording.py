@@ -241,6 +241,11 @@ def test_finalize_drops_pure_margin_cells():
 # --- detectability ---------------------------------------------------------
 
 
+# Single-pixel footprint weights far above / below DETECT_SNR_THRESHOLD for the
+# fixture below (one transient of 4 over a baseline of 1, 100 photons per unit).
+_BRIGHT, _DIM = 50.0, 1e-3
+
+
 def _detect_spec(acq):
     return Spec(
         acquisition=acq,
@@ -254,10 +259,11 @@ def _detect_spec(acq):
 
 
 def test_detectable_is_snr_based_not_focus_gated():
-    # Detectability is purely a signal test (SNR >= threshold). Defocus is not a hard
-    # gate: it enters only by dimming optical_brightness, so a bright cell that is out
-    # of focus stays detectable as long as its (already-dimmed) transient clears the
-    # floor - matching what a real pipeline recovers outside the depth of field.
+    # Detectability is purely a signal test (matched-filter SNR >= threshold).
+    # Defocus is not a hard gate: it enters only through the realized footprint, so
+    # a bright cell flagged out of focus stays detectable as long as its light still
+    # clears the floor - matching what a real pipeline recovers outside the depth of
+    # field. (Footprint weights stand in for the optics' dimming here.)
     acq = _acq(n_px=16)
     nf = acq.n_frames
     trace = np.ones(nf)
@@ -267,35 +273,31 @@ def test_detectable_is_snr_based_not_focus_gated():
         # bright, in focus -> well above the sensor floor
         Cell(
             center_um=(0.0, 8.0, 8.0),
-            footprint_planted=_dot((16, 16), 8, 8),
+            footprint_planted=_dot((16, 16), 8, 8, _BRIGHT),
             trace=trace,
             in_focus=True,
-            optical_brightness=1.0,
         ),
         # in focus but optically ~dark -> below the floor
         Cell(
             center_um=(0.0, 4.0, 4.0),
-            footprint_planted=_dot((16, 16), 4, 4),
+            footprint_planted=_dot((16, 16), 4, 4, _DIM),
             trace=trace,
             in_focus=True,
-            optical_brightness=1e-3,
         ),
         # bright but out of focus -> STILL detectable (no in_focus gate); its bright
         # transient clears the floor even though the geometric flag is False
         Cell(
             center_um=(0.0, 12.0, 12.0),
-            footprint_planted=_dot((16, 16), 12, 12),
+            footprint_planted=_dot((16, 16), 12, 12, _BRIGHT),
             trace=trace,
             in_focus=False,
-            optical_brightness=1.0,
         ),
         # out of focus AND optically dim -> below the floor
         Cell(
             center_um=(0.0, 2.0, 2.0),
-            footprint_planted=_dot((16, 16), 2, 2),
+            footprint_planted=_dot((16, 16), 2, 2, _DIM),
             trace=trace,
             in_focus=False,
-            optical_brightness=1e-3,
         ),
     ]
     gt = finalize(scene, _detect_spec(acq)).ground_truth
@@ -314,17 +316,15 @@ def test_detectable_subset_keeps_only_detectable_units():
     scene.cells += [
         Cell(
             center_um=(0.0, 8.0, 8.0),
-            footprint_planted=_dot((16, 16), 8, 8),
+            footprint_planted=_dot((16, 16), 8, 8, _BRIGHT),
             trace=trace,
             in_focus=True,
-            optical_brightness=1.0,
         ),
         Cell(
             center_um=(0.0, 4.0, 4.0),
-            footprint_planted=_dot((16, 16), 4, 4),
+            footprint_planted=_dot((16, 16), 4, 4, _DIM),
             trace=trace,
             in_focus=True,
-            optical_brightness=1e-3,
         ),
     ]
     gt = finalize(scene, _detect_spec(acq)).ground_truth
@@ -336,7 +336,7 @@ def test_detectable_subset_keeps_only_detectable_units():
 
 def test_vessel_occlusion_dims_detectability_and_records_overlap():
     # A bright, in-focus cell is detectable in the clear; drop an opaque vessel over
-    # it and its peak no longer clears the floor, while its footprint-weighted
+    # it and its light no longer clears the floor, while its footprint-weighted
     # occlusion is recorded as the scoreable confound axis.
     acq = _acq(n_px=16)
     nf = acq.n_frames
@@ -349,10 +349,9 @@ def test_vessel_occlusion_dims_detectability_and_records_overlap():
         s.cells.append(
             Cell(
                 center_um=(0.0, 0.0, 0.0),
-                footprint_planted=_dot((16, 16), 8, 8),
+                footprint_planted=_dot((16, 16), 8, 8, _BRIGHT),
                 trace=trace,
                 in_focus=True,
-                optical_brightness=1.0,
             )
         )
         return s
@@ -396,7 +395,7 @@ def test_stage_raises_for_absent_snapshot():
 # --- shared detectability primitives ---------------------------------------
 
 
-def test_detection_snr_formula_and_edges():
+def test_peak_snr_formula_and_edges():
     # SNR = peak*gain / sqrt(max(baseline,0)*gain + read^2). With read noise only
     # (zero baseline) it is just peak*gain/read.
     assert detection_snr(2.0, 0.0, 3.0, 6.0) == pytest.approx(2.0 * 3.0 / 6.0)

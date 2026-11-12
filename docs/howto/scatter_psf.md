@@ -36,9 +36,11 @@ The halo is **redistributed from the core**, not added on top. Both Gaussians ar
 sum-normalized, so a cell's footprint integral is `gain · Σ planted` for every `f`;
 `attenuation(z)` already describes the light the objective *collects*, which includes
 the recollected diffuse light. The price is a lower core: the peak-brightness scalar
-(`optical_brightness`, which drives `detectable`) becomes
+(`optical_brightness`, a diagnostic) becomes
 `attenuation · collection · [(1−f)·σ₀²/σ_core² + f·σ₀²/σ_halo²]`, i.e. it falls by
-about `1 − f`. `in_focus` stays the geometric depth-of-field test. Light past the
+about `1 − f`. `detectable` uses the whole realized footprint, halo included
+({py:func}`~minisim.matched_filter_snr`), so the wing lowers it less than it lowers
+the peak. `in_focus` stays the geometric depth-of-field test. Light past the
 canvas edge is lost for the halo exactly as for the core.
 
 ## Ground truth

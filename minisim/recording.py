@@ -17,10 +17,11 @@ Two things that were deliberately deferred from earlier steps land here:
   margin (real tissue, but background that only flickers in transiently, not a
   recoverable unit).
 * **Detectability.** ``detectable`` is a pure signal test, not an optics-only
-  property: a cell's peak signal (``optical_brightness``, which already folds in
-  defocus and scatter) is further dimmed by the illumination/vignette field at its
-  position and then judged against a sensor-derived noise floor (``SNR ≥
-  DETECT_SNR_THRESHOLD``). Defocus is not a hard gate - it lowers the SNR
+  property: a cell is detectable when the matched-filter SNR of its realized
+  signal - its degraded footprint (defocus, scatter, halo), dimmed by vessels,
+  illumination and vignette, pooled over its pixels and over all its transients -
+  against the per-pixel shot + read noise clears ``DETECT_SNR_THRESHOLD`` (see
+  :func:`matched_filter_snr`). Defocus is not a hard gate - it lowers the SNR
   continuously, so a blurred but bright cell outside the depth of field can still be
   detectable, matching what a real pipeline recovers. ``finalize`` is the first point
   all the terms exist, so it is where the flag is set.
@@ -40,26 +41,30 @@ from numpydantic import NDArray, Shape
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from minisim.footprint import Footprint, FootprintStack, degrade_footprint
-from minisim.scene import MOVIE_DIMS, Cell, Scene
-from minisim.spec import Acquisition, Spec
+from minisim.scene import MOVIE_DIMS, Scene
+from minisim.spec import Spec
 
-# Minimum realized peak SNR (signal electrons over the sensor noise floor) for a
-# cell to count as detectable. This is the *sole* detectability criterion: a cell is
-# detectable iff its realized transient (already dimmed by defocus, scatter,
-# illumination, and any vessel) clears this SNR, with no separate in-focus/depth-of-
-# field gate (defocus enters continuously through the SNR, the way a real pipeline
-# experiences it). A provisional value: a future threshold calibration revisits it
-# against observed metric distributions. Kept here, named, rather than buried as a
-# literal so that calibration is a one-line change.
+# Minimum matched-filter SNR (see `matched_filter_snr`: the ideal detector's SNR
+# for a cell's realized footprint and activity, pooled over its pixels and all its
+# transients, against shot + read noise) for a cell to count as detectable. This is
+# the *sole* detectability criterion: there is no separate in-focus/depth-of-field
+# gate (defocus enters continuously through the SNR, the way a real pipeline
+# experiences it). Calibrated in 1.1.0 against a strong pipeline's recovery: it is
+# the SNR at which cala recovers half the cells on CaLab's simulated CA1 recordings
+# with 6 px cells at the real recording's edge blur (fit 111, 95 % CI 104-117), and
+# it holds without retuning on 10 px cells (50 % near 103). The ideal observer knows
+# the footprint and the trace; a pipeline must estimate both, which is why the
+# threshold is far above the few-sigma an ideal detector would need. Cells much
+# larger than the pipeline's cell-size setting need 3-4x more (a size-prior effect,
+# not noise), so the threshold is not raised for them. See the concepts docs.
 #
 # STABILITY CONTRACT. This single constant sets the `detectable` flag, the
 # `restrict_to_detectable` recall denominator in `minisim.testing.score`, and the
 # "auto" focus yield objective - so its value is part of what a consumer's
-# `assert report.recall > X` depends on. It is provisional and *not yet calibrated*
-# against a real pipeline, so it may change before 1.0. Treat any change as a
-# minor-version bump with a changelog entry, because it moves recall denominators
-# under downstream tests (see the reproducibility & stability contract in the docs).
-DETECT_SNR_THRESHOLD = 3.0
+# `assert report.recall > X` depends on. Treat any change as a minor-version bump
+# with a changelog entry, because it moves recall denominators under downstream
+# tests (see the reproducibility & stability contract in the docs).
+DETECT_SNR_THRESHOLD = 110.0
 
 # On-disk layout for save()/load() (zarr group + sibling spec.json). The format
 # version is the cross-version compatibility boundary: `load()` reads it back and
@@ -263,10 +268,24 @@ class GroundTruth(BaseModel):
         return self._observed_cache
 
     def _regenerate_observed(self) -> np.ndarray:
+        if self.observed_sigma_px is None:
+            return self.A_planted  # no optics -> observed == planted
+        return self.observed_footprints().to_dense(dtype=float)
+
+    def observed_footprints(self) -> FootprintStack:
+        """The optically degraded footprints as a sparse, FOV-cropped stack.
+
+        The same footprints as :attr:`A_observed` (regenerated from the planted
+        patches and the per-unit optics scalars, bit-identical to the render), but
+        kept sparse: one small patch per unit rather than a dense ``(unit, H, W)``
+        array. Use it to loop over cells without paying for the dense stack (a
+        600 px, 800-cell recording's dense ``A_observed`` is ~2 GB in float64).
+        Falls back to the planted footprints when the optics step did not run.
+        """
         top, left = self.fov_offset
         h, w = self.fov_shape
         if self.observed_sigma_px is None:
-            return self.A_planted  # no optics -> observed == planted
+            return self.planted.crop(top, left, h, w)
         observed = []
         for i, fp in enumerate(self.planted):
             sigma = float(self.observed_sigma_px[i])
@@ -281,10 +300,8 @@ class GroundTruth(BaseModel):
                 observed.append(
                     degrade_footprint(fp, sigma, float(self.observed_gain[i]), *halo)
                 )
-        return (
-            FootprintStack(tuple(observed), self.planted.canvas_shape)
-            .crop(top, left, h, w)
-            .to_dense(dtype=float)
+        return FootprintStack(tuple(observed), self.planted.canvas_shape).crop(
+            top, left, h, w
         )
 
     @property
@@ -611,27 +628,16 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     margin_h = (canvas_h - fov_h) // 2
     margin_w = (canvas_w - fov_w) // 2
 
-    sensor_spec = next((s for s in spec.steps if s.kind == "sensor"), None)
-    # The sensor exposure (photons per intensity unit), the noise-floor scale
-    # detectability is tested against; None when no sensor step ran, in which case
-    # detectability falls back on the geometric in_focus flag.
-    exposure_ppu = (
-        float(sensor_spec.photons_per_unit) if sensor_spec is not None else None
-    )
-    # Both falloff fields are FOV-sized (built post-motion-crop), or None. Their
-    # product is the per-pixel photon budget a cell's signal is dimmed by.
+    # Both falloff fields are FOV-sized (built post-motion-crop), or None.
     illumination = scene.truth.illumination
     vignette = scene.truth.vignette
-    photon_field = _combine_fields(illumination, vignette)
-    # The vessel transmission mask, if the vasculature step ran. The canvas-sized
-    # version aligns with the (canvas-coordinate) footprints for the per-cell
-    # overlap integral; the FOV crop is sampled at each cell's position for
-    # detectability, the same frame as photon_field.
+    # The vessel transmission mask, if the vasculature step ran: canvas-sized, so
+    # it aligns with the (canvas-coordinate) footprints for the per-cell overlap
+    # integral.
     vasc_mask_canvas = scene.truth.vasculature_mask
-    vasc_mask_fov = _crop_field(vasc_mask_canvas, fov_h, fov_w)
 
     planted_fps, traces, spikes, bleaches = [], [], [], []
-    centers, amplitudes, in_focus, detectable, overlaps = [], [], [], [], []
+    centers, amplitudes, in_focus, has_trace, overlaps = [], [], [], [], []
     sigmas, gains, halo_sigmas, halo_fractions = [], [], [], []
     for cell in scene.cells:
         if cell.footprint_planted is None:
@@ -674,15 +680,9 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
             cell.amplitude if cell.amplitude is not None else float("nan")
         )
         in_focus.append(ifocus)
-        # A vessel over the cell absorbs part of its light: dim the peak by the
-        # transmission at the cell's position (detectability is a peak test) and
-        # record the footprint-weighted occlusion as the scoreable confound axis.
-        vessel_t = sample_field_at(vasc_mask_fov, y_um, x_um, acq.pixel_size_um)
-        detectable.append(
-            _is_detectable(
-                cell, ifocus, y_um, x_um, photon_field, exposure_ppu, acq, vessel_t
-            )
-        )
+        has_trace.append(cell.trace is not None)
+        # Record the footprint-weighted vessel occlusion as the scoreable confound
+        # axis (the occlusion itself enters detectability through the gain field).
         overlaps.append(_vessel_overlap(cell.observed_footprint(), vasc_mask_canvas))
 
     # Optics ran iff any surviving cell carries a sigma; then keep the per-unit
@@ -707,7 +707,9 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         centers_um=np.array(centers, dtype=float).reshape(-1, 3),
         amplitude_per_cell=np.array(amplitudes, dtype=float),
         in_focus=np.array(in_focus, dtype=bool),
-        detectable=np.array(detectable, dtype=bool),
+        # Placeholder: set below from the matched-filter SNR, which needs the
+        # assembled ground truth (footprints, traces and per-effect fields).
+        detectable=np.zeros(len(in_focus), dtype=bool),
         # Per-cell vessel occlusion, present only when the vasculature step ran.
         vessel_overlap_fraction=(
             np.array(overlaps, dtype=float) if vasc_mask_canvas is not None else None
@@ -735,6 +737,10 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         vasculature_mask=_crop_field(scene.truth.vasculature_mask, fov_h, fov_w),
         focal_depth_um=scene.truth.focal_depth_um,
         **_defect_fields(scene.truth.sensor_defects),
+    )
+    snr = matched_filter_snr(gt, spec)
+    gt = gt.model_copy(
+        update={"detectable": detectable_from_snr(snr, gt.in_focus, has_trace)}
     )
     # observed is always the sensor FOV: brain_motion already crops the movie,
     # but a partial build (until= before motion) can leave it canvas-sized, so
@@ -907,15 +913,6 @@ def _stack(arrays: list[np.ndarray], empty_shape: tuple[int, ...]) -> np.ndarray
     return np.stack(arrays) if arrays else np.zeros(empty_shape)
 
 
-def _combine_fields(a: np.ndarray | None, b: np.ndarray | None) -> np.ndarray | None:
-    """Element-wise product of two optional FOV fields (each absent → identity)."""
-    if a is None:
-        return b
-    if b is None:
-        return a
-    return a * b
-
-
 def sample_field_at(
     field: np.ndarray | None, y_um: float, x_um: float, pixel_size_um: float
 ) -> float:
@@ -926,9 +923,8 @@ def sample_field_at(
     field bounds) and returns ``field`` there. ``field`` is a sensor-FOV-sized
     array such as the combined illumination × vignette photon budget; an absent
     field (``None``) returns ``1.0``, the multiplicative identity, so callers can
-    treat "no field" and "uniform field" alike. The one sampler shared by
-    detectability (:func:`_is_detectable`) and the teaching notebook's per-cell SNR
-    panels, so both read the field the same way.
+    treat "no field" and "uniform field" alike. Used by the teaching notebook's
+    per-cell SNR panels.
     """
     if field is None:
         return 1.0
@@ -938,8 +934,8 @@ def sample_field_at(
     return float(field[iy, ix])
 
 
-def detection_snr(peak_dF, baseline, gain, read_e):
-    """Transient SNR in detected electrons - the single detectability formula.
+def peak_snr(peak_dF, baseline, gain, read_e):
+    """Single-pixel, single-transient SNR in detected electrons (a diagnostic).
 
     ``gain`` converts a cell's ΔF units to detected electrons
     (``optical_brightness · illumination · photons_per_unit · QE``); ``peak_dF``
@@ -949,9 +945,14 @@ def detection_snr(peak_dF, baseline, gain, read_e):
 
         SNR = peak_dF·gain / sqrt(max(baseline,0)·gain + read_e²)
 
-    Works on scalars or numpy arrays (so both ``finalize`` and the auto-focus
-    yield scan share one definition). Where the noise floor is exactly zero the
-    SNR is ``inf`` if there is any signal, else ``0``.
+    This was minisim's detectability criterion up to 1.0.x. It looks at the
+    brightest pixel of the best transient only, so it ignores how many pixels and
+    how many transients a pipeline can pool, and with a sharp PSF it collapses
+    under defocus (the peak drops as ``σ₀²/σ²`` while the integrated light stays).
+    ``detectable`` now uses :func:`matched_filter_snr`; this function remains as a
+    diagnostic (e.g. the teaching notebook's per-pixel view). Works on scalars or
+    numpy arrays. Where the noise floor is exactly zero the SNR is ``inf`` if there
+    is any signal, else ``0``.
     """
     signal_e = peak_dF * gain
     noise_e = np.sqrt(np.maximum(baseline, 0.0) * gain + read_e * read_e)
@@ -960,54 +961,206 @@ def detection_snr(peak_dF, baseline, gain, read_e):
     return np.where(noise_e > 0, snr, np.where(signal_e > 0, np.inf, 0.0))
 
 
-def _is_detectable(
-    cell: Cell,
-    in_focus: bool,
-    y_um: float,
-    x_um: float,
-    photon_field: np.ndarray | None,
-    photons_per_unit: float | None,
-    acq: Acquisition,
-    vessel_transmission: float = 1.0,
-) -> bool:
-    """Whether a cell's realized peak clears the sensor noise floor (and is in focus).
+#: Deprecated alias of :func:`peak_snr`, kept so 1.0.x code keeps importing. It is
+#: no longer the detectability criterion (see :func:`matched_filter_snr`).
+detection_snr = peak_snr
 
-    The cell's peak ΔF is dimmed by its optical brightness (depth defocus +
-    scatter), the illumination/vignette field at its position, and any vessel
-    transmission there (``vessel_transmission`` in (0, 1], 1.0 = no vessel), scaled
-    to detected electrons by the exposure and QE, then compared to the shot + read
-    noise floor riding on its steady baseline (see :func:`detection_snr`). The
-    vessel term is sampled at the cell's position because detectability is a peak
-    test; the footprint-weighted occlusion is recorded separately as
-    ``vessel_overlap_fraction``.
 
-    ``photons_per_unit`` is the sensor exposure scale. ``detectable`` is purely a
-    signal test: ``SNR ≥ DETECT_SNR_THRESHOLD``. Defocus is **not** a separate hard
-    gate - it dims ``optical_brightness`` (and so the SNR) continuously, exactly as a
-    real pipeline experiences it, so an out-of-focus cell stays detectable as long as
-    its blurred transient still clears the floor (this is why a CNMF-style pipeline
-    recovers cells well outside the diffraction depth of field). With no activity (no
-    trace) a cell emits no transient and is not detectable; with no ``sensor`` step
-    (``photons_per_unit is None``) there is no noise floor to test against, so
-    detectability falls back to the geometric ``in_focus`` flag.
+def transient_energy(C: np.ndarray, bleaching: np.ndarray | None = None) -> np.ndarray:
+    """Per-unit temporal signal energy ``Σ_t Δ_t²`` of the emitted transients.
+
+    ``Δ_t = (C_t − min_t C) · B_t``: the calcium trace above its resting level,
+    faded by the bleaching envelope ``B`` when present (the light the cell
+    actually emits above baseline). ``C`` is ``(unit, frame)``; returns
+    ``(unit,)``. The time half of :func:`matched_filter_snr`.
     """
-    if cell.trace is None:
-        return False
-    if photons_per_unit is None:
-        return in_focus
-    brightness = cell.optical_brightness if cell.optical_brightness is not None else 1.0
-    illum = sample_field_at(photon_field, y_um, x_um, acq.pixel_size_um)
-    gain = (
-        brightness
-        * illum
-        * vessel_transmission
-        * photons_per_unit
-        * acq.image_sensor.quantum_efficiency
-    )
-    peak_dF = float(cell.trace.max() - cell.trace.min())
-    baseline = float(cell.trace.min())
-    snr = detection_snr(peak_dF, baseline, gain, acq.image_sensor.read_noise_e)
-    return bool(snr >= DETECT_SNR_THRESHOLD)
+    C = np.asarray(C, dtype=float)
+    if C.size == 0:
+        return np.zeros(C.shape[0])
+    delta = C - C.min(axis=1, keepdims=True)
+    if bleaching is not None:
+        delta = delta * bleaching
+    return np.einsum("ut,ut->u", delta, delta)
+
+
+def detection_noise_fields(
+    ground_truth: GroundTruth, spec: Spec, footprints: FootprintStack | None = None
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Per-pixel signal gain and mean light, in detected electrons, over the FOV.
+
+    Returns ``(gain_e, mean_e)``, both ``(H, W)``, or ``None`` when the spec has
+    no ``sensor`` step (no noise floor). ``gain_e`` converts one unit of cell
+    intensity at a pixel to detected electrons: the multiplicative fields applied
+    after ``composite`` (vessel transmission, illumination, vignette) times
+    ``photons_per_unit · quantum_efficiency``. ``mean_e`` is the expected
+    electrons per pixel per frame of *all* the light the recording puts there,
+    rebuilt from the ground truth by walking the spec's steps in order: every
+    cell's footprint times its mean emitted trace (other cells' out-of-focus
+    light included), the neuropil's mean, vessels, illumination, vignette and the
+    additive leakage glow. Its square root is the shot noise.
+
+    Approximations (documented, not modelled): the fields are evaluated at the
+    reference (zero-motion) frame, the sensor-defect maps (hot pixels, PRNU, FPN)
+    are left out, and the photon clip at 0 is ignored (all terms are
+    non-negative). ``footprints`` is ``ground_truth.observed_footprints()``, passed
+    in to skip regenerating it when the caller already has it.
+    """
+    sensor = next((s for s in spec.steps if s.kind == "sensor"), None)
+    if sensor is None:
+        return None
+    acq = spec.acquisition
+    h, w = ground_truth.fov_shape
+    exposure = float(sensor.photons_per_unit) * acq.image_sensor.quantum_efficiency
+    emitted = np.asarray(ground_truth.C, dtype=float)
+    if ground_truth.bleaching is not None:
+        emitted = emitted * ground_truth.bleaching
+    mean_emit = emitted.mean(axis=1) if emitted.shape[1] else np.zeros(len(emitted))
+
+    # Walk the steps in pipeline order (Spec keeps them canonical). A per-effect
+    # field present in the ground truth without its step in the spec (a hand-built
+    # scene) is still applied, after the spec's own steps, in canonical order.
+    steps = [(s.kind, s) for s in spec.steps]
+    kinds = {k for k, _ in steps}
+    for kind, name in (
+        ("vasculature", "vasculature_mask"),
+        ("illumination_profile", "illumination"),
+        ("vignette", "vignette"),
+        ("leakage", "leakage"),
+    ):
+        if kind not in kinds and getattr(ground_truth, name) is not None:
+            steps.append((kind, None))
+
+    mean = np.zeros((h, w))
+    gain = np.ones((h, w))
+    cells_added = False
+    for kind, step in steps:
+        if kind == "composite":
+            if footprints is None:
+                footprints = ground_truth.observed_footprints()
+            for k, fp in enumerate(footprints):
+                if not fp.is_empty and mean_emit[k] != 0.0:
+                    y0, x0 = fp.offset
+                    ph, pw = fp.patch.shape
+                    mean[y0 : y0 + ph, x0 : x0 + pw] += mean_emit[k] * fp.patch
+            cells_added = True
+        elif kind == "neuropil" and ground_truth.neuropil_spatial is not None:
+            assert step is not None
+            temporal = ground_truth.neuropil_temporal
+            weights = temporal.mean(axis=1) if temporal is not None else 1.0
+            spatial = np.asarray(ground_truth.neuropil_spatial, dtype=float)
+            mean += (
+                step.amplitude
+                * np.tensordot(np.broadcast_to(weights, len(spatial)), spatial, 1)
+                / step.n_components
+            )
+        elif kind in ("vasculature", "illumination_profile", "vignette"):
+            field = {
+                "vasculature": ground_truth.vasculature_mask,
+                "illumination_profile": ground_truth.illumination,
+                "vignette": ground_truth.vignette,
+            }[kind]
+            if field is not None:
+                mean = mean * field
+                if cells_added:
+                    gain = gain * field
+        elif kind == "leakage" and ground_truth.leakage is not None:
+            mean = mean + ground_truth.leakage
+    return gain * exposure, np.maximum(mean, 0.0) * exposure
+
+
+def spatial_snr2(
+    footprints, gain_e: np.ndarray, mean_e: np.ndarray, read_e: float
+) -> np.ndarray:
+    """Per-unit spatial matched-filter information ``Σ_i (g_i a_i)² / σ_i²``.
+
+    ``footprints`` iterates sparse FOV :class:`~minisim.footprint.Footprint` s
+    (``a``), ``gain_e``/``mean_e`` are from :func:`detection_noise_fields` and
+    ``σ_i² = mean_e_i + read_e²`` (shot + read noise). The square root is the SNR
+    of a footprint-weighted sum of one frame for one unit of ΔF. Returns
+    ``(unit,)``.
+    """
+    inv_var = gain_e**2 / (mean_e + read_e * read_e)
+    out = []
+    for fp in footprints:
+        if fp.is_empty:
+            out.append(0.0)
+            continue
+        y0, x0 = fp.offset
+        ph, pw = fp.patch.shape
+        a = fp.patch.astype(float)
+        out.append(float((a * a * inv_var[y0 : y0 + ph, x0 : x0 + pw]).sum()))
+    return np.array(out, dtype=float)
+
+
+def matched_filter_snr(ground_truth: GroundTruth, spec: Spec) -> np.ndarray | None:
+    """Per-cell matched-filter detection SNR over space and time - ``detectable``'s test.
+
+    The SNR of the ideal (known-template) detector for cell ``k``'s transients:
+    a filter matched to its realized footprint *and* its realized activity,
+    against the per-pixel shot + read noise of everything the recording puts on
+    the sensor. Returns ``(unit,)``, or ``None`` with no ``sensor`` step.
+
+    **Derivation.** In detected electrons, cell ``k`` adds ``s_it = g_i a_i Δ_t``
+    to pixel ``i`` at frame ``t``: ``a`` is its observed footprint (the realized
+    degraded footprint - defocus, scatter, halo - that the render uses), ``g_i``
+    the per-pixel gain (vessel, illumination, vignette, exposure, QE) and
+    ``Δ_t = (C_t − min C)·B_t`` its emitted transient above rest. The noise is
+    independent over pixels and frames with variance ``σ_i² = λ_i + r²``: shot
+    noise on the mean electrons ``λ_i`` of all light at that pixel plus the read
+    noise ``r``. For a known signal in white Gaussian noise the matched filter
+    ``Σ_it s_it y_it / σ_i²`` is the optimal detector and its SNR is::
+
+        SNR² = Σ_t Σ_i s_it² / σ_i² = [Σ_i g_i² a_i² / σ_i²] · [Σ_t Δ_t²]
+
+    - the space-time product separates because the cell's signal is rank one.
+    The spatial factor is what a footprint-weighted ROI gets from one frame; the
+    temporal factor pools every transient (it equals the sum over isolated events
+    of each event's squared SNR). Pipelines such as CNMF and cala pool exactly
+    this way (they fit ``a`` and ``c`` jointly), which is why the old single-pixel
+    peak test (:func:`peak_snr`) undercounted what they recover: with a sharp PSF,
+    defocus drops a cell's peak as ``σ₀²/σ²`` but its spatial SNR only as
+    ``σ₀/σ``, since the light is conserved and spread over more pixels.
+
+    **What counts as noise.** Shot noise on the mean light (including other cells'
+    out-of-focus light, the neuropil haze and leakage) and read noise. The
+    *fluctuations* of the neuropil and of other cells are structured background
+    that factorization pipelines model as components of their own (a background
+    term, neighbouring cells), so they are not counted as noise here; their light
+    still raises the shot noise. Bleaching fades ``Δ``. See
+    :func:`detection_noise_fields` for the approximations in ``λ``.
+
+    It is an *ideal-observer* SNR: a real pipeline must also estimate ``a`` and
+    ``c``, so it needs more than the ideal detector; that gap is what
+    :data:`DETECT_SNR_THRESHOLD` (calibrated against cala's recovery) absorbs.
+    The temporal factor grows with the number of transients, so a longer
+    recording makes the same cell more detectable, as it does for a pipeline.
+    Cost: one pass over the sparse footprints plus one over ``C``.
+    """
+    if not any(s.kind == "sensor" for s in spec.steps):
+        return None
+    footprints = ground_truth.observed_footprints()
+    fields = detection_noise_fields(ground_truth, spec, footprints)
+    assert fields is not None
+    gain_e, mean_e = fields
+    read_e = spec.acquisition.image_sensor.read_noise_e
+    spatial = spatial_snr2(footprints, gain_e, mean_e, read_e)
+    energy = transient_energy(ground_truth.C, ground_truth.bleaching)
+    return np.sqrt(spatial * energy)
+
+
+def detectable_from_snr(
+    snr: np.ndarray | None, in_focus: np.ndarray, has_trace: np.ndarray
+) -> np.ndarray:
+    """The ``detectable`` flag: ``snr ≥ DETECT_SNR_THRESHOLD`` for active cells.
+
+    A cell without a calcium trace emits no transient and is never detectable.
+    With no sensor (``snr is None``) there is no noise floor, so the flag falls
+    back to the geometric ``in_focus`` flag.
+    """
+    has_trace = np.asarray(has_trace, dtype=bool)
+    if snr is None:
+        return np.asarray(in_focus, dtype=bool) & has_trace
+    return (np.asarray(snr) >= DETECT_SNR_THRESHOLD) & has_trace
 
 
 def _vessel_overlap(

@@ -28,7 +28,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.signal import oaconvolve
 
 from minisim.footprint import Footprint
-from minisim.recording import DETECT_SNR_THRESHOLD, detection_snr
+from minisim.recording import DETECT_SNR_THRESHOLD
 from minisim.scene import Cell, Scene
 from minisim.steps.base import PipelineContext, Step
 from minisim.steps.tissue import murray_children
@@ -767,11 +767,12 @@ def resolve_focal_plane(
     ``σ = NA·|z − focal_eff| = NA·|e − focal|`` in the cell's **effective depth**
     ``e = z + shift(r)``. The radius is ``r = hypot(y, x)`` straight off the cell's
     optical-center coordinates (the optical axis is the frame origin). For a
-    candidate focal the per-cell detection SNR folds in the defocus peak-drop,
-    scatter attenuation, the illumination × vignette photon budget at the cell's
-    lateral position, and the shot + read noise floor (the same
-    :func:`~minisim.recording.detection_snr` ``finalize`` uses). The scan picks the
-    focal with the most detectable cells, ties broken by total in-focus signal.
+    candidate focal the per-cell matched-filter SNR (the criterion ``finalize``
+    uses, :func:`~minisim.recording.matched_filter_snr`, with a Gaussian stand-in
+    for the footprint) folds in the defocus blur, scatter attenuation, the
+    illumination × vignette photon budget at the cell's lateral position, the
+    cell's activity, and the shot + read noise floor. The scan picks the focal
+    with the most detectable cells, ties broken by the summed SNR.
     Because scatter dims deep cells and the falloff fields dim edge cells, this
     lands shallower / re-centered versus a naive blur optimum - and shifts once you
     account for vignetting, which is the point.
@@ -816,6 +817,37 @@ def resolve_focal_plane(
     return _max_yield_focus(cells, scored, effective, acq, sensor_spec, photon_field)
 
 
+def gaussian_spatial_snr2(peak, s2, alpha, beta):
+    """``Σ_i a_i² / (α a_i + β)`` for a 2-D Gaussian footprint, in closed form.
+
+    ``a(r) = peak · exp(−r²/2s²)`` (``s2 = s²`` in px²), against per-pixel noise
+    variance ``α a_i + β``: shot noise on the cell's own light (``α``, its mean
+    emission in electrons per unit footprint) plus a uniform floor (``β``, other
+    light's shot noise plus read noise). Treating the pixel sum as an integral, the
+    level sets of a Gaussian give ``dA = 2πs² da / a``, so::
+
+        Σ a²/(αa + β) = 2πs² ∫₀^peak a/(αa + β) da
+                      = 2πs² (β/α²) · (x − ln(1 + x)),   x = α·peak/β
+
+    which tends to ``πs²·peak²/β`` (= ``Σa²/β``) as ``α → 0``. Vectorized over
+    numpy-broadcast arguments. This is the "auto" focus scan's stand-in for the
+    exact pixel sum in :func:`~minisim.recording.spatial_snr2`: no footprint is
+    rendered per candidate plane.
+    """
+    peak, s2, alpha, beta = np.broadcast_arrays(
+        *(np.asarray(v, dtype=float) for v in (peak, s2, alpha, beta))
+    )
+    x = np.divide(alpha * peak, beta, out=np.zeros_like(peak), where=beta > 0)
+    # x − ln(1+x), with its Taylor series where the difference would cancel.
+    f = np.where(
+        x > 1e-3, x - np.log1p(np.maximum(x, 1e-3)), x * x / 2 - x**3 / 3 + x**4 / 4
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        general = 2 * np.pi * s2 * beta / alpha**2 * f
+        small = np.pi * s2 * peak**2 / beta
+    return np.where(alpha > 0, general, small)
+
+
 def _max_yield_focus(
     cells: list[Cell],
     scored: list[int],
@@ -827,53 +859,80 @@ def _max_yield_focus(
     """Scan candidate focal planes; return the one maximizing detectable-cell yield.
 
     Only cells with a calcium trace (indices ``scored``) can be detected. For each
-    candidate focal ``F`` the per-cell detection SNR is computed fully vectorized
-    over (candidates × cells): the defocus peak-drop ``σ₀²/(σ₀² + (NA·(e−F))²)``
-    times the focal-independent gain (scatter attenuation × NA² collection ×
-    illumination × exposure × QE), against the shot + read floor. A cell counts when
-    it clears ``DETECT_SNR_THRESHOLD`` - there is no separate depth-of-field gate, so
-    the objective matches the realized ``detectable`` flag (see
-    :func:`~minisim.recording._is_detectable`): defocus dims a cell through the SNR
-    rather than excluding it at a hard cutoff. Ties in count are broken by total
-    detected signal so the plane sits where the detectable cells are brightest.
+    candidate focal ``F`` the per-cell matched-filter SNR (the criterion of
+    :func:`~minisim.recording.matched_filter_snr`, which sets the realized
+    ``detectable`` flag) is computed fully vectorized over (candidates × cells),
+    with the footprint approximated by a Gaussian so nothing is rendered:
 
-    Vessel occlusion is **not** folded in here: vasculature is a later tissue-domain
-    effect, not yet grown when the focus is chosen. So a vessel over a soma can drop
-    that cell from the realized ``detectable`` set (see ``_is_detectable``) without
-    shifting the chosen plane - a deliberate v1 simplification.
+    * the planted footprint ``p`` becomes a Gaussian of the same integral and the
+      same ``Σp²`` (variance ``s_p² = (Σp)²/(4π Σp²)``), blurred by the PSF at
+      ``F``: ``s² = s_p² + σ_px(F)²``, integral ``gain · Σp`` (attenuation ×
+      collection efficiency; defocus conserves it);
+    * the noise is shot noise on the cell's own mean light and on a uniform floor
+      (every cell's mean light spread over the frame, which the blur does not
+      change) plus read noise, all at the illumination × vignette budget of the
+      cell's position (:func:`gaussian_spatial_snr2`);
+    * the temporal factor is ``Σ_t (C_t − min C)²`` of the cell's trace.
+
+    A cell counts when the SNR clears ``DETECT_SNR_THRESHOLD`` - there is no
+    separate depth-of-field gate. Ties in count are broken by the summed SNR of the
+    detectable cells. Left out here, because they do not exist yet when the focus
+    is chosen (they are later steps), but folded into the realized flag: the
+    scatter halo, bleaching, neuropil, vessels and leakage. So a vessel over a soma
+    can drop that cell from the realized ``detectable`` set without shifting the
+    chosen plane - a deliberate simplification.
     """
     optics, tissue = acq.optics, acq.tissue
     eff = effective[scored]
     z = np.array([cells[i].center_um[0] for i in scored], dtype=float)
-    # Focal-independent per-cell physics (σ₀² and the gain that is not the defocus
-    # peak-drop). σ₀ is diffraction + scatter blur; gain folds in everything that
-    # dims a cell regardless of focus.
+    px = acq.pixel_size_um
+    # Focal-independent per-cell physics: σ₀² (diffraction + scatter blur, µm²)
+    # and the flat light-loss (scatter attenuation × NA² collection).
     sigma0_sq = optics.diffraction_sigma_um**2 + np.array(
         [tissue.scatter_sigma_um(zi) ** 2 for zi in z]
     )
-    atten = np.array([tissue.attenuation(zi) for zi in z])
-    illum = _photon_budget_at(cells, scored, photon_field, acq)
-    qe = acq.image_sensor.quantum_efficiency
-    read_e = acq.image_sensor.read_noise_e
-    ppu = float(sensor_spec.photons_per_unit)
-    gain_const = atten * optics.collection_efficiency * illum * ppu * qe
-    peak_dF_list, baseline_list = [], []
+    flat_gain = (
+        np.array([tissue.attenuation(zi) for zi in z]) * optics.collection_efficiency
+    )
+    # Planted-footprint moments -> the equivalent Gaussian's variance (px²). A cell
+    # without a planted footprint counts as a unit point source.
+    sums, sums2 = [], []
+    for i in scored:
+        fp = cells[i].footprint_planted
+        patch = fp.patch.astype(float) if fp is not None else np.ones((1, 1))
+        sums.append(float(patch.sum()))
+        sums2.append(float((patch * patch).sum()))
+    sum_p, sum_p2 = np.array(sums), np.array(sums2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        s2_planted = np.where(sum_p2 > 0, sum_p**2 / (4 * np.pi * sum_p2), 0.0)
+    integral = flat_gain * sum_p
+    # Per-cell activity: mean emission (own shot noise) and transient energy.
+    mean_emit, energy = [], []
     for i in scored:
         trace = cells[i].trace
         assert trace is not None  # scored cells are activity-bearing (have a trace)
-        peak_dF_list.append(float(trace.max() - trace.min()))
-        baseline_list.append(float(trace.min()))
-    peak_dF = np.array(peak_dF_list)
-    baseline = np.array(baseline_list)
+        mean_emit.append(float(trace.mean()))
+        energy.append(float(((trace - trace.min()) ** 2).sum()))
+    mean_emit_a, energy_a = np.array(mean_emit), np.array(energy)
+    # Electrons per intensity unit at each cell, and the uniform floor: all cells'
+    # mean light spread over the sensor frame.
+    exposure = float(sensor_spec.photons_per_unit) * acq.image_sensor.quantum_efficiency
+    g = _photon_budget_at(cells, scored, photon_field, acq) * exposure
+    n_pix = acq.image_sensor.n_px_height * acq.image_sensor.n_px_width
+    floor = float((integral * mean_emit_a).sum()) / n_pix
+    read_e = acq.image_sensor.read_noise_e
+    alpha = g * mean_emit_a
+    beta = g * floor + read_e**2
 
     candidates = np.linspace(eff.min(), eff.max(), _FOCUS_SCAN_N)
     d = eff[None, :] - candidates[:, None]  # (n_candidates, n_cells)
-    peak_drop = sigma0_sq / (sigma0_sq + (optics.na * d) ** 2)
-    gain = gain_const * peak_drop
-    snr = detection_snr(peak_dF, baseline, gain, read_e)
+    s2 = s2_planted + (sigma0_sq + (optics.na * d) ** 2) / px**2
+    peak = integral / (2 * np.pi * s2)
+    spatial = g**2 * gaussian_spatial_snr2(peak, s2, alpha, beta)
+    snr = np.sqrt(spatial * energy_a)
     detectable = snr >= DETECT_SNR_THRESHOLD
     yields = detectable.sum(axis=1)
-    signals = np.where(detectable, peak_dF * gain, 0.0).sum(axis=1)
+    signals = np.where(detectable, snr, 0.0).sum(axis=1)
 
     best_yield = yields.max()
     tied = np.flatnonzero(yields == best_yield)
@@ -930,10 +989,11 @@ class CellOpticsStep(Step["CellOptics"]):
     * stores ``optical_brightness`` - the per-cell *peak* scalar from
       ``cell_optics`` (defocus drops the peak as ``σ₀²/σ_total²``; scatter
       ``attenuation(z)`` and ``collection_efficiency ∝ NA²`` dim it). Footprint
-      *integral* scales with that same ``gain``, but a cell's *detectability*
-      turns on its peak, which defocus also lowers - hence two distinct
-      quantities. ``detectable`` itself is left for ``finalize()``, where this
-      peak combines with the illumination field and the sensor noise floor.
+      *integral* scales with that same ``gain``, while defocus also lowers the
+      peak - hence two distinct quantities. The peak is a diagnostic (the
+      notebooks' :func:`~minisim.recording.peak_snr`); ``detectable`` itself is
+      left for ``finalize()``, which pools the whole realized footprint and trace
+      against the noise floor (:func:`~minisim.recording.matched_filter_snr`).
 
     The *central* focal plane is resolved once for the whole scene from
     ``Acquisition.focal_depth_in_tissue_um`` (``"auto"`` → the focus that minimizes
