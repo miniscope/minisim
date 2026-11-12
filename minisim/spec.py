@@ -569,9 +569,10 @@ class Acquisition(_Base):
         - the convolution itself produces the defocus peak drop, so applying
         ``brightness`` to the footprint too would double-count it. The returned
         ``brightness`` is instead the *point-source peak* scalar: how far a
-        cell's peak signal sits above the noise, i.e. the per-cell effective
-        brightness used (with the illumination field and sensor floor) to decide
-        detectability at ``finalize()``.
+        cell's peak signal sits above the noise (the single-pixel diagnostic
+        :func:`~minisim.recording.peak_snr`). Detectability at ``finalize()``
+        pools the whole footprint instead
+        (:func:`~minisim.recording.matched_filter_snr`).
         """
         sigma_0 = math.hypot(
             self.optics.diffraction_sigma_um, self.tissue.scatter_sigma_um(z_um)
@@ -1135,8 +1136,8 @@ class Vasculature(StepSpec):
     crossing a soma corrupts its footprint and trace, so dialing vasculature up
     stress-tests footprint/dynamics extraction. That occlusion is scored, not
     hidden: each cell's footprint-weighted vessel burden is recorded as
-    ``GroundTruth.vessel_overlap_fraction``, and a vessel over a soma dims its peak
-    in the ``detectable`` test - but the footprints (``A_observed``) stay
+    ``GroundTruth.vessel_overlap_fraction``, and a vessel over a soma dims its light
+    pixel by pixel in the ``detectable`` test - but the footprints (``A_observed``) stay
     vessel-free, the single-cell optical truth the confound is measured against.
 
     **v1 simplification:** a single multiplicative attenuation of the already

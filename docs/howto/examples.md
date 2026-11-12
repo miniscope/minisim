@@ -193,7 +193,7 @@ rec = simulate(Spec(acquisition=acq, seed=1, steps=[
 
 The occlusion is **scored, not hidden**. The vessel mask is recorded, and each
 cell gets a footprint-weighted vessel-overlap fraction so you can stratify recall
-or footprint-correlation by vessel burden; a vessel over a soma also dims its peak
+or footprint-correlation by vessel burden; a vessel over a soma also dims its light
 in the `detectable` test. The footprints (`A_observed`) themselves stay
 vessel-free - they are the single-cell optical truth the confound is measured
 against:
@@ -202,7 +202,7 @@ against:
 gt = rec.ground_truth
 gt.vasculature_mask           # (H, W) static vessel transmission in (0, 1]
 gt.vessel_overlap_fraction    # (n,) per-cell occlusion: 0 = clear, ->1 = fully under a vessel
-gt.detectable                 # (n,) now folds vessel transmission into the peak SNR test
+gt.detectable                 # (n,) now folds vessel transmission into the detection SNR
 ```
 
 List several `VesselLayer`s to stack scales and depths (e.g. a shallow
@@ -271,7 +271,8 @@ rec = simulate(Spec(acquisition=acq, seed=1, steps=[
 ]))
 
 gt = rec.ground_truth
-gt.detectable        # (n,) cells whose transient clears the sensor noise floor
+gt.detectable        # (n,) cells whose matched-filter SNR clears the threshold
+matched_filter_snr(gt, rec.spec)   # (n,) the SNR itself (import from minisim)
 rec.observed         # (frames, H, W) raw 8-bit counts
 ```
 

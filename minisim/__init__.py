@@ -36,6 +36,8 @@ from minisim.recording import (
     detection_snr,
     finalize,
     load_ground_truth,
+    matched_filter_snr,
+    peak_snr,
     sample_field_at,
     save_ground_truth,
 )
@@ -116,7 +118,9 @@ __all__ = [
     "global_shift_from_trajectories",
     "hungarian_match",
     "load_ground_truth",
+    "matched_filter_snr",
     "patch_shift_rmse",
+    "peak_snr",
     "sample_field_at",
     "save_ground_truth",
     "shift_rmse",

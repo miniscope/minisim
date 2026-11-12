@@ -18,6 +18,22 @@
 .. autofunction:: minisim.finalize
 ```
 
+## Detectability
+
+```{eval-rst}
+.. autodata:: minisim.DETECT_SNR_THRESHOLD
+
+.. autofunction:: minisim.matched_filter_snr
+
+.. autofunction:: minisim.recording.detection_noise_fields
+
+.. autofunction:: minisim.recording.spatial_snr2
+
+.. autofunction:: minisim.recording.transient_energy
+
+.. autofunction:: minisim.peak_snr
+```
+
 ## RecordingFormatWarning
 
 ```{eval-rst}

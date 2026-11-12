@@ -37,12 +37,11 @@ from minisim import (
     Tissue,
     Vasculature,
     VesselLayer,
-    detection_snr,
-    sample_field_at,
 )
 from minisim.footprint import Footprint
 from minisim.notebooks._support import (
     GCAMP,
+    cell_detection_snr,
     plot_count_histogram,
     plot_population,
     plot_snr_vs_radius,
@@ -1002,6 +1001,11 @@ class IlluminationPanel:
         # every cell with a trace; the DETECT_SNR_THRESHOLD floor alone decides who is
         # detectable - defocus shows up as a lower SNR here, never as a hard exclusion
         self.cells = [c for c in sc.cells if c.trace is not None]
+        # vessels (already in the rendered mean) also dim each cell's own light
+        vessel = sc.truth.vasculature_mask
+        self.vessel = vessel if vessel is not None else 1.0
+        # the preview is short; the SNR is projected to the committed recording length
+        self.duration_scale = acq.duration_s / acq8.duration_s
         self.rmax = math.hypot((self.hw[0] - 1) / 2.0, (self.hw[1] - 1) / 2.0) * self.px
         self.rprof = np.linspace(0.0, self.rmax, 200)
         # cells are in the optical-center frame (origin = optical axis = FOV center),
@@ -1027,24 +1031,6 @@ class IlluminationPanel:
     def _profile(self, falloff, exponent):
         # the radial falloff as a function of distance, reaching `falloff` at the corner
         return 1.0 - (1.0 - falloff) * (self.rprof / self.rmax) ** exponent
-
-    def _cell_snr(self, cell, field):
-        # gain = optical brightness x illumination/vignette x exposure x QE; the field
-        # sampling and shot+read SNR come from the library, matching finalize().
-        brightness = (
-            cell.optical_brightness if cell.optical_brightness is not None else 1.0
-        )
-        g = (
-            brightness
-            * sample_field_at(field, cell.center_um[1], cell.center_um[2], self.px)
-            * self.sensor.photons_per_unit
-            * self.qe
-        )
-        return float(
-            detection_snr(
-                cell.trace.max() - cell.trace.min(), cell.trace.min(), g, self.read
-            )
-        )
 
     def draw(self):
         """Recompute the two falloff fields + per-cell SNR from the current sliders, and redraw."""
@@ -1097,7 +1083,17 @@ class IlluminationPanel:
         self._ai.set_xticks([])
         self._ai.set_yticks([])
         self._ai.set_title("FOV with falloff applied")
-        snr = np.array([self._cell_snr(c, field) for c in self.cells])
+        # the matched-filter SNR finalize() uses: the cells' realized footprints and
+        # traces against the shot noise of all the light (dimmed by the falloff) + read
+        snr = cell_detection_snr(
+            self.cells,
+            self.base * field,
+            field * self.vessel,
+            self.sensor.photons_per_unit,
+            self.qe,
+            self.read,
+            duration_scale=self.duration_scale,
+        )
         plot_snr_vs_radius(
             self._ad,
             self.rad_cells,
@@ -1134,6 +1130,10 @@ class SensorPanel:
         self.frame = mov[
             int(np.argmax(mov.reshape(mov.shape[0], -1).sum(axis=1)))
         ]  # liveliest frame
+        self.mean = mov.mean(axis=0)  # mean light: the per-cell SNR's shot-noise source
+        vessel = sc.truth.vasculature_mask
+        self.vessel = vessel if vessel is not None else 1.0
+        self.duration_scale = acq.duration_s / acq9.duration_s
         self.hw = (acq9.image_sensor.n_px_height, acq9.image_sensor.n_px_width)
         self.px, self.qe = acq9.pixel_size_um, acq9.image_sensor.quantum_efficiency
         # committed illumination x vignette, applied to the intensity before digitizing;
@@ -1156,20 +1156,7 @@ class SensorPanel:
         cells = [c for c in sc.cells if c.trace is not None]
         # optical-center frame: distance from FOV center is hypot(y, x)
         self.rad = np.array([math.hypot(c.center_um[1], c.center_um[2]) for c in cells])
-        self.fcell = np.array(
-            [
-                sample_field_at(self.field, c.center_um[1], c.center_um[2], self.px)
-                for c in cells
-            ]
-        )
-        self.bright = np.array(
-            [
-                c.optical_brightness if c.optical_brightness is not None else 1.0
-                for c in cells
-            ]
-        )
-        self.peak = np.array([float(c.trace.max() - c.trace.min()) for c in cells])
-        self.baseln = np.array([max(float(c.trace.min()), 0.0) for c in cells])
+        self.cells = cells
         self.fig = plt.figure(figsize=(11.0, 3.7))
         if hasattr(self.fig.canvas, "header_visible"):
             self.fig.canvas.header_visible = False
@@ -1210,8 +1197,17 @@ class SensorPanel:
         self._ai.set_yticks([])
         self._ai.set_title(f"raw counts ({bd}-bit, 0-{maxc}) | {sat:.1f}% saturated")
         plot_count_histogram(self._ah, counts, maxc)
-        g = self.bright * self.fcell * photons_per_unit * self.qe
-        snr = detection_snr(self.peak, self.baseln, g, rn)
+        # matched-filter SNR (finalize()'s criterion) against the shot noise of all the
+        # light, leakage glow included, plus the read noise
+        snr = cell_detection_snr(
+            self.cells,
+            self.mean * self.field + leak * self.glow,
+            self.field * self.vessel,
+            photons_per_unit,
+            self.qe,
+            rn,
+            duration_scale=self.duration_scale,
+        )
         plot_snr_vs_radius(
             self._ad,
             self.rad,

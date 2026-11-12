@@ -13,9 +13,10 @@ design. If these helpers ever earn external use, promote them to a public
 The footprint mask / ROI threshold is *not* re-derived here - the dashboards call
 :func:`minisim.metrics.footprint_mask` and :func:`minisim.metrics.footprint_roi_trace`,
 so the visuals read the data exactly as the engine does. The per-cell detectability
-SNR is the same story one module over: the panels in ``_anatomy_panels.py`` compute it
-with the recording's helpers (:func:`minisim.detection_snr`, :func:`minisim.sample_field_at`)
-and hand the result to :func:`plot_snr_vs_radius` here purely to draw.
+SNR is the same story: :func:`cell_detection_snr` computes it with the recording's own
+building blocks (:func:`minisim.recording.spatial_snr2`,
+:func:`minisim.recording.transient_energy` - the pieces of
+:func:`minisim.matched_filter_snr`), and :func:`plot_snr_vs_radius` only draws it.
 """
 
 from __future__ import annotations
@@ -104,17 +105,57 @@ def play(movie, fps=20, height=280, title=None, vmax=None):
     )
 
 
-def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
-    """Scatter per-cell transient SNR against distance from the FOV centre.
+def cell_detection_snr(
+    cells,
+    mean_intensity,
+    gain_field,
+    photons_per_unit,
+    qe,
+    read_e,
+    *,
+    duration_scale=1.0,
+):
+    """Per-cell matched-filter SNR (the ``detectable`` criterion) for a rendered preview.
 
-    Each point is one cell: green if its realized SNR clears ``threshold`` (the
+    The same formula ``finalize()`` uses (:func:`minisim.matched_filter_snr`), fed from a
+    panel's own render: ``mean_intensity`` is the preview's mean pre-sensor image (all
+    the light, the shot-noise source), ``gain_field`` the multiplicative fields a cell's
+    light passes through (illumination × vignette × vessels), and each cell's realized
+    footprint and trace come off the scene. Previews are short, and the SNR's temporal
+    factor grows with the number of transients, so ``duration_scale`` (full recording
+    length / preview length) projects the transient energy to the recording the
+    threshold is judged on, assuming steady activity.
+    """
+    from minisim.recording import spatial_snr2, transient_energy
+
+    exposure = photons_per_unit * qe
+    spatial = spatial_snr2(
+        [c.observed_footprint() for c in cells],
+        np.asarray(gain_field) * exposure,
+        np.maximum(np.asarray(mean_intensity), 0.0) * exposure,
+        read_e,
+    )
+    energy = np.array(
+        [
+            transient_energy(
+                c.trace[None], None if c.bleach is None else c.bleach[None]
+            )[0]
+            for c in cells
+        ]
+    )
+    return np.sqrt(spatial * energy * duration_scale)
+
+
+def plot_snr_vs_radius(ax, radius_um, snr, threshold, *, title=None):
+    """Scatter per-cell detection SNR against distance from the FOV centre.
+
+    Each point is one cell: green if its matched-filter SNR clears ``threshold`` (the
     photon budget can recover it), red if it sinks below the shot+read floor (the
     dashed line). The log y-axis is clamped to the meaningful range around the floor:
     a few fully-dark outer cells have ~0 SNR (~1e-15) that would otherwise stretch the
     scale across a dozen empty decades, so they clip off the bottom (still counted in
     the legend). ``radius_um`` and ``snr`` are matched per-cell arrays - compute ``snr``
-    with
-    :func:`minisim.detection_snr` and use :data:`minisim.DETECT_SNR_THRESHOLD` for
+    with :func:`cell_detection_snr` and use :data:`minisim.DETECT_SNR_THRESHOLD` for
     the usual floor. This is the picture of *which cells are recoverable*, the same
     question ``finalize()`` answers with its ``detectable`` flag, so it reads the
     same whether the knob being explored is the illumination falloff or the sensor

@@ -62,10 +62,13 @@ print(f"recall over detectable cells: {match.recall():.2f}")
 ```
 
 ```{note}
-Detectability is decided by a peak-SNR cut ({py:data}`~minisim.DETECT_SNR_THRESHOLD`,
-currently 3.0). That threshold is provisional: it has not yet been calibrated
-against the recovery behavior of a real pipeline, so it sets the recall
-denominator but should be read as a sensible default rather than a settled value.
+Detectability is a matched-filter SNR over the cell's realized footprint and all
+its transients ({py:func}`~minisim.matched_filter_snr`), cut at
+{py:data}`~minisim.DETECT_SNR_THRESHOLD` (110). The threshold is where a strong
+pipeline recovers half the cells on simulations at a real recording's cell size and
+blur (see {doc}`../concepts`). Read the denominator as "cells a good pipeline could
+find", not a guarantee for every pipeline: one whose cell-size setting does not match
+the cells will recover fewer.
 ```
 
 ## 3. Score the recovered traces and activity

@@ -44,6 +44,12 @@ Recordings can be written as a Miniscope-DAQ folder (`write_miniscope_daq`, or t
 `minisim generate` command) so pipelines that read real DAQ output can be pointed at
 simulated data, with the exact ground truth alongside.
 
+Every cell also carries a `detectable` flag: whether a pipeline could recover it from
+this movie at all. It is a matched-filter SNR over the cell's realized footprint and
+all its transients, against the shot and read noise of everything on the sensor
+(`matched_filter_snr`), with a threshold calibrated against a strong pipeline's
+recovery. By default, recall is scored over the detectable cells.
+
 📖 **Full documentation: [minisim.readthedocs.io](https://minisim.readthedocs.io/)** - concepts,
 quickstart, how-to guides, and the API reference.
 

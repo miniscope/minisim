@@ -784,9 +784,16 @@ def test_resolve_focal_plane_auto_accounts_for_field_curvature():
     assert resolve_focal_plane(cells, "auto", flat) == 100.0  # flat field -> median z
 
 
-def _scored_cell(z, y_um=25.0, x_um=25.0, lo=0.0, hi=100.0):
-    """A bare cell at depth ``z`` carrying a 2-frame trace (baseline ``lo``, peak ``hi``)."""
-    return Cell(center_um=(z, y_um, x_um), trace=np.array([lo, hi]))
+def _scored_cell(z, y_um=25.0, x_um=25.0, amp=100.0, n_frames=400):
+    """A bare cell (a point source) at depth ``z`` with one transient of ``amp``.
+
+    A long, mostly silent trace keeps the cell's own shot noise small next to the
+    read-noise floor, the regime where focus matters for the matched-filter SNR
+    (a cell limited only by its own light has the same SNR at any focus).
+    """
+    trace = np.zeros(n_frames)
+    trace[n_frames // 2] = amp
+    return Cell(center_um=(z, y_um, x_um), trace=trace)
 
 
 def test_resolve_focal_plane_auto_maximizes_detectable_yield_not_median():
@@ -797,7 +804,7 @@ def test_resolve_focal_plane_auto_maximizes_detectable_yield_not_median():
     cluster = [_scored_cell(z) for z in (20.0, 21.0, 22.0, 23.0, 24.0)]
     sparse = [_scored_cell(z) for z in (60.0, 80.0, 100.0, 120.0, 140.0)]
     cells = cluster + sparse
-    sensor = Sensor(photons_per_unit=300.0)  # bright -> every in-focus cell detectable
+    sensor = Sensor(photons_per_unit=100.0)  # in-focus cells clear the floor
 
     assert resolve_focal_plane(cells, "auto", acq.optics) == 42.0  # geometric median
     focus = resolve_focal_plane(cells, "auto", acq.optics, acq=acq, sensor_spec=sensor)
@@ -810,11 +817,11 @@ def test_resolve_focal_plane_auto_focuses_shallower_when_scatter_dims_deep_cells
     # them (~74 µm). Scatter attenuation dims the deep cluster below the SNR floor,
     # so only the shallow cells are recoverable -- auto focus moves shallow.
     acq = _acq(focal_depth_in_tissue_um="auto")
-    shallow = [_scored_cell(z, lo=20.0, hi=28.0) for z in (22.0, 24.0, 26.0)]
-    deep = [_scored_cell(z, lo=20.0, hi=28.0) for z in (122.0, 124.0, 126.0)]
+    shallow = [_scored_cell(z, amp=8.0) for z in (22.0, 24.0, 26.0)]
+    deep = [_scored_cell(z, amp=8.0) for z in (122.0, 124.0, 126.0)]
     cells = shallow + deep
     sensor = Sensor(
-        photons_per_unit=70.0
+        photons_per_unit=300.0
     )  # tuned: shallow clears the floor, deep does not
 
     assert resolve_focal_plane(cells, "auto", acq.optics) == 74.0  # geometric median
@@ -834,15 +841,10 @@ def test_resolve_focal_plane_auto_shifts_when_vignette_removes_edge_cells():
     )
     # Optical-center frame (n_px=200, 1 µm/px): the axis is (0, 0); the FOV corner
     # is ~(-90, -90), a large field radius.
-    center = [
-        Cell(center_um=(80.0, 0.0, 0.0), trace=np.array([20.0, 28.0])) for _ in range(5)
-    ]
-    edge = [
-        Cell(center_um=(80.0, -90.0, -90.0), trace=np.array([20.0, 28.0]))
-        for _ in range(8)
-    ]
+    center = [_scored_cell(80.0, 0.0, 0.0) for _ in range(5)]
+    edge = [_scored_cell(80.0, -90.0, -90.0) for _ in range(8)]
     cells = center + edge
-    sensor = Sensor(photons_per_unit=200.0)
+    sensor = Sensor(photons_per_unit=1000.0)
     strong = combined_falloff_field(acq, None, Vignette(falloff=0.01, exponent=1.0))
 
     focus_none = resolve_focal_plane(

@@ -38,13 +38,15 @@ a minor-version bump with a changelog entry.
 - **The `Report` / `Estimate` shape** - existing fields and their meaning. The
   types are frozen dataclasses precisely so a field can be *added* without breaking
   callers; removing or renaming one is breaking.
-- **`DETECT_SNR_THRESHOLD`** - the SNR a cell must clear to count as `detectable`.
-  This sets the `restrict_to_detectable` recall denominator and the "auto"
-  focus objective. **It is provisional and not yet calibrated against a
-  real pipeline, so it may change before 1.0.** When it changes, recall
-  denominators move under downstream tests, so it is treated as a breaking change.
-  If you need a denominator that cannot drift, pass `restrict_to_detectable=False`
-  and read `n_requested` off the `Report`.
+- **The detectability criterion and `DETECT_SNR_THRESHOLD`** - a cell is
+  `detectable` when its matched-filter SNR ({py:func}`~minisim.matched_filter_snr`)
+  clears the threshold (110 since 1.1.0, calibrated against a pipeline's recovery;
+  see {doc}`../concepts`). This sets the `restrict_to_detectable` recall
+  denominator and the "auto" focus objective. When the formula or the threshold
+  changes, recall denominators move under downstream tests, so it is a minor-version
+  bump with a migration note (1.1.0 replaced the single-pixel peak test). If you
+  need a denominator that cannot drift, pass `restrict_to_detectable=False` and
+  read `n_requested` off the `Report`.
 
 ## Reading the recall denominator
 
